@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-22 (**A0 coded** — sync + Ops4 next; **Q4** open for A1)
+**Last updated:** 2026-10-22 (**A0–A2 + Ops4 Done**; **A3 kickoff locked** — wait `implement`)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -30,6 +30,10 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **Ops1** | Synology path + Task Scheduler jobs confirmed SoT after migrate — **2026-10-22** |
 | **Ops2** | Runtime `.env` in encrypted storage; placed on host by hand (never via sync) — **2026-10-22** |
 | **Ops3** | Local `helpers/p1-sync.config.json` filled with real sync targets — **2026-10-22** |
+| **A0** | `sql_importer` staging gap-fill (not master) — **2026-10-22** — [`phaseA-aggregation.md`](phaseA-aggregation.md) |
+| **Ops4** | Purge master + re-import `.sql` + consolidate/daily/buildall — **2026-10-22** |
+| **A1** | Q4: `-purge_derived` keeps wiping `history_5min` (rebuildable) — leave as-is — **2026-10-22** |
+| **A2** | Smoke analytics / Hall of Fame — **2026-10-22** |
 
 ---
 
@@ -37,10 +41,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| 1 | coding | M | **A0** | `sql_importer`: gap-fill **staging** (not master); inverter skip if ZIP floor exists — **coded, sync to NAS** | [`phaseA-aggregation.md`](phaseA-aggregation.md) |
-| 2 | open | S | **Ops4** | Purge `history_5min` + re-import `.sql` into staging + `-consolidate` + `-daily` + `-buildall` | Ops below · phase A |
-| 3 | hold | S | **A1** | `-purge_derived` — **blocked on Q4** | [`phaseA-aggregation.md`](phaseA-aggregation.md) |
-| 4 | open | M | **A2** | Smoke `analytics.php` after Ops4 rebuild | [`phaseA-aggregation.md`](phaseA-aggregation.md) |
+| 1 | open | L | **A3** | UI: `analytics.php` (intraday + compare + Top10); `summary.php` (day/week/month/year + wrap arrows) — **kickoff locked** | [`phaseA-aggregation.md`](phaseA-aggregation.md) |
 
 ---
 
@@ -48,7 +49,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | Id | Status | What |
 |---|---|---|
-| **Ops4** | open | After **A0** on NAS: purge `history_5min` (`sql_raw`), re-queue `.sql`, run new `sql_importer` → staging gaps, then `-consolidate`, `-daily`, `-buildall`. Playbook in [`phaseA-aggregation.md`](phaseA-aggregation.md). |
+| — | — | (none open) |
 
 ---
 
@@ -57,4 +58,4 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | Letter | Affinity | File |
 |---|---|---|
 | **M** | Migration + public-repo hygiene + local sync | [`_archive/phaseM-migration.md`](_archive/phaseM-migration.md) (**archived** — M1+M2 Done) |
-| **A** | Aggregation rollup + SQL→staging + rebuild + smoke | [`phaseA-aggregation.md`](phaseA-aggregation.md) |
+| **A** | Aggregation warehouse + analytics UI | [`phaseA-aggregation.md`](phaseA-aggregation.md) |

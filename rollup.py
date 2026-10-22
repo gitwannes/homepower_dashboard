@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# --- file: rollup.py ---
 import os
 import sys
 import sqlite3
@@ -7,7 +8,12 @@ import time
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, 'meter_history.db')
 
-def init_analytical_db(conn):
+# Daily yield from lifetime E-total: reject implausible meter math, fall back to PAC integral.
+# Residential ceiling ~100 kWh/day; single 5-min step above ~3 kWh is not physical generation.
+MAX_DAY_YIELD_KWH = 100.0
+MAX_ETOTAL_STEP_KWH = 3.0
+
+def init_analytical_db(conn: sqlite3.Connection) -> None:
     """Creates the unified 5-minute table and all downstream aggregation tables."""
     with conn:
         conn.execute("PRAGMA journal_mode = WAL")
@@ -54,6 +60,10 @@ def init_analytical_db(conn):
                 solar_radiation_max_wm2 REAL
             )
         """)
+        # Speeds Hall of Fame / Top Days (ORDER BY solar_yield_kwh DESC LIMIT n).
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_daily_yield ON daily_history(solar_yield_kwh DESC)"
+        )
 
         # 3. Monthly Rollups (For PVGIS Target tracking)
         conn.execute("""
@@ -148,15 +158,22 @@ def consolidate_historical_webbox(conn):
     print(f"-> Complete in {duration:.1f}s. history_5min rows: {count:,}")
 
 
-def build_daily_history(conn, days_back=None):
-    """Crunches 5-minute data into daily yields and weather extremes."""
+def build_daily_history(conn: sqlite3.Connection, days_back=None) -> None:
+    """Crunches 5-minute data into daily yields and weather extremes.
+
+    Solar yield preference:
+      1) E-total at last ts minus E-total at first ts of the day, if
+         0 <= delta <= MAX_DAY_YIELD_KWH and no 5-min step is outside
+         [-0.01, MAX_ETOTAL_STEP_KWH] (rejects spikes/resets/counter mixes).
+      2) Else PAC integral: SUM(solar_power_w) * (5/60) / 1000.
+    """
     where_clause = ""
     if days_back:
         where_clause = f"WHERE timestamp >= datetime('now', '-{days_back} days')"
         print(f"--- 2. Updating daily_history (Last {days_back} days) ---")
     else:
         print("--- 2. Building daily_history (Full History) ---")
-        
+
     start_time = time.time()
     with conn:
         conn.execute(f"""
@@ -166,27 +183,116 @@ def build_daily_history(conn, days_back=None):
                 temp_ambient_min, temp_ambient_max, temp_module_max,
                 wind_gust_max_ms, solar_radiation_max_wm2
             )
-            SELECT 
-                substr(timestamp, 1, 10) AS dt,
-                ROUND(CASE 
-                    WHEN MAX(solar_total_kwh) > MIN(solar_total_kwh) AND MIN(solar_total_kwh) > 0 
-                    THEN MAX(solar_total_kwh) - MIN(solar_total_kwh)
-                    ELSE SUM(COALESCE(solar_power_w, 0)) * (5.0 / 60.0) / 1000.0
-                END, 2) AS yield_kwh,
-                MAX(COALESCE(solar_power_max_w, solar_power_w, 0)),
-                ROUND(COUNT(CASE WHEN solar_power_w > 50 THEN 1 END) * (5.0 / 60.0), 2),
-                ROUND(MAX(total_import) - MIN(total_import), 3),
-                ROUND(MAX(total_export) - MIN(total_export), 3),
+            WITH base AS (
+                SELECT
+                    substr(timestamp, 1, 10) AS dt,
+                    timestamp,
+                    solar_total_kwh,
+                    solar_power_w,
+                    solar_power_max_w,
+                    total_import,
+                    total_export,
+                    temp_ambient,
+                    temp_module,
+                    wind_gust,
+                    wind_speed,
+                    solar_radiation,
+                    solar_radiation_max,
+                    LAG(solar_total_kwh) OVER (
+                        PARTITION BY substr(timestamp, 1, 10) ORDER BY timestamp
+                    ) AS prev_etotal
+                FROM history_5min
+                {where_clause}
+            ),
+            step_flags AS (
+                SELECT
+                    dt,
+                    MAX(CASE
+                        WHEN prev_etotal IS NOT NULL AND solar_total_kwh IS NOT NULL
+                             AND (solar_total_kwh - prev_etotal) > {MAX_ETOTAL_STEP_KWH}
+                        THEN 1
+                        WHEN prev_etotal IS NOT NULL AND solar_total_kwh IS NOT NULL
+                             AND (solar_total_kwh - prev_etotal) < -0.01
+                        THEN 1
+                        ELSE 0
+                    END) AS bad_etotal_steps
+                FROM base
+                GROUP BY dt
+            ),
+            bounds AS (
+                SELECT
+                    dt,
+                    MIN(timestamp) AS ts_first,
+                    MAX(timestamp) AS ts_last,
+                    SUM(COALESCE(solar_power_w, 0)) * (5.0 / 60.0) / 1000.0 AS power_integral_kwh,
+                    MAX(COALESCE(solar_power_max_w, solar_power_w, 0)) AS peak_w,
+                    ROUND(COUNT(CASE WHEN solar_power_w > 50 THEN 1 END) * (5.0 / 60.0), 2) AS sun_h,
+                    ROUND(MAX(total_import) - MIN(total_import), 3) AS import_kwh,
+                    ROUND(MAX(total_export) - MIN(total_export), 3) AS export_kwh,
+                    MIN(temp_ambient) AS t_amb_min,
+                    MAX(temp_ambient) AS t_amb_max,
+                    MAX(temp_module) AS t_mod_max,
+                    MAX(COALESCE(wind_gust, wind_speed)) AS wind_max,
+                    MAX(COALESCE(solar_radiation_max, solar_radiation)) AS rad_max
+                FROM base
+                GROUP BY dt
+            ),
+            et_ends AS (
+                SELECT
+                    b.dt,
+                    b.ts_first,
+                    b.ts_last,
+                    b.power_integral_kwh,
+                    b.peak_w,
+                    b.sun_h,
+                    b.import_kwh,
+                    b.export_kwh,
+                    b.t_amb_min,
+                    b.t_amb_max,
+                    b.t_mod_max,
+                    b.wind_max,
+                    b.rad_max,
+                    f.solar_total_kwh AS et_first,
+                    l.solar_total_kwh AS et_last,
+                    COALESCE(sf.bad_etotal_steps, 0) AS bad_etotal_steps
+                FROM bounds b
+                LEFT JOIN step_flags sf ON sf.dt = b.dt
+                LEFT JOIN base f ON f.dt = b.dt AND f.timestamp = b.ts_first
+                LEFT JOIN base l ON l.dt = b.dt AND l.timestamp = b.ts_last
+            )
+            SELECT
+                dt,
                 ROUND(
-                    CASE WHEN MAX(solar_total_kwh) > MIN(solar_total_kwh) AND MAX(total_export) >= MIN(total_export)
-                    THEN MAX(0.0, (MAX(solar_total_kwh) - MIN(solar_total_kwh)) - (MAX(total_export) - MIN(total_export)))
-                    ELSE NULL END
-                , 2),
-                MIN(temp_ambient), MAX(temp_ambient), MAX(temp_module),
-                MAX(COALESCE(wind_gust, wind_speed)), MAX(COALESCE(solar_radiation_max, solar_radiation))
-            FROM history_5min
-            {where_clause}
-            GROUP BY dt;
+                    CASE
+                        WHEN et_first IS NOT NULL AND et_last IS NOT NULL
+                             AND bad_etotal_steps = 0
+                             AND (et_last - et_first) >= 0
+                             AND (et_last - et_first) <= {MAX_DAY_YIELD_KWH}
+                        THEN et_last - et_first
+                        ELSE power_integral_kwh
+                    END
+                , 2) AS yield_kwh,
+                peak_w,
+                sun_h,
+                import_kwh,
+                export_kwh,
+                ROUND(
+                    CASE
+                        WHEN et_first IS NOT NULL AND et_last IS NOT NULL
+                             AND bad_etotal_steps = 0
+                             AND (et_last - et_first) >= 0
+                             AND (et_last - et_first) <= {MAX_DAY_YIELD_KWH}
+                             AND export_kwh IS NOT NULL
+                        THEN MAX(0.0, (et_last - et_first) - COALESCE(export_kwh, 0))
+                        ELSE NULL
+                    END
+                , 2) AS self_consumption_kwh,
+                t_amb_min,
+                t_amb_max,
+                t_mod_max,
+                wind_max,
+                rad_max
+            FROM et_ends;
         """)
 
     duration = time.time() - start_time
