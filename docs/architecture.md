@@ -1,9 +1,9 @@
 # --- file: docs/architecture.md ---
 # Architecture
 
-**Status:** Spec **LOCKED** (2026-10-22). App migrate **HOLD** (no implement yet).  
+**Status:** Migrated into this repo (2026-10-22).  
 **Last updated:** 2026-10-22  
-**Delivery:** [`docs/todo/phaseM-migration.md`](todo/phaseM-migration.md)
+**Delivery archive:** [`docs/todo/_archive/phaseM-migration.md`](todo/_archive/phaseM-migration.md)
 
 ## What this is
 
@@ -14,10 +14,10 @@ A **standalone** home energy hub: poll P1 + optional SMA / Sunny WebBox, store t
 | System | Relation |
 |---|---|
 | **WanOS** | Separate smart-home OS. Its HomeWizard energy ingest stays there — do not move that bridge into this repo. |
-| **WLW** | Former git home of `public/p1`. After M2: remove or stub; the portal no longer owns this app. |
+| **WLW** | Former git home of `public/p1`. After M2: stub/pointer only. |
 | **Unrelated "P1" phase ids** | Other repos may use "P1" for unrelated work. This product is the meter/dashboard stack. |
 
-## Data flow (target)
+## Data flow
 
 ```
 .env  (devices + UI branding; encrypted storage -> host by hand)
@@ -31,18 +31,16 @@ helpers/  (gitignored entire directory)
                          -> never copies .env*
 ```
 
-## Config split (locked)
+## Config split
 
 | Concern | File | Public git | Sync to NAS |
 |---|---|---|---|
 | Device IPs + passwords | `.env` | `.env.example` only | **never** |
-| UI title / subtitle / labels | `.env` | placeholders in example | **never** |
+| UI title / subtitle / labels | `.env` (`SITE_*`) | placeholders in example | **never** |
 | Sync source + SMB targets | `helpers/p1-sync.config.json` | no | **yes** |
 | Sync scripts + local helpers README | `helpers/` | no (whole dir gitignored) | **yes** |
 
-- Sync tooling is **operator-local**, not published.
-- Runtime `.env` on Synology is placed from **encrypted storage**, not from `p1-sync`.
-- Committed files (code + docs): **no** real LAN IPs, **no** household/site nicknames; UI falls back to a generic tagline when `.env` keys are absent.
+Committed files (code + docs): **no** real LAN IPs, **no** household/site nicknames.
 
 ## License
 

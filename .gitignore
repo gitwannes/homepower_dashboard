@@ -25,9 +25,9 @@ ENV/
 *.sqlite3
 meter_history.db*
 
-# Import / archive working dirs
+# Import / archive working dirs (app runtime only; keep docs/todo/_archive in git)
 import_queue/
-_archive/
+/_archive/
 *.zip
 *.7z
 *.rar

@@ -3,9 +3,9 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-22 (M locks done; **implement HOLD**)
+**Last updated:** 2026-10-22 (**M1 + M2 Done**)
 
-**Product reference:** [`docs/architecture.md`](../architecture.md)
+**Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md)
 
 ---
 
@@ -25,7 +25,8 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | Id | What |
 |---|---|
-| — | Scaffold + **M locks** documented 2026-10-22 (no app migrate yet) |
+| **M1** | Sanitize + migrate app from WLW `public/p1` — **2026-10-22** — [`_archive/phaseM-migration.md`](_archive/phaseM-migration.md) |
+| **M2** | Stub WLW `public/p1` + docs pointer — **2026-10-22** — [`_archive/phaseM-migration.md`](_archive/phaseM-migration.md) |
 
 ---
 
@@ -33,8 +34,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| 1 | hold | mid | M1 | Sanitize + migrate WLW `public/p1` (locks done; wait `implement`) | [`phaseM-migration.md`](phaseM-migration.md) |
-| 2 | open | low | M2 | Retire / stub WLW `public/p1`; update WLW docs | phaseM |
+| — | — | — | — | (none open for M) | — |
 
 ---
 
@@ -44,6 +44,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 |---|---|---|
 | Ops1 | open | Confirm Synology path + Task Scheduler jobs remain SoT after migrate |
 | Ops2 | open | Keep runtime `.env` in encrypted storage; place on host by hand (never via sync) |
+| Ops3 | open | Fill local `helpers/p1-sync.config.json` with real SMB targets (placeholders only in working copy until edited) |
 
 ---
 
@@ -51,4 +52,4 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | Letter | Affinity | File |
 |---|---|---|
-| **M** | Migration + public-repo hygiene + local sync | [`phaseM-migration.md`](phaseM-migration.md) (**LOCKED**; implement HOLD) |
+| **M** | Migration + public-repo hygiene + local sync | [`_archive/phaseM-migration.md`](_archive/phaseM-migration.md) (**archived** — M1+M2 Done) |

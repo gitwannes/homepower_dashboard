@@ -8,37 +8,46 @@ Standalone energy telemetry dashboard for:
 - **Sunny WebBox** gateway (+ SensorBox when present)
 
 **Runtime host:** Synology DSM (Web Station + Python Task Scheduler).  
-**Origin:** extracted from the WLW portal tree (`public/p1`) after the live stack moved to Synology.  
 **License:** [MIT](LICENSE)
 
-## Status
+## Architecture
 
-Scaffold + **migration spec locked** (2026-10-22). Application sources are **not** in this repo yet — implement on hold until the operator says `implement`.
+`logger.py` polls hardware and writes SQLite (`meter_history.db`).  
+`index.php` / `analytics.php` are read-only presentation over the DB.
 
-## Layout (planned)
+```
+.env  ->  logger.py  ->  meter_history.db  ->  index.php / analytics.php
+```
 
-| Path | Role |
+See [`docs/architecture.md`](docs/architecture.md).
+
+## Configuration
+
+| File | Role | Git |
+|---|---|---|
+| `.env` | Device endpoints, secrets, UI title/tagline | **no** (encrypted storage → host by hand) |
+| `.env.example` | Placeholders only | yes |
+| `helpers/` | Local sync tool + `p1-sync.config.json` | **no** (entire dir gitignored; MIR copies it to NAS) |
+
+Never put real LAN IPs or site nicknames in committed files.
+
+## Main components
+
+| File | Role |
 |---|---|
-| App root | `logger.py`, PHP UI, importers, `.env.example` (after M1) |
-| `docs/` | Product reference (as-is) |
-| `docs/todo/` | Delivery pipeline |
-| `helpers/` | **Local only** (entire directory gitignored): sync tool, config, local README — mirrored to NAS by sync |
-
-## Config (locked)
-
-| File | Holds | Git | Deploy |
-|---|---|---|---|
-| `.env` | Device endpoints/secrets + UI title/subtitle/labels | no | Encrypted storage → host by hand; **never** via sync |
-| `.env.example` | Placeholders only | yes | — |
-| `helpers/p1-sync.config.json` | Sync source + SMB targets | no | Mirrored with `helpers/` |
-| `helpers/p1-sync.ps1` / `.bat` + `helpers/README.md` | Sync tool + local notes | no | Mirrored with `helpers/` |
-
-Committed files (including documentation) must not contain real LAN IPs or household/site nicknames.
+| `logger.py` | 1-minute poll / hot DB writer |
+| `index.php` | Live dashboard |
+| `analytics.php` | Historical analytics |
+| `importer.py` / `import_dashboard.php` | WebBox archive ingest |
+| `rollup.py` / `sql_importer.py` | Warehouse / gap-fill |
+| `powertests.py` / `powertests.php` | Live hardware probes |
 
 ## Docs
 
 | Doc | Purpose |
 |---|---|
-| [`docs/architecture.md`](docs/architecture.md) | Scope, config split, hosts |
-| [`docs/todo/pipeline.md`](docs/todo/pipeline.md) | Delivery sequence |
-| [`docs/todo/phaseM-migration.md`](docs/todo/phaseM-migration.md) | Locked migrate DoD |
+| [`docs/architecture.md`](docs/architecture.md) | Scope + config split |
+| [`docs/deploy.md`](docs/deploy.md) | Synology + local sync notes |
+| [`docs/roadmap.md`](docs/roadmap.md) | Feature / archive roadmap |
+| [`docs/todo/pipeline.md`](docs/todo/pipeline.md) | Delivery pipeline |
+| [`docs/todo/_archive/phaseM-migration.md`](docs/todo/_archive/phaseM-migration.md) | Migrate DoD (Done) |
