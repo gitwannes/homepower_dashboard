@@ -371,7 +371,10 @@ $pageTitle = (is_array($env) && !empty($env['SITE_PAGE_TITLE'])) ? $env['SITE_PA
 
         <div class="flex items-center flex-wrap gap-3">
             <a href="analytics.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
-                <i data-lucide="line-chart" class="w-3.5 h-3.5 text-indigo-600"></i> Analytics & Trends
+                <i data-lucide="line-chart" class="w-3.5 h-3.5 text-indigo-600"></i> Analytics
+            </a>
+            <a href="summary.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
+                <i data-lucide="calendar-range" class="w-3.5 h-3.5 text-emerald-600"></i> Summary
             </a>
             <button type="button" onclick="openRawModal()" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all cursor-pointer">
                 <i data-lucide="table-properties" class="w-3.5 h-3.5 text-blue-600"></i> Raw readings

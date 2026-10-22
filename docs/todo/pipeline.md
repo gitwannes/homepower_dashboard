@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-22 (**A0–A2 + Ops4 Done**; **A3 kickoff locked** — wait `implement`)
+**Last updated:** 2026-10-22 (**A0–A3 / Q3 + Ops4 Done** — Phase A ready for offline archive)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -34,6 +34,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **Ops4** | Purge master + re-import `.sql` + consolidate/daily/buildall — **2026-10-22** |
 | **A1** | Q4: `-purge_derived` keeps wiping `history_5min` (rebuildable) — leave as-is — **2026-10-22** |
 | **A2** | Smoke analytics / Hall of Fame — **2026-10-22** |
+| **A3 / Q3** | `analytics.php` + `summary.php` UI split; operator smoke Done — **2026-10-22** — [`phaseA-aggregation.md`](phaseA-aggregation.md) (**archive ready**) |
 
 ---
 
@@ -41,7 +42,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| 1 | open | L | **A3** | UI: `analytics.php` (intraday + compare + Top10); `summary.php` (day/week/month/year + wrap arrows) — **kickoff locked** | [`phaseA-aggregation.md`](phaseA-aggregation.md) |
+| — | — | — | — | (none open) | — |
 
 ---
 
@@ -57,5 +58,5 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | Letter | Affinity | File |
 |---|---|---|
-| **M** | Migration + public-repo hygiene + local sync | [`_archive/phaseM-migration.md`](_archive/phaseM-migration.md) (**archived** — M1+M2 Done) |
-| **A** | Aggregation warehouse + analytics UI | [`phaseA-aggregation.md`](phaseA-aggregation.md) |
+| **M** | Migration + public-repo hygiene + local sync | [`_archive/phaseM-migration.md`](_archive/phaseM-migration.md) (**archived**) |
+| **A** | Aggregation warehouse + analytics UI | [`phaseA-aggregation.md`](phaseA-aggregation.md) (**Done — move offline**) |

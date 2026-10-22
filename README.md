@@ -13,10 +13,10 @@ Standalone energy telemetry dashboard for:
 ## Architecture
 
 `logger.py` polls hardware and writes SQLite (`meter_history.db`).  
-`index.php` / `analytics.php` are read-only presentation over the DB.
+`index.php` / `analytics.php` / `summary.php` are read-only presentation over the DB.
 
 ```
-.env  ->  logger.py  ->  meter_history.db  ->  index.php / analytics.php
+.env  ->  logger.py  ->  meter_history.db  ->  index.php / analytics.php / summary.php
 ```
 
 See [`docs/architecture.md`](docs/architecture.md).
@@ -37,9 +37,10 @@ Never put real LAN IPs or site nicknames in committed files.
 |---|---|
 | `logger.py` | 1-minute poll / hot DB writer |
 | `index.php` | Live dashboard |
-| `analytics.php` | Historical analytics |
+| `analytics.php` | Exploration: intraday, two-day compare, clear-sky envelope; **Generate table** for today |
+| `summary.php` | All years / week / month / year (`daily_history` / `monthly_history`) |
 | `importer.py` / `import_dashboard.php` | WebBox archive ingest |
-| `rollup.py` / `sql_importer.py` | Warehouse / gap-fill |
+| `rollup.py` / `sql_importer.py` | Warehouse: consolidate, `-daily`/`-today`, `-buildall`, gap-fill |
 | `powertests.py` / `powertests.php` | Live hardware probes |
 
 ## Docs
@@ -51,3 +52,4 @@ Never put real LAN IPs or site nicknames in committed files.
 | [`docs/roadmap.md`](docs/roadmap.md) | Feature / archive roadmap |
 | [`docs/todo/pipeline.md`](docs/todo/pipeline.md) | Delivery pipeline |
 | [`docs/todo/_archive/phaseM-migration.md`](docs/todo/_archive/phaseM-migration.md) | Migrate DoD (Done) |
+| [`docs/todo/phaseA-aggregation.md`](docs/todo/phaseA-aggregation.md) | Aggregation + A3 UI (Done — move offline when convenient) |

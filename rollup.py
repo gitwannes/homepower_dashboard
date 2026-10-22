@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 # --- file: rollup.py ---
 import os
+import re
 import sys
 import sqlite3
 import time
+from datetime import datetime
+from typing import Optional, Tuple
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(BASE_DIR, 'meter_history.db')
@@ -12,6 +15,32 @@ DB_FILE = os.path.join(BASE_DIR, 'meter_history.db')
 # Residential ceiling ~100 kWh/day; single 5-min step above ~3 kWh is not physical generation.
 MAX_DAY_YIELD_KWH = 100.0
 MAX_ETOTAL_STEP_KWH = 3.0
+# Instantaneous PAC spikes (bad WebBox/P1 samples). Home array peaks are a few kW, not 30+ kW.
+# Used by clear_sky_envelopes, daily peak, and top_records peak_surge.
+MAX_PLAUSIBLE_PAC_W = 12000.0
+# WebBox archive night junk (audit 2026-10-22): non-zero PAC with ~0 radiation after
+# a clean sunset zero-gap. Deep night always untrusted; shoulder needs radiation.
+PAC_RAD_FLOOR = 5.0  # W/m2
+
+
+def sql_pac_plausible(pac_expr: str = "COALESCE(solar_power_w, 0)") -> str:
+    """SQL predicate: PAC is within cap and not night / no-sun shoulder junk."""
+    return f"""(
+        ({pac_expr}) > 0
+        AND ({pac_expr}) <= {MAX_PLAUSIBLE_PAC_W}
+        AND NOT (
+            CAST(strftime('%H', timestamp) AS INTEGER) >= 22
+            OR CAST(strftime('%H', timestamp) AS INTEGER) < 5
+        )
+        AND NOT (
+            COALESCE(solar_radiation, 0) <= {PAC_RAD_FLOOR}
+            AND (
+                CAST(strftime('%H', timestamp) AS INTEGER) >= 20
+                OR CAST(strftime('%H', timestamp) AS INTEGER) < 6
+            )
+        )
+    )"""
+
 
 def init_analytical_db(conn: sqlite3.Connection) -> None:
     """Creates the unified 5-minute table and all downstream aggregation tables."""
@@ -224,9 +253,18 @@ def build_daily_history(conn: sqlite3.Connection, days_back=None) -> None:
                     dt,
                     MIN(timestamp) AS ts_first,
                     MAX(timestamp) AS ts_last,
-                    SUM(COALESCE(solar_power_w, 0)) * (5.0 / 60.0) / 1000.0 AS power_integral_kwh,
-                    MAX(COALESCE(solar_power_max_w, solar_power_w, 0)) AS peak_w,
-                    ROUND(COUNT(CASE WHEN solar_power_w > 50 THEN 1 END) * (5.0 / 60.0), 2) AS sun_h,
+                    SUM(CASE
+                        WHEN {sql_pac_plausible("COALESCE(solar_power_w, 0)")}
+                        THEN COALESCE(solar_power_w, 0) ELSE 0
+                    END) * (5.0 / 60.0) / 1000.0 AS power_integral_kwh,
+                    MAX(CASE
+                        WHEN {sql_pac_plausible("COALESCE(solar_power_max_w, solar_power_w, 0)")}
+                        THEN COALESCE(solar_power_max_w, solar_power_w, 0)
+                    END) AS peak_w,
+                    ROUND(COUNT(CASE
+                        WHEN {sql_pac_plausible("COALESCE(solar_power_w, 0)")}
+                         AND solar_power_w > 50 THEN 1
+                    END) * (5.0 / 60.0), 2) AS sun_h,
                     ROUND(MAX(total_import) - MIN(total_import), 3) AS import_kwh,
                     ROUND(MAX(total_export) - MIN(total_export), 3) AS export_kwh,
                     MIN(temp_ambient) AS t_amb_min,
@@ -330,26 +368,39 @@ def build_monthly_history(conn):
     print(f"-> Complete in {duration:.1f}s. monthly_history rows: {count:,}")
 
 
-def build_clear_sky_envelopes(conn):
-    """Finds the all-time absolute highest AC power for every 5-min slice (288 timepoints) per month."""
+def build_clear_sky_envelopes(conn: sqlite3.Connection) -> None:
+    """Finds the all-time highest plausible AC power for every 5-min slice (288) per month.
+
+    Uses interval mean solar_power_w (not solar_power_max_w surge). Ignores samples
+    above MAX_PLAUSIBLE_PAC_W and night / no-radiation shoulder junk (sql_pac_plausible).
+    """
     print("--- 4. Building clear_sky_envelopes ---")
     start_time = time.time()
-    
+    pac_ok = sql_pac_plausible("COALESCE(solar_power_w, 0)")
+
     with conn:
         conn.execute("DELETE FROM clear_sky_envelopes;")
-        conn.execute("""
+        conn.execute(f"""
             INSERT INTO clear_sky_envelopes (month, timepoint, max_pac_w, max_pac_date, max_rad_wm2)
-            SELECT 
+            SELECT
                 CAST(substr(timestamp, 6, 2) AS INTEGER) AS mth,
-                (CAST(substr(timestamp, 12, 2) AS INTEGER) * 12) + (CAST(substr(timestamp, 15, 2) AS INTEGER) / 5) AS tp,
-                MAX(COALESCE(solar_power_max_w, solar_power_w, 0)),
-                substr(MAX(printf('%09d', COALESCE(solar_power_max_w, solar_power_w, 0)) || timestamp), 10, 10),
+                (CAST(substr(timestamp, 12, 2) AS INTEGER) * 12)
+                    + (CAST(substr(timestamp, 15, 2) AS INTEGER) / 5) AS tp,
+                MAX(pac),
+                substr(MAX(printf('%09d', pac) || timestamp), 10, 10),
                 MAX(COALESCE(solar_radiation_max, solar_radiation, 0))
-            FROM history_5min
-            WHERE solar_power_w > 0
+            FROM (
+                SELECT
+                    timestamp,
+                    solar_radiation,
+                    solar_radiation_max,
+                    COALESCE(solar_power_w, 0) AS pac
+                FROM history_5min
+                WHERE {pac_ok}
+            )
             GROUP BY mth, tp;
         """)
-        
+
     duration = time.time() - start_time
     count = conn.execute("SELECT COUNT(*) FROM clear_sky_envelopes").fetchone()[0]
     print(f"-> Complete in {duration:.1f}s. Envelopes mapped: {count:,} timepoints")
@@ -365,7 +416,15 @@ def build_top_records(conn):
         
         queries = [
             ("best_day_kwh", "SELECT date, solar_yield_kwh FROM daily_history ORDER BY solar_yield_kwh DESC LIMIT 1", "All-time highest daily generation (kWh)"),
-            ("peak_surge_w", "SELECT substr(timestamp, 1, 10), COALESCE(solar_power_max_w, solar_power_w) AS val FROM history_5min ORDER BY val DESC LIMIT 1", "All-time instantaneous solar AC surge peak (W)"),
+            (
+                "peak_surge_w",
+                f"""SELECT substr(timestamp, 1, 10),
+                           COALESCE(solar_power_max_w, solar_power_w) AS val
+                    FROM history_5min
+                    WHERE {sql_pac_plausible("COALESCE(solar_power_max_w, solar_power_w, 0)")}
+                    ORDER BY val DESC LIMIT 1""",
+                "All-time instantaneous solar AC surge peak (W)",
+            ),
             ("max_wind_ms", "SELECT date, wind_gust_max_ms FROM daily_history ORDER BY wind_gust_max_ms DESC LIMIT 1", "Maximum recorded wind gust (m/s)"),
             ("max_temp_c", "SELECT date, temp_ambient_max FROM daily_history ORDER BY temp_ambient_max DESC LIMIT 1", "Highest recorded ambient temperature (°C)"),
             ("min_temp_c", "SELECT date, temp_ambient_min FROM daily_history WHERE temp_ambient_min IS NOT NULL ORDER BY temp_ambient_min ASC LIMIT 1", "Lowest recorded ambient temperature (°C)")
@@ -380,32 +439,52 @@ def build_top_records(conn):
     print(f"-> Complete in {duration:.1f}s. top_records updated.")
 
 
-def downsample_live_readings(conn):
+def downsample_live_readings(conn: sqlite3.Connection, day_iso: Optional[str] = None) -> int:
+    """Downsample 1-minute readings into history_5min.
+
+    day_iso: optional YYYY-MM-DD (local calendar day). None = last 2 local days.
+
+    logger.py stores timestamps with datetime.now() (host local / CET).
+    SQLite datetime('now') is UTC - always use datetime('now', 'localtime') for cutoffs.
     """
-    (Scheduled Nightly) 
-    Downsamples the hot 1-minute `readings` table into 5-minute boundaries,
-    snaps them to history_5min, and automatically runs daily rollups.
-    """
-    with conn:
-        conn.execute("""
+    where_params: Tuple[str, ...]
+    if day_iso is not None:
+        if not re.match(r'^\d{4}-\d{2}-\d{2}$', day_iso):
+            raise ValueError(f"Invalid day_iso: {day_iso}")
+        where_sql = "timestamp LIKE ?"
+        where_params = (day_iso + '%',)
+        label = day_iso
+    else:
+        where_sql = "timestamp >= datetime('now', 'localtime', '-2 days')"
+        where_params = ()
+        label = "last 2 local days"
+
+    print(f"--- Downsampling readings -> history_5min ({label}) ---")
+    start_time = time.time()
+    # Open 5-min bucket in local time (exclude incomplete current slice)
+    now_cut = """strftime('%Y-%m-%d %H:', datetime('now', 'localtime')) ||
+                 printf('%02d:00', (CAST(strftime('%M', datetime('now', 'localtime')) AS INTEGER) / 5) * 5)"""
+
+    sql = f"""
             INSERT INTO history_5min (
                 timestamp, grid_power_w, import_t1, import_t2, export_t1, export_t2,
                 total_import, total_export, capacity_peak_w, gas, water,
-                solar_power_w, solar_total_kwh, sample_count, data_source
+                solar_power_w, solar_total_kwh, solar_radiation, sample_count, data_source
             )
-            SELECT 
-                strftime('%Y-%m-%d %H:', timestamp) || 
+            SELECT
+                strftime('%Y-%m-%d %H:', timestamp) ||
                 printf('%02d:00', (CAST(strftime('%M', timestamp) AS INTEGER) / 5) * 5) AS snapped_ts,
                 ROUND(AVG(active_power)),
                 MAX(import_t1), MAX(import_t2), MAX(export_t1), MAX(export_t2),
                 MAX(total_import), MAX(total_export), MAX(capacity_peak_w),
                 MAX(gas), MAX(water),
-                ROUND(AVG(solar_power)), MAX(solar_total_kwh), COUNT(*), 'live_p1'
+                ROUND(AVG(solar_power)), MAX(solar_total_kwh),
+                AVG(solar_radiation),
+                COUNT(*), 'live_p1'
             FROM readings
-            WHERE timestamp >= datetime('now', '-2 days')
+            WHERE {where_sql}
             GROUP BY snapped_ts
-            HAVING snapped_ts < strftime('%Y-%m-%d %H:', datetime('now')) || 
-                   printf('%02d:00', (CAST(strftime('%M', datetime('now')) AS INTEGER) / 5) * 5)
+            HAVING snapped_ts < ({now_cut})
             ON CONFLICT(timestamp) DO UPDATE SET
                 grid_power_w    = excluded.grid_power_w,
                 import_t1       = excluded.import_t1,
@@ -417,10 +496,27 @@ def downsample_live_readings(conn):
                 capacity_peak_w = excluded.capacity_peak_w,
                 gas             = excluded.gas,
                 water           = excluded.water,
-                solar_power_w   = COALESCE(history_5min.solar_power_w, excluded.solar_power_w),
-                solar_total_kwh = COALESCE(history_5min.solar_total_kwh, excluded.solar_total_kwh),
-                data_source     = CASE WHEN history_5min.data_source = 'webbox_archive' THEN 'merged' ELSE 'live_p1' END;
-        """)
+                solar_power_w   = CASE
+                    WHEN history_5min.data_source = 'webbox_archive'
+                         AND COALESCE(excluded.solar_power_w, 0) = 0
+                         AND COALESCE(history_5min.solar_power_w, 0) > 0
+                    THEN history_5min.solar_power_w
+                    ELSE COALESCE(excluded.solar_power_w, history_5min.solar_power_w)
+                END,
+                solar_total_kwh = COALESCE(excluded.solar_total_kwh, history_5min.solar_total_kwh),
+                solar_radiation = COALESCE(excluded.solar_radiation, history_5min.solar_radiation),
+                sample_count    = excluded.sample_count,
+                data_source     = CASE
+                    WHEN history_5min.data_source = 'webbox_archive' THEN 'merged'
+                    ELSE 'live_p1'
+                END;
+        """
+    with conn:
+        cur = conn.execute(sql, where_params)
+        changed = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else -1
+    duration = time.time() - start_time
+    print(f"-> Complete in {duration:.1f}s. Upsert rowcount: {changed}")
+    return int(changed) if changed is not None else -1
 
 if __name__ == '__main__':
     args = [a.lower() for a in sys.argv]
@@ -446,6 +542,12 @@ if __name__ == '__main__':
         build_daily_history(conn, days_back=3)
         build_monthly_history(conn)
 
+    elif '-today' in args:
+        # On-demand: downsample today's readings only (same as analytics Generate table)
+        today = datetime.now().strftime('%Y-%m-%d')
+        downsample_live_readings(conn, day_iso=today)
+        build_daily_history(conn, days_back=1)
+
     elif '-purge_derived' in args:
         # Dev utility: safely wipes all derived analytical tables for fresh testing
         with conn:
@@ -463,6 +565,7 @@ if __name__ == '__main__':
         print("  python3 rollup.py -consolidate  (Snaps and merges raw staging into history_5min)")
         print("  python3 rollup.py -buildall     (Populates all daily, monthly, envelope, and top_records tables)")
         print("  python3 rollup.py -daily        (Automated nightly cron: downsamples live P1 readings)")
+        print("  python3 rollup.py -today        (On-demand: downsample today's readings into history_5min)")
         print("  python3 rollup.py -purge_derived (Dev tool: deletes all analytical data safely to restart tests)")
         
     conn.close()

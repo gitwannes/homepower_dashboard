@@ -76,20 +76,18 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 ---
 
 ## PHASE 2: MODERN UI & ANALYTICS SUITE (PRESENTATION)
-- [x] Multi-Tab Dashboard Architecture:
-      - Separated live operations (`index.php`) from historical trends (`analytics.php`).
-      - Added cross-navigation links between the two hubs.
-- [x] Implement Day Explorer (Intraday):
-      - Built SPA AJAX fetcher for 24-hour 5-minute generation curve.
-      - *(Pending: Overlay faint clear-sky envelope behind today's curve once `rollup.py` Mode C is finished).*
-- [x] Implement Two-Day Overlay:
-      - Built dual-date picker and synchronized ApexCharts comparison engine.
-- [x] Implement Month / Year Trend Views:
-      - Built yearly yield bars plotted directly against the PVGIS expected step-line (`expected_monthly`).
-- [x] Implement Hall of Fame Card:
-      - Built Top 10 Best Generation Days ranking table.
-- [ ] Verify the Analytics Dashboard:
-      - Open the host `analytics.php` URL and test rendering using the populated historical database.
+- [x] Multi-page dashboard:
+      - Live (`index.php`), exploration (`analytics.php`), period summaries (`summary.php`).
+      - Cross-navigation between hubs.
+- [x] Day Explorer (Intraday) on `analytics.php`:
+      - 24-hour 5-minute curve from `history_5min`; ←/→ + date; **Generate table** (today) downsamples `readings`.
+      - Clear-sky envelope is a separate chart (not overlaid on the day curve).
+- [x] Two-Day Overlay on `analytics.php`.
+- [x] Summary period views (`summary.php`):
+      - **All years** (lifetime bars vs PVGIS year baseline), week, month, year (months vs PVGIS).
+- [x] Hall of Fame / Top 10:
+      - Built earlier; **removed from UI** in A3 (too slow on full archive). `top_records` still populated by `-buildall`.
+- [x] Verify analytics / summary with populated rollups (A2/A3 + operator smoke).
 
 ---
 

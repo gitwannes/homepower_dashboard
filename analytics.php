@@ -1,11 +1,115 @@
 <?php
+# --- file: analytics.php ---
+/**
+ * Historical exploration: intraday, two-day overlay, clear-sky envelope.
+ * Period rollups live on summary.php.
+ */
 date_default_timezone_set('Europe/Brussels');
 
 $dbFile = __DIR__ . '/meter_history.db';
 
-// -----------------------------------------------------------------------------
-// 1. AJAX API FOR DYNAMIC CHART LOADING
-// -----------------------------------------------------------------------------
+// Reject corrupt PAC spikes in charts (same idea as rollup.py MAX_PLAUSIBLE_PAC_W).
+define('MAX_PLAUSIBLE_PAC_W', 12000.0);
+// Match rollup.py PAC_RAD_FLOOR - WebBox night / no-sun shoulder junk.
+define('PAC_RAD_FLOOR', 5.0);
+
+/**
+ * @param mixed $w PAC watts
+ * @param int|null $hour 0..23 from timestamp (null = skip night gate)
+ * @param mixed $rad solar_radiation W/m2 (null treated as 0 when hour set)
+ * @return float|null null if missing, spike, deep night, or shoulder with no sun
+ */
+function sanitize_pac_w($w, $hour = null, $rad = null)
+{
+    if ($w === null || $w === '') {
+        return null;
+    }
+    $v = (float)$w;
+    if ($v <= 0 || $v > MAX_PLAUSIBLE_PAC_W) {
+        return null;
+    }
+    if ($hour !== null) {
+        $h = (int)$hour;
+        // Deep night: never trust PAC
+        if ($h >= 22 || $h < 5) {
+            return null;
+        }
+        $r = ($rad === null || $rad === '') ? 0.0 : (float)$rad;
+        // Shoulder evening/morning: PAC without light
+        if ($r <= PAC_RAD_FLOOR && ($h >= 20 || $h < 6)) {
+            return null;
+        }
+    }
+    return $v;
+}
+
+/**
+ * Median of a numeric list (empty -> 0).
+ *
+ * @param list<float> $vals
+ */
+function median_float(array $vals): float
+{
+    $n = count($vals);
+    if ($n === 0) {
+        return 0.0;
+    }
+    sort($vals, SORT_NUMERIC);
+    $mid = (int)floor($n / 2);
+    if ($n % 2 === 1) {
+        return (float)$vals[$mid];
+    }
+    return ((float)$vals[$mid - 1] + (float)$vals[$mid]) / 2.0;
+}
+
+/**
+ * Drop PAC needles vs local median (not max). Twin adjacent spikes defeat max-of-neighbors;
+ * median + a few passes catches them. Mutates $pac / $pacDates in place.
+ *
+ * @param list<float> $pac
+ * @param list<string|null> $pacDates
+ */
+function despike_pac_series(array &$pac, array &$pacDates, int $radius = 4, float $ratio = 1.15, int $passes = 4): void
+{
+    $n = count($pac);
+    if ($n < 3) {
+        return;
+    }
+    for ($pass = 0; $pass < $passes; $pass++) {
+        $cleaned = $pac;
+        $changed = false;
+        for ($i = 0; $i < $n; $i++) {
+            if ($pac[$i] <= 0) {
+                continue;
+            }
+            $lo = max(0, $i - $radius);
+            $hi = min($n - 1, $i + $radius);
+            $neigh = [];
+            for ($j = $lo; $j <= $hi; $j++) {
+                if ($j === $i) {
+                    continue;
+                }
+                if ($pac[$j] > 0) {
+                    $neigh[] = $pac[$j];
+                }
+            }
+            if (count($neigh) < 2) {
+                continue;
+            }
+            $ref = median_float($neigh);
+            if ($ref > 0 && $pac[$i] > $ref * $ratio) {
+                $cleaned[$i] = $ref;
+                $pacDates[$i] = null;
+                $changed = true;
+            }
+        }
+        $pac = $cleaned;
+        if (!$changed) {
+            break;
+        }
+    }
+}
+
 if (isset($_GET['ajax'])) {
     header('Content-Type: application/json');
     if (!file_exists($dbFile)) {
@@ -14,10 +118,9 @@ if (isset($_GET['ajax'])) {
     }
 
     try {
-        $pdo = new PDO("sqlite:" . $dbFile);
+        $pdo = new PDO('sqlite:' . $dbFile);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-        // Helper: Generate a perfect 288-point empty day grid (00:00 to 23:55)
         function getEmptyDayTemplate() {
             $slots = [];
             for ($h = 0; $h < 24; $h++) {
@@ -30,120 +133,265 @@ if (isset($_GET['ajax'])) {
 
         $action = $_GET['ajax'];
 
-        // --- AJAX: Get single day intraday curve ---
+        if ($action === 'range') {
+            $min = null;
+            $max = null;
+            try {
+                $row = $pdo->query(
+                    "SELECT substr(MIN(timestamp), 1, 10) AS dmin, substr(MAX(timestamp), 1, 10) AS dmax
+                     FROM history_5min"
+                )->fetch(PDO::FETCH_ASSOC);
+                if ($row) {
+                    $min = $row['dmin'];
+                    $max = $row['dmax'];
+                }
+            } catch (Exception $e) {
+            }
+            echo json_encode(['min' => $min, 'max' => $max]);
+            exit;
+        }
+
+        // On-demand: downsample today's readings -> history_5min (same SQL as rollup -today).
+        // Server-side locked to Europe/Brussels "today" only.
+        if ($action === 'generate_today') {
+            $todayLocal = date('Y-m-d');
+            $nowCutSql = "strftime('%Y-%m-%d %H:', datetime('now', 'localtime')) || "
+                . "printf('%02d:00', (CAST(strftime('%M', datetime('now', 'localtime')) AS INTEGER) / 5) * 5)";
+            try {
+                $sql = "
+                    INSERT INTO history_5min (
+                        timestamp, grid_power_w, import_t1, import_t2, export_t1, export_t2,
+                        total_import, total_export, capacity_peak_w, gas, water,
+                        solar_power_w, solar_total_kwh, solar_radiation, sample_count, data_source
+                    )
+                    SELECT
+                        strftime('%Y-%m-%d %H:', timestamp) ||
+                        printf('%02d:00', (CAST(strftime('%M', timestamp) AS INTEGER) / 5) * 5) AS snapped_ts,
+                        ROUND(AVG(active_power)),
+                        MAX(import_t1), MAX(import_t2), MAX(export_t1), MAX(export_t2),
+                        MAX(total_import), MAX(total_export), MAX(capacity_peak_w),
+                        MAX(gas), MAX(water),
+                        ROUND(AVG(solar_power)), MAX(solar_total_kwh),
+                        AVG(solar_radiation),
+                        COUNT(*), 'live_p1'
+                    FROM readings
+                    WHERE timestamp LIKE ?
+                    GROUP BY snapped_ts
+                    HAVING snapped_ts < ({$nowCutSql})
+                    ON CONFLICT(timestamp) DO UPDATE SET
+                        grid_power_w    = excluded.grid_power_w,
+                        import_t1       = excluded.import_t1,
+                        import_t2       = excluded.import_t2,
+                        export_t1       = excluded.export_t1,
+                        export_t2       = excluded.export_t2,
+                        total_import    = excluded.total_import,
+                        total_export    = excluded.total_export,
+                        capacity_peak_w = excluded.capacity_peak_w,
+                        gas             = excluded.gas,
+                        water           = excluded.water,
+                        solar_power_w   = CASE
+                            WHEN history_5min.data_source = 'webbox_archive'
+                                 AND COALESCE(excluded.solar_power_w, 0) = 0
+                                 AND COALESCE(history_5min.solar_power_w, 0) > 0
+                            THEN history_5min.solar_power_w
+                            ELSE COALESCE(excluded.solar_power_w, history_5min.solar_power_w)
+                        END,
+                        solar_total_kwh = COALESCE(excluded.solar_total_kwh, history_5min.solar_total_kwh),
+                        solar_radiation = COALESCE(excluded.solar_radiation, history_5min.solar_radiation),
+                        sample_count    = excluded.sample_count,
+                        data_source     = CASE
+                            WHEN history_5min.data_source = 'webbox_archive' THEN 'merged'
+                            ELSE 'live_p1'
+                        END
+                ";
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute([$todayLocal . '%']);
+                $rowcount = $stmt->rowCount();
+                // How many 5-min slots for today now have PAC
+                $filled = (int)$pdo->query(
+                    "SELECT COUNT(*) FROM history_5min
+                     WHERE timestamp LIKE " . $pdo->quote($todayLocal . '%') . "
+                       AND COALESCE(solar_power_w, 0) > 0"
+                )->fetchColumn();
+                echo json_encode([
+                    'ok' => true,
+                    'day' => $todayLocal,
+                    'upsert_rowcount' => $rowcount,
+                    'slots_with_pac' => $filled,
+                ]);
+            } catch (Exception $e) {
+                echo json_encode(['error' => $e->getMessage()]);
+            }
+            exit;
+        }
+
         if ($action === 'day' && isset($_GET['date'])) {
-            $date = $_GET['date']; // YYYY-MM-DD
+            $date = $_GET['date'];
             $slots = getEmptyDayTemplate();
-            
-            $stmt = $pdo->prepare("SELECT strftime('%H:%M', timestamp) as time_slot, solar_power_w 
-                                   FROM history_5min 
-                                   WHERE timestamp LIKE ? 
-                                   ORDER BY timestamp ASC");
+            $stmt = $pdo->prepare(
+                "SELECT strftime('%H:%M', timestamp) as time_slot,
+                        CAST(strftime('%H', timestamp) AS INTEGER) as hh,
+                        solar_power_w, solar_radiation
+                 FROM history_5min
+                 WHERE timestamp LIKE ?
+                 ORDER BY timestamp ASC"
+            );
             $stmt->execute([$date . '%']);
-            
             while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                 if (isset($slots[$row['time_slot']])) {
-                    $slots[$row['time_slot']] = (float)$row['solar_power_w'];
+                    $pac = sanitize_pac_w($row['solar_power_w'], (int)$row['hh'], $row['solar_radiation']);
+                    $slots[$row['time_slot']] = $pac !== null ? $pac : 0.0;
                 }
             }
-            
             echo json_encode([
                 'categories' => array_keys($slots),
-                'series' => array_values($slots)
+                'series' => array_values($slots),
             ]);
             exit;
         }
 
-        // --- AJAX: Get Two-Day Overlay ---
         if ($action === 'compare' && isset($_GET['date1']) && isset($_GET['date2'])) {
             $d1 = $_GET['date1'];
             $d2 = $_GET['date2'];
-            
             $slots1 = getEmptyDayTemplate();
             $slots2 = getEmptyDayTemplate();
-
-            // Fetch Date 1
-            $stmt1 = $pdo->prepare("SELECT strftime('%H:%M', timestamp) as time_slot, solar_power_w FROM history_5min WHERE timestamp LIKE ?");
+            $stmt1 = $pdo->prepare(
+                "SELECT strftime('%H:%M', timestamp) as time_slot,
+                        CAST(strftime('%H', timestamp) AS INTEGER) as hh,
+                        solar_power_w, solar_radiation
+                 FROM history_5min WHERE timestamp LIKE ?"
+            );
             $stmt1->execute([$d1 . '%']);
             while ($row = $stmt1->fetch(PDO::FETCH_ASSOC)) {
-                if (isset($slots1[$row['time_slot']])) $slots1[$row['time_slot']] = (float)$row['solar_power_w'];
+                if (isset($slots1[$row['time_slot']])) {
+                    $pac = sanitize_pac_w($row['solar_power_w'], (int)$row['hh'], $row['solar_radiation']);
+                    $slots1[$row['time_slot']] = $pac !== null ? $pac : 0.0;
+                }
             }
-
-            // Fetch Date 2
-            $stmt2 = $pdo->prepare("SELECT strftime('%H:%M', timestamp) as time_slot, solar_power_w FROM history_5min WHERE timestamp LIKE ?");
+            $stmt2 = $pdo->prepare(
+                "SELECT strftime('%H:%M', timestamp) as time_slot,
+                        CAST(strftime('%H', timestamp) AS INTEGER) as hh,
+                        solar_power_w, solar_radiation
+                 FROM history_5min WHERE timestamp LIKE ?"
+            );
             $stmt2->execute([$d2 . '%']);
             while ($row = $stmt2->fetch(PDO::FETCH_ASSOC)) {
-                if (isset($slots2[$row['time_slot']])) $slots2[$row['time_slot']] = (float)$row['solar_power_w'];
+                if (isset($slots2[$row['time_slot']])) {
+                    $pac = sanitize_pac_w($row['solar_power_w'], (int)$row['hh'], $row['solar_radiation']);
+                    $slots2[$row['time_slot']] = $pac !== null ? $pac : 0.0;
+                }
             }
-
             echo json_encode([
                 'categories' => array_keys($slots1),
                 'series1' => array_values($slots1),
-                'series2' => array_values($slots2)
+                'series2' => array_values($slots2),
             ]);
             exit;
         }
 
-        // --- AJAX: Yearly Trends & Baselines ---
-        if ($action === 'trends') {
-            $years = [];
-            $totals = [];
-            $expected = [];
-
-            // 1. Get PVGIS expected yearly total (Assuming 30 degree inclination for baseline)
-            $expStmt = $pdo->query("SELECT SUM(expected_kwh) as yearly_expected FROM expected_monthly WHERE inclination = 30");
-            $expRow = $expStmt->fetch(PDO::FETCH_ASSOC);
-            $baseline = $expRow ? (float)$expRow['yearly_expected'] : 0;
-
-            // 2. Get actuals per year from daily rollups
+        // month=1..12 or month=0 / all = whole-year composite (MAX across months per timepoint)
+        if ($action === 'envelope' && isset($_GET['month'])) {
+            $monthRaw = strtolower(trim((string)$_GET['month']));
+            $wholeYear = ($monthRaw === '0' || $monthRaw === 'all' || $monthRaw === 'year');
+            $month = (int)$monthRaw;
+            if (!$wholeYear && ($month < 1 || $month > 12)) {
+                echo json_encode(['error' => 'Invalid month']);
+                exit;
+            }
+            $categories = [];
+            $pac = [];
+            $rad = [];
+            $pacDates = [];
+            for ($tp = 0; $tp < 288; $tp++) {
+                $h = (int)floor($tp / 12);
+                $mi = ($tp % 12) * 5;
+                $categories[] = sprintf('%02d:%02d', $h, $mi);
+                $pac[] = 0.0;
+                $rad[] = 0.0;
+                $pacDates[] = null;
+            }
+            $filled = 0;
             try {
-                $stmt = $pdo->query("SELECT strftime('%Y', date) as yr, SUM(solar_yield_kwh) as total 
-                                     FROM daily_history 
-                                     GROUP BY yr ORDER BY yr ASC");
+                if ($wholeYear) {
+                    $stmt = $pdo->query(
+                        'SELECT timepoint, max_pac_w, max_pac_date, max_rad_wm2, month
+                         FROM clear_sky_envelopes ORDER BY timepoint ASC, month ASC'
+                    );
+                } else {
+                    $stmt = $pdo->prepare(
+                        'SELECT timepoint, max_pac_w, max_pac_date, max_rad_wm2, month
+                         FROM clear_sky_envelopes WHERE month = ? ORDER BY timepoint ASC'
+                    );
+                    $stmt->execute([$month]);
+                }
                 while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-                    if ($row['yr']) {
-                        $years[] = $row['yr'];
-                        $totals[] = round((float)$row['total'], 1);
-                        $expected[] = round($baseline, 1);
+                    $tp = (int)$row['timepoint'];
+                    if ($tp < 0 || $tp > 287) {
+                        continue;
+                    }
+                    if ($row['max_pac_w'] !== null) {
+                        $v = sanitize_pac_w($row['max_pac_w']);
+                        if ($v !== null && $v >= $pac[$tp]) {
+                            $pac[$tp] = $v;
+                            $pacDates[$tp] = $row['max_pac_date'];
+                            if ($wholeYear && !empty($row['month'])) {
+                                $pacDates[$tp] = $row['max_pac_date']
+                                    ? ($row['max_pac_date'] . ' (m' . (int)$row['month'] . ')')
+                                    : ('m' . (int)$row['month']);
+                            }
+                        }
+                        if ($v !== null) {
+                            $filled++;
+                        }
+                    }
+                    if ($row['max_rad_wm2'] !== null) {
+                        $rv = (float)$row['max_rad_wm2'];
+                        if ($rv > $rad[$tp]) {
+                            $rad[$tp] = $rv;
+                        }
                     }
                 }
             } catch (Exception $e) {
-                // table might not exist yet
+                echo json_encode([
+                    'error' => 'clear_sky_envelopes missing - run rollup.py -buildall',
+                    'detail' => $e->getMessage(),
+                ]);
+                exit;
             }
+            // Soft despike: hard cap alone leaves mid-range corrupt surges (e.g. ~8 kW needles).
+            despike_pac_series($pac, $pacDates);
 
+            // Count slots that actually have power (avoid counting zero-filled blanks as filled)
+            $nonzero = 0;
+            foreach ($pac as $v) {
+                if ($v > 0) {
+                    $nonzero++;
+                }
+            }
             echo json_encode([
-                'years' => $years,
-                'actuals' => $totals,
-                'expected' => $expected,
-                'baseline' => $baseline
+                'month' => $wholeYear ? 0 : $month,
+                'label' => $wholeYear ? 'Whole year' : $month,
+                'filled' => $nonzero,
+                'categories' => $categories,
+                'max_pac_w' => $pac,
+                'max_rad_wm2' => $rad,
+                'max_pac_date' => $pacDates,
             ]);
             exit;
         }
 
-        // --- AJAX: Hall of Fame (Top Days) ---
-        if ($action === 'records') {
-            $topDays = [];
-            try {
-                $stmt = $pdo->query("SELECT date, solar_yield_kwh, solar_peak_w 
-                                     FROM daily_history 
-                                     WHERE solar_yield_kwh > 0 
-                                     ORDER BY solar_yield_kwh DESC LIMIT 10");
-                $topDays = $stmt->fetchAll(PDO::FETCH_ASSOC);
-            } catch (Exception $e) {}
-
-            echo json_encode(['top_days' => $topDays]);
-            exit;
-        }
-
+        echo json_encode(['error' => 'Unknown action']);
     } catch (Exception $e) {
         echo json_encode(['error' => $e->getMessage()]);
-        exit;
     }
     exit;
 }
-// -----------------------------------------------------------------------------
-// END AJAX API
-// -----------------------------------------------------------------------------
+
+$today = date('Y-m-d');
+$yesterday = date('Y-m-d', strtotime('-1 day'));
+$defaultDay = $yesterday;
+$defaultCompare1 = $today;
+$defaultCompare2 = $yesterday;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -157,18 +405,37 @@ if (isset($_GET['ajax'])) {
     <style>
         body { background-color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
         .card { @apply bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex flex-col; }
-        .tab-btn { @apply pb-3 px-1 border-b-2 font-medium text-sm transition-colors cursor-pointer; }
-        .tab-btn.active { @apply border-indigo-600 text-indigo-600; }
-        .tab-btn.inactive { @apply border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300; }
-        .tab-content { @apply hidden; }
-        .tab-content.active { @apply block animate-in fade-in duration-300; }
+        .jump-btn {
+            @apply text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white
+                   text-slate-600 hover:bg-slate-50 hover:text-indigo-600 transition-colors cursor-pointer;
+        }
+        .nav-arrow {
+            @apply w-9 h-9 rounded-xl bg-white border border-slate-200 text-slate-700
+                   flex items-center justify-center hover:bg-slate-50 shadow-sm transition-colors cursor-pointer;
+        }
+        .date-wrap {
+            @apply inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 pl-2 pr-1 py-0.5;
+        }
+        .date-wrap input[type="text"] {
+            @apply text-sm px-1 py-1 bg-transparent border-0 outline-none text-slate-700 font-mono w-[9.5rem];
+        }
+        .date-icon-btn {
+            @apply w-8 h-8 rounded-md text-slate-500 hover:text-indigo-600 hover:bg-white
+                   flex items-center justify-center transition-colors cursor-pointer;
+        }
+        .date-native {
+            position: absolute;
+            opacity: 0;
+            width: 0;
+            height: 0;
+            pointer-events: none;
+        }
     </style>
 </head>
 <body class="p-4 md:p-8">
 
 <div class="max-w-6xl mx-auto space-y-6">
 
-    <!-- Header Navigation -->
     <header class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
             <div class="flex items-center gap-3">
@@ -177,115 +444,127 @@ if (isset($_GET['ajax'])) {
                 </a>
                 <div>
                     <h1 class="text-2xl font-black text-slate-900 tracking-tight">Historical Analytics</h1>
-                    <p class="text-xs text-slate-400 mt-0.5">Explore trends and diurnal curves</p>
+                    <p class="text-xs text-slate-400 mt-0.5">Intraday, day compare, clear-sky envelope</p>
                 </div>
             </div>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="flex flex-wrap items-center gap-2">
             <a href="index.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                 <i data-lucide="activity" class="w-3.5 h-3.5 text-emerald-600"></i> Live Dashboard
+            </a>
+            <a href="summary.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
+                <i data-lucide="calendar-range" class="w-3.5 h-3.5 text-emerald-600"></i> Summary
             </a>
         </div>
     </header>
 
-    <!-- Tab Navigation -->
-    <div class="border-b border-slate-200">
-        <nav class="-mb-px flex gap-6" aria-label="Tabs">
-            <button onclick="switchTab('tab-intraday', this)" class="tab-btn active">Intraday Explorer</button>
-            <button onclick="switchTab('tab-compare', this)" class="tab-btn inactive">Two-Day Overlay</button>
-            <button onclick="switchTab('tab-trends', this)" class="tab-btn inactive" onclick="loadTrends()">Yearly Trends</button>
-            <button onclick="switchTab('tab-records', this)" class="tab-btn inactive" onclick="loadRecords()">Hall of Fame</button>
-        </nav>
-    </div>
-
-    <!-- TAB 1: Intraday Explorer -->
-    <div id="tab-intraday" class="tab-content active">
-        <div class="card border-t-4 border-t-amber-500">
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-                <div>
-                    <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
-                        <i data-lucide="sun" class="w-5 h-5 text-amber-500"></i> Daily Generation Curve
-                    </h2>
-                    <p class="text-xs text-slate-400">View the 5-minute profile for any day in history</p>
-                </div>
-                <div class="flex items-center gap-2">
-                    <input type="date" id="singleDate" value="<?= date('Y-m-d', strtotime('-1 day')) ?>" class="text-sm px-3 py-1.5 border border-slate-200 rounded-lg text-slate-700 bg-slate-50 focus:ring-2 focus:ring-amber-500 outline-none">
-                    <button onclick="loadIntraday()" class="bg-slate-900 hover:bg-slate-800 text-white px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors">Load</button>
-                </div>
+    <div class="card border-t-4 border-t-amber-500">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+            <div>
+                <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <i data-lucide="sun" class="w-5 h-5 text-amber-500"></i> Daily Generation Curve
+                </h2>
+                <p class="text-xs text-slate-400">5-minute profile from history_5min - type a date or open the calendar</p>
             </div>
-            <div id="chart-intraday" class="w-full h-[400px]"></div>
+            <div class="flex flex-wrap items-center gap-2">
+                <button type="button" class="jump-btn" onclick="goToToday()" title="Jump to today">Today</button>
+                <button type="button" id="btnGenerateToday" class="jump-btn hidden"
+                        onclick="generateTodayTable()"
+                        title="Downsample today's 1-min readings into history_5min">Generate table</button>
+                <button type="button" class="nav-arrow" onclick="stepIntraday(-1)" title="Previous day" aria-label="Previous day">
+                    <i data-lucide="chevron-left" class="w-5 h-5"></i>
+                </button>
+                <div class="date-wrap relative">
+                    <input type="text" id="singleDateText" inputmode="numeric" placeholder="YYYY-MM-DD" maxlength="10"
+                           value="<?= htmlspecialchars($defaultDay) ?>" autocomplete="off" spellcheck="false">
+                    <input type="date" id="singleDatePicker" class="date-native" value="<?= htmlspecialchars($defaultDay) ?>" tabindex="-1" aria-hidden="true">
+                    <button type="button" class="date-icon-btn" title="Open calendar" aria-label="Open calendar"
+                            onclick="openDatePicker('singleDatePicker')">
+                        <i data-lucide="calendar" class="w-4 h-4"></i>
+                    </button>
+                </div>
+                <button type="button" class="nav-arrow" onclick="stepIntraday(1)" title="Next day" aria-label="Next day">
+                    <i data-lucide="chevron-right" class="w-5 h-5"></i>
+                </button>
+            </div>
         </div>
+        <div id="chart-intraday" class="w-full h-[400px]"></div>
     </div>
 
-    <!-- TAB 2: Two-Day Overlay -->
-    <div id="tab-compare" class="tab-content">
-        <div class="card border-t-4 border-t-indigo-500">
-            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-                <div>
-                    <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
-                        <i data-lucide="layers" class="w-5 h-5 text-indigo-500"></i> Two-Day Overlay
-                    </h2>
-                    <p class="text-xs text-slate-400">Compare generation curves across different days or years</p>
-                </div>
-                <div class="flex flex-wrap items-center gap-3 bg-slate-50 p-2 rounded-xl border border-slate-100">
-                    <div class="flex items-center gap-2">
-                        <span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
-                        <input type="date" id="compareDate1" value="<?= date('Y-m-d', strtotime('-1 day')) ?>" class="text-sm px-2 py-1 border border-slate-200 rounded text-slate-700">
+    <div class="card border-t-4 border-t-indigo-500">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+            <div>
+                <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <i data-lucide="layers" class="w-5 h-5 text-indigo-500"></i> Two-Day Overlay
+                </h2>
+                <p class="text-xs text-slate-400">Defaults: today vs yesterday - type or use the calendar icon</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-3 bg-slate-50 p-2 rounded-xl border border-slate-100">
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
+                    <div class="date-wrap relative">
+                        <input type="text" id="compareText1" inputmode="numeric" placeholder="YYYY-MM-DD" maxlength="10"
+                               value="<?= htmlspecialchars($defaultCompare1) ?>" autocomplete="off" spellcheck="false">
+                        <input type="date" id="comparePicker1" class="date-native" value="<?= htmlspecialchars($defaultCompare1) ?>" tabindex="-1" aria-hidden="true">
+                        <button type="button" class="date-icon-btn" title="Open calendar" aria-label="Open calendar"
+                                onclick="openDatePicker('comparePicker1')">
+                            <i data-lucide="calendar" class="w-4 h-4"></i>
+                        </button>
                     </div>
-                    <span class="text-slate-400 text-xs font-bold uppercase">VS</span>
-                    <div class="flex items-center gap-2">
-                        <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
-                        <input type="date" id="compareDate2" value="<?= date('Y-m-d', strtotime('-1 year -1 day')) ?>" class="text-sm px-2 py-1 border border-slate-200 rounded text-slate-700">
+                </div>
+                <span class="text-slate-400 text-xs font-bold uppercase">VS</span>
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                    <div class="date-wrap relative">
+                        <input type="text" id="compareText2" inputmode="numeric" placeholder="YYYY-MM-DD" maxlength="10"
+                               value="<?= htmlspecialchars($defaultCompare2) ?>" autocomplete="off" spellcheck="false">
+                        <input type="date" id="comparePicker2" class="date-native" value="<?= htmlspecialchars($defaultCompare2) ?>" tabindex="-1" aria-hidden="true">
+                        <button type="button" class="date-icon-btn" title="Open calendar" aria-label="Open calendar"
+                                onclick="openDatePicker('comparePicker2')">
+                            <i data-lucide="calendar" class="w-4 h-4"></i>
+                        </button>
                     </div>
-                    <button onclick="loadComparison()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors shadow-sm">Compare</button>
                 </div>
             </div>
-            <div id="chart-compare" class="w-full h-[400px]"></div>
         </div>
+        <div id="chart-compare" class="w-full h-[400px]"></div>
     </div>
 
-    <!-- TAB 3: Yearly Trends -->
-    <div id="tab-trends" class="tab-content">
-        <div class="card border-t-4 border-t-emerald-500">
-            <div class="flex flex-col sm:flex-row justify-between mb-4">
-                <div>
-                    <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
-                        <i data-lucide="trending-up" class="w-5 h-5 text-emerald-500"></i> Lifetime Yearly Generation
-                    </h2>
-                    <p class="text-xs text-slate-400">Actual yield vs PVGIS expected baseline</p>
-                </div>
+    <div class="card border-t-4 border-t-sky-500">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
+            <div>
+                <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <i data-lucide="cloud-sun" class="w-5 h-5 text-sky-500"></i> Clear-sky Envelope
+                </h2>
+                <p class="text-xs text-slate-400">
+                    All-time max AC power at each 5-min slot
+                    (<code>clear_sky_envelopes</code>).
+                </p>
             </div>
-            <div id="chart-trends" class="w-full h-[400px]"></div>
-            <div id="trends-warning" class="hidden text-xs text-amber-600 bg-amber-50 border border-amber-200 p-3 rounded-xl mt-4">
-                <i data-lucide="alert-circle" class="w-4 h-4 inline mr-1"></i> Data missing. Ensure you have run <code>python3 rollup.py</code> to generate the daily aggregations.
-            </div>
-        </div>
-    </div>
-
-    <!-- TAB 4: Hall of Fame -->
-    <div id="tab-records" class="tab-content">
-        <div class="card border-t-4 border-t-rose-500">
-            <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2 mb-1">
-                <i data-lucide="award" class="w-5 h-5 text-rose-500"></i> Hall of Fame: Top 10 Days
-            </h2>
-            <p class="text-xs text-slate-400 mb-6">The highest generating days in system history</p>
-
-            <div class="overflow-x-auto rounded-xl border border-slate-100 bg-slate-50/50">
-                <table class="w-full text-left border-collapse whitespace-nowrap text-sm">
-                    <thead class="text-xs uppercase tracking-wider text-slate-500 border-b border-slate-200">
-                        <tr>
-                            <th class="py-3 px-4 font-semibold">Rank</th>
-                            <th class="py-3 px-4 font-semibold">Date</th>
-                            <th class="py-3 px-4 font-semibold text-right">Yield (kWh)</th>
-                            <th class="py-3 px-4 font-semibold text-right">Peak Power (W)</th>
-                        </tr>
-                    </thead>
-                    <tbody id="records-tbody" class="divide-y divide-slate-100 font-mono text-slate-700 bg-white">
-                        <tr><td colspan="4" class="py-6 text-center text-slate-400 text-xs font-sans">Loading records... (Requires daily rollups)</td></tr>
-                    </tbody>
-                </table>
+            <div class="flex flex-wrap items-center gap-2">
+                <button type="button" class="nav-arrow" onclick="stepEnvelope(-1)" title="Previous" aria-label="Previous period">
+                    <i data-lucide="chevron-left" class="w-5 h-5"></i>
+                </button>
+                <select id="envelopeMonth" class="text-sm px-3 py-1.5 border border-slate-200 rounded-lg text-slate-700 bg-slate-50 min-w-[8rem]"
+                        onchange="loadEnvelope()">
+                    <option value="0">Whole year</option>
+                    <?php
+                    $monthNames = [1=>'January',2=>'February',3=>'March',4=>'April',5=>'May',6=>'June',
+                                   7=>'July',8=>'August',9=>'September',10=>'October',11=>'November',12=>'December'];
+                    $curM = (int)date('n');
+                    foreach ($monthNames as $num => $name) {
+                        $sel = ($num === $curM) ? ' selected' : '';
+                        echo "<option value=\"{$num}\"{$sel}>{$name}</option>\n";
+                    }
+                    ?>
+                </select>
+                <button type="button" class="nav-arrow" onclick="stepEnvelope(1)" title="Next" aria-label="Next period">
+                    <i data-lucide="chevron-right" class="w-5 h-5"></i>
+                </button>
             </div>
         </div>
+        <div id="chart-envelope" class="w-full h-[400px]"></div>
+        <div id="envelope-warning" class="hidden text-xs text-amber-600 bg-amber-50 border border-amber-200 p-3 rounded-xl mt-4"></div>
     </div>
 
 </div>
@@ -293,152 +572,376 @@ if (isset($_GET['ajax'])) {
 <script>
     lucide.createIcons();
 
-    // Store chart instances so we can update them safely
+    const TODAY_ISO = <?= json_encode($today) ?>;
+
     let chartIntraday = null;
     let chartCompare = null;
-    let chartTrends = null;
+    let chartEnvelope = null;
+    /** @type {{min: string|null, max: string|null}} */
+    let dayRange = { min: null, max: null };
 
-    // UI Tab Switcher
-    function switchTab(tabId, btn) {
-        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-        document.querySelectorAll('.tab-btn').forEach(b => {
-            b.classList.remove('active', 'border-indigo-600', 'text-indigo-600');
-            b.classList.add('inactive');
-        });
-        
-        document.getElementById(tabId).classList.add('active');
-        btn.classList.remove('inactive');
-        btn.classList.add('active', 'border-indigo-600', 'text-indigo-600');
-
-        // Lazy load data if appropriate tab is clicked
-        if (tabId === 'tab-intraday' && !chartIntraday) loadIntraday();
-        if (tabId === 'tab-compare' && !chartCompare) loadComparison();
-        if (tabId === 'tab-trends' && !chartTrends) loadTrends();
-        if (tabId === 'tab-records') loadRecords();
+    /**
+     * Dense 288-point time axes: label whole hours only.
+     * Resolve numeric index -> category (Apex sometimes passes the index).
+     */
+    function hourOnlyLabel(val, opts) {
+        let s = val;
+        if (typeof val === 'number') {
+            const cats = (opts && opts.w && opts.w.config && opts.w.config.xaxis && opts.w.config.xaxis.categories) || [];
+            s = cats[val] != null ? cats[val] : '';
+        }
+        if (typeof s !== 'string') return '';
+        return s.endsWith(':00') ? s : '';
     }
 
-    // Standard chart options
+    const timeAxisLabels = {
+        rotate: 0,
+        rotateAlways: false,
+        hideOverlappingLabels: true,
+        showDuplicates: false,
+        trim: false,
+        style: { colors: '#94a3b8', fontSize: '10px' },
+        formatter: hourOnlyLabel
+    };
+
+    /**
+     * Custom tooltip: Apex reuses blanked axis labels for the title when hourOnlyLabel
+     * returns '' for non-:00 ticks. Always read HH:MM from config.categories.
+     */
+    function pacTooltip(opts) {
+        const cats = (opts.w && opts.w.config && opts.w.config.xaxis && opts.w.config.xaxis.categories) || [];
+        const i = opts.dataPointIndex;
+        const time = (i != null && cats[i] != null) ? String(cats[i]) : '';
+        const series = opts.w.config.series || [];
+        const colors = opts.w.globals.colors || [];
+        let rows = '';
+        for (let s = 0; s < series.length; s++) {
+            const raw = opts.series[s][i];
+            if (raw == null) continue;
+            const name = series[s].name || '';
+            const color = colors[s] || '#64748b';
+            let extra = '';
+            if (opts.pacDates && opts.pacDates[i]) {
+                extra = ' (on ' + opts.pacDates[i] + ')';
+            }
+            rows += '<div class="apexcharts-tooltip-series-group" style="display:flex;align-items:center;gap:6px;padding:2px 0">'
+                + '<span style="width:8px;height:8px;border-radius:50%;background:' + color + ';flex-shrink:0"></span>'
+                + '<span style="font-size:12px;color:#0f172a"><strong>' + name + ':</strong> '
+                + Math.round(Number(raw)) + ' W' + extra + '</span></div>';
+        }
+        return '<div class="apexcharts-tooltip-title" style="font-family:inherit;font-size:12px;margin-bottom:4px">'
+            + (time ? ('Time: ' + time) : '')
+            + '</div>' + rows;
+    }
+
+    function stepEnvelope(delta) {
+        const sel = document.getElementById('envelopeMonth');
+        const opts = Array.from(sel.options).map((o) => o.value);
+        let idx = opts.indexOf(sel.value);
+        if (idx < 0) idx = 0;
+        idx = (idx + delta + opts.length) % opts.length;
+        sel.value = opts[idx];
+        loadEnvelope();
+    }
+
     const baseChartOptions = {
         chart: { toolbar: { show: true }, zoom: { enabled: true }, animations: { enabled: false } },
         dataLabels: { enabled: false },
         stroke: { curve: 'smooth', width: 2 },
-        xaxis: { tickAmount: 12, labels: { style: { colors: '#94a3b8', fontSize: '10px' } } },
+        xaxis: { type: 'category', labels: timeAxisLabels },
         yaxis: { labels: { style: { colors: '#94a3b8', fontSize: '10px' } } },
         grid: { borderColor: '#f1f5f9', strokeDashArray: 4 }
     };
 
-    // 1. Intraday Explorer
-    async function loadIntraday() {
-        const date = document.getElementById('singleDate').value;
-        if(!date) return;
-        
-        const res = await fetch(`analytics.php?ajax=day&date=${date}`);
-        const data = await res.json();
+    function isValidIsoDate(s) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+        return !Number.isNaN(Date.parse(s + 'T12:00:00'));
+    }
 
-        if (chartIntraday) {
-            chartIntraday.updateSeries([{ name: 'Solar Output (W)', data: data.series }]);
+    function openDatePicker(pickerId) {
+        const el = document.getElementById(pickerId);
+        if (!el) return;
+        try {
+            if (typeof el.showPicker === 'function') {
+                el.showPicker();
+                return;
+            }
+        } catch (e) {
+        }
+        el.focus();
+        el.click();
+    }
+
+    function bindDateField(textId, pickerId, onValid) {
+        const text = document.getElementById(textId);
+        const picker = document.getElementById(pickerId);
+        picker.addEventListener('change', () => {
+            text.value = picker.value;
+            if (isValidIsoDate(picker.value)) onValid(picker.value);
+        });
+        ['input', 'change', 'blur'].forEach((ev) => {
+            text.addEventListener(ev, () => {
+                const v = text.value.trim();
+                if (isValidIsoDate(v)) {
+                    picker.value = v;
+                    onValid(v);
+                }
+            });
+        });
+    }
+
+    function addDaysIso(iso, delta) {
+        const t = new Date(iso + 'T12:00:00');
+        t.setDate(t.getDate() + delta);
+        const y = t.getFullYear();
+        const m = String(t.getMonth() + 1).padStart(2, '0');
+        const d = String(t.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+    }
+
+    function setIntradayDate(iso, reload) {
+        if (!isValidIsoDate(iso)) return;
+        document.getElementById('singleDatePicker').value = iso;
+        document.getElementById('singleDateText').value = iso;
+        updateGenerateTodayBtn();
+        if (reload) loadIntraday();
+    }
+
+    function goToToday() {
+        setIntradayDate(TODAY_ISO, true);
+        updateGenerateTodayBtn();
+    }
+
+    /** Show Generate table only when the intraday date is today (Brussels). */
+    function updateGenerateTodayBtn() {
+        const btn = document.getElementById('btnGenerateToday');
+        if (!btn) return;
+        const d = document.getElementById('singleDateText').value.trim();
+        if (d === TODAY_ISO) {
+            btn.classList.remove('hidden');
         } else {
-            const options = { ...baseChartOptions,
-                series: [{ name: 'Solar Output (W)', data: data.series }],
-                chart: { ...baseChartOptions.chart, type: 'area', height: 400 },
-                colors: ['#f59e0b'],
-                fill: { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.05, stops: [0, 100] } },
-                xaxis: { ...baseChartOptions.xaxis, categories: data.categories },
-                tooltip: { x: { formatter: (val) => `Time: ${val}` }, y: { formatter: (val) => `${val} W` } }
-            };
-            chartIntraday = new ApexCharts(document.querySelector("#chart-intraday"), options);
-            chartIntraday.render();
+            btn.classList.add('hidden');
         }
     }
 
-    // 2. Two-Day Overlay
-    async function loadComparison() {
-        const d1 = document.getElementById('compareDate1').value;
-        const d2 = document.getElementById('compareDate2').value;
-        if(!d1 || !d2) return;
+    /**
+     * Downsample today's readings into history_5min, then reload the curve.
+     */
+    async function generateTodayTable() {
+        const btn = document.getElementById('btnGenerateToday');
+        if (!btn || btn.disabled) return;
+        const cur = document.getElementById('singleDateText').value.trim();
+        if (cur !== TODAY_ISO) {
+            updateGenerateTodayBtn();
+            return;
+        }
+        const prev = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Generating...';
+        try {
+            const res = await fetch('analytics.php?ajax=generate_today');
+            const data = await res.json();
+            if (data.error) {
+                alert('Generate failed: ' + data.error);
+                return;
+            }
+            await loadIntraday();
+            btn.textContent = 'Updated (' + (data.slots_with_pac || 0) + ' slots)';
+            setTimeout(() => { btn.textContent = prev; }, 2500);
+        } catch (e) {
+            alert('Generate failed: network or server error');
+            btn.textContent = prev;
+        } finally {
+            btn.disabled = false;
+            updateGenerateTodayBtn();
+        }
+    }
 
-        const res = await fetch(`analytics.php?ajax=compare&date1=${d1}&date2=${d2}`);
+    function stepIntraday(delta) {
+        const cur = document.getElementById('singleDateText').value.trim();
+        if (!isValidIsoDate(cur)) return;
+        let next = addDaysIso(cur, delta);
+        if (dayRange.min && dayRange.max) {
+            if (next < dayRange.min) next = dayRange.max;
+            if (next > dayRange.max) next = dayRange.min;
+        }
+        setIntradayDate(next, true);
+    }
+
+    async function loadIntraday() {
+        const date = document.getElementById('singleDateText').value.trim();
+        if (!isValidIsoDate(date)) return;
+
+        const res = await fetch(`analytics.php?ajax=day&date=${encodeURIComponent(date)}`);
         const data = await res.json();
+        if (data.error) return;
 
-        if (chartCompare) {
-            chartCompare.updateSeries([
+        const options = {
+            ...baseChartOptions,
+            series: [{ name: 'Solar Output (W)', data: data.series }],
+            chart: { ...baseChartOptions.chart, type: 'area', height: 400 },
+            colors: ['#f59e0b'],
+            fill: {
+                type: 'gradient',
+                gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.05, stops: [0, 100] }
+            },
+            xaxis: { type: 'category', categories: data.categories, labels: timeAxisLabels },
+            tooltip: {
+                custom: function (opts) {
+                    return pacTooltip(opts);
+                }
+            }
+        };
+        if (chartIntraday) {
+            chartIntraday.destroy();
+            chartIntraday = null;
+        }
+        const host = document.querySelector('#chart-intraday');
+        host.innerHTML = '';
+        chartIntraday = new ApexCharts(host, options);
+        chartIntraday.render();
+    }
+
+    let compareLoadTimer = null;
+
+    async function loadComparison() {
+        const host = document.querySelector('#chart-compare');
+        const d1 = document.getElementById('compareText1').value.trim();
+        const d2 = document.getElementById('compareText2').value.trim();
+        if (!isValidIsoDate(d1) || !isValidIsoDate(d2)) return;
+
+        const res = await fetch(
+            `analytics.php?ajax=compare&date1=${encodeURIComponent(d1)}&date2=${encodeURIComponent(d2)}`
+        );
+        const data = await res.json();
+        if (data.error) return;
+
+        const options = {
+            ...baseChartOptions,
+            series: [
                 { name: d1, data: data.series1 },
                 { name: d2, data: data.series2 }
-            ]);
-        } else {
-            const options = { ...baseChartOptions,
-                series: [
-                    { name: d1, data: data.series1 },
-                    { name: d2, data: data.series2 }
-                ],
-                chart: { ...baseChartOptions.chart, type: 'line', height: 400 },
-                colors: ['#4f46e5', '#f59e0b'],
-                xaxis: { ...baseChartOptions.xaxis, categories: data.categories },
-                tooltip: { shared: true, intersect: false, y: { formatter: (val) => `${val} W` } }
-            };
-            chartCompare = new ApexCharts(document.querySelector("#chart-compare"), options);
-            chartCompare.render();
-        }
-    }
-
-    // 3. Yearly Trends
-    async function loadTrends() {
-        const res = await fetch(`analytics.php?ajax=trends`);
-        const data = await res.json();
-
-        if (data.years && data.years.length > 0) {
-            document.getElementById('trends-warning').classList.add('hidden');
-            if (chartTrends) {
-                chartTrends.updateSeries([
-                    { name: 'Actual Generation (kWh)', type: 'column', data: data.actuals },
-                    { name: 'PVGIS Expected Baseline', type: 'line', data: data.expected }
-                ]);
-            } else {
-                const options = { ...baseChartOptions,
-                    series: [
-                        { name: 'Actual Generation (kWh)', type: 'column', data: data.actuals },
-                        { name: 'PVGIS Expected Baseline', type: 'line', data: data.expected }
-                    ],
-                    chart: { type: 'line', height: 400, toolbar: { show: false } },
-                    stroke: { width: [0, 3], curve: 'straight', dashArray: [0, 8] },
-                    colors: ['#10b981', '#cbd5e1'],
-                    xaxis: { categories: data.years, labels: { style: { colors: '#64748b', fontSize: '11px', fontWeight: 'bold' } } },
-                    yaxis: { title: { text: "Yield (kWh)", style: { color: '#94a3b8', fontSize: '10px' } } },
-                    tooltip: { shared: true, intersect: false, y: { formatter: (val) => `${val.toLocaleString()} kWh` } }
-                };
-                chartTrends = new ApexCharts(document.querySelector("#chart-trends"), options);
-                chartTrends.render();
+            ],
+            chart: { ...baseChartOptions.chart, type: 'line', height: 400 },
+            colors: ['#4f46e5', '#f59e0b'],
+            xaxis: { type: 'category', categories: data.categories, labels: timeAxisLabels },
+            tooltip: {
+                custom: function (opts) {
+                    return pacTooltip(opts);
+                }
             }
-        } else {
-            document.getElementById('trends-warning').classList.remove('hidden');
+        };
+        if (chartCompare) {
+            chartCompare.destroy();
+            chartCompare = null;
         }
+        host.innerHTML = '';
+        chartCompare = new ApexCharts(host, options);
+        chartCompare.render();
     }
 
-    // 4. Hall of Fame Records
-    async function loadRecords() {
-        const res = await fetch(`analytics.php?ajax=records`);
-        const data = await res.json();
-        const tbody = document.getElementById('records-tbody');
-
-        if (data.top_days && data.top_days.length > 0) {
-            tbody.innerHTML = '';
-            data.top_days.forEach((day, index) => {
-                const row = document.createElement('tr');
-                row.className = 'hover:bg-slate-50/80 transition-colors group';
-                row.innerHTML = `
-                    <td class="py-2.5 px-4 font-bold text-slate-400 group-hover:text-rose-500">#${index + 1}</td>
-                    <td class="py-2.5 px-4 text-slate-800 font-semibold">${day.date}</td>
-                    <td class="py-2.5 px-4 text-right font-black text-rose-600">${parseFloat(day.solar_yield_kwh).toFixed(2)}</td>
-                    <td class="py-2.5 px-4 text-right text-slate-500">${day.solar_peak_w ? parseInt(day.solar_peak_w) : '-'}</td>
-                `;
-                tbody.appendChild(row);
-            });
-        }
+    function scheduleCompareLoad() {
+        if (compareLoadTimer) clearTimeout(compareLoadTimer);
+        compareLoadTimer = setTimeout(() => { loadComparison(); }, 200);
     }
 
-    // Initial load for default tab
-    document.addEventListener("DOMContentLoaded", () => {
+    let intradayLoadTimer = null;
+    function scheduleIntradayLoad() {
+        if (intradayLoadTimer) clearTimeout(intradayLoadTimer);
+        intradayLoadTimer = setTimeout(() => { loadIntraday(); }, 200);
+    }
+
+    async function loadEnvelope() {
+        const month = document.getElementById('envelopeMonth').value;
+        const warn = document.getElementById('envelope-warning');
+        const host = document.querySelector('#chart-envelope');
+        warn.classList.add('hidden');
+        warn.textContent = '';
+
+        let data;
+        try {
+            const res = await fetch(`analytics.php?ajax=envelope&month=${encodeURIComponent(month)}`);
+            data = await res.json();
+        } catch (e) {
+            warn.textContent = 'Failed to load envelope data.';
+            warn.classList.remove('hidden');
+            return;
+        }
+
+        if (data.error) {
+            warn.textContent = data.error + (data.detail ? ' (' + data.detail + ')' : '');
+            warn.classList.remove('hidden');
+            if (chartEnvelope) { chartEnvelope.destroy(); chartEnvelope = null; }
+            return;
+        }
+        if (!data.filled) {
+            warn.textContent = 'No envelope data for this period in clear_sky_envelopes. Re-run: python3 rollup.py -buildall';
+            warn.classList.remove('hidden');
+            if (chartEnvelope) { chartEnvelope.destroy(); chartEnvelope = null; }
+            return;
+        }
+
+        const pacDates = data.max_pac_date || [];
+        const seriesName = (data.month === 0) ? 'Whole-year max PAC (W)' : 'Max PAC (W)';
+        const options = {
+            chart: {
+                type: 'area',
+                height: 400,
+                toolbar: { show: true },
+                animations: { enabled: false },
+                redrawOnParentResize: true,
+                redrawOnWindowResize: true
+            },
+            series: [{ name: seriesName, data: data.max_pac_w }],
+            colors: ['#0ea5e9'],
+            dataLabels: { enabled: false },
+            stroke: { curve: 'smooth', width: 2 },
+            fill: {
+                type: 'gradient',
+                gradient: { shadeIntensity: 1, opacityFrom: 0.35, opacityTo: 0.05, stops: [0, 100] }
+            },
+            xaxis: { type: 'category', categories: data.categories, labels: timeAxisLabels },
+            yaxis: {
+                title: { text: 'PAC (W)', style: { color: '#94a3b8', fontSize: '10px' } },
+                labels: { style: { colors: '#94a3b8', fontSize: '10px' } }
+            },
+            grid: { borderColor: '#f1f5f9', strokeDashArray: 4 },
+            tooltip: {
+                custom: function (opts) {
+                    opts.pacDates = pacDates;
+                    return pacTooltip(opts);
+                }
+            }
+        };
+        if (chartEnvelope) {
+            chartEnvelope.destroy();
+            chartEnvelope = null;
+        }
+        host.innerHTML = '';
+        chartEnvelope = new ApexCharts(host, options);
+        await chartEnvelope.render();
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        try {
+            const rr = await fetch('analytics.php?ajax=range');
+            dayRange = await rr.json();
+        } catch (e) {
+            dayRange = { min: null, max: null };
+        }
+
+        bindDateField('singleDateText', 'singleDatePicker', () => {
+            updateGenerateTodayBtn();
+            scheduleIntradayLoad();
+        });
+        bindDateField('compareText1', 'comparePicker1', () => scheduleCompareLoad());
+        bindDateField('compareText2', 'comparePicker2', () => scheduleCompareLoad());
+
+        updateGenerateTodayBtn();
         loadIntraday();
+        loadComparison();
+        loadEnvelope();
+        lucide.createIcons();
     });
 </script>
 

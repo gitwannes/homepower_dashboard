@@ -9,10 +9,10 @@ for t in ['history_5min','sensorbox_history_5min','inverter_history_5min','readi
   except Exception as e:
     print(t, e)
 "
-history_5min: 1,058,916 | 2010-03-27 23:25:00 -> 2020-06-27 15:50:00
-sensorbox_history_5min: 1,739,783 | 2009-08-05 12:30:49 -> 2026-10-22 10:35:37
-inverter_history_5min: 881,711 | 2009-08-05 12:45:49 -> 2026-10-22 10:35:37
-readings: 2,517 | 2026-10-20 17:11:01 -> 2026-10-22 10:57:01
+history_5min: 1,796,103 | 2009-08-05 11:15:00 -> 2026-10-22 11:30:00
+sensorbox_history_5min: 1,796,317 | 2009-08-05 11:15:00 -> 2026-10-22 10:35:37
+inverter_history_5min: 1,467,523 | 2009-08-05 11:15:00 -> 2026-10-22 10:35:37
+readings: 2,714 | 2026-10-20 17:11:01 -> 2026-10-22 14:14:02
 
 # delete table
 python3 -c "
