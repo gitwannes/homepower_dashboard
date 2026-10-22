@@ -1,0 +1,53 @@
+# --- file: .gitignore ---
+# Secrets / local config
+.env
+.env.*
+!.env.example
+.envrc
+
+# Entire helpers/ is local-only (sync tool, config, local readme) — mirrored to NAS by sync, never committed
+helpers/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+ENV/
+
+# SQLite + runtime data (never publish meter history)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+meter_history.db*
+
+# Import / archive working dirs
+import_queue/
+_archive/
+*.zip
+*.7z
+*.rar
+*.xml
+
+# Logs
+*.log
+*.log.old
+docs/logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.swp
+*~
+
+# Sync / deploy noise
+*.bat~
+*.ps1~
+*.me
