@@ -27,7 +27,7 @@ See [`docs/architecture.md`](../architecture.md) and [`docs/deploy.md`](../deplo
 - [x] App files in this repo; scrubbed of site IPs / site names in tracked sources
 - [x] `.env.example` with device + `SITE_*` placeholders only (no sync targets)
 - [x] `.gitignore` ignores entire `helpers/`, `.env`, `*.db`, archives
-- [x] Local sync reads `p1-sync.config.json`; MIR includes all of `helpers/`; excludes `.env*`
+- [x] Local sync reads `p1-sync.config.json`; Synology excludes `helpers/`; OneDrive can use `source_subdir=helpers`; excludes `.env*`
 - [x] UI branding from `.env` with boring default
 - [x] Product docs updated; no site-specific data in committed files
 - [x] **Last DoD:** audit docs against shipped layout

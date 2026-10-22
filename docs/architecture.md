@@ -25,9 +25,9 @@ A **standalone** home energy hub: poll P1 + optional SMA / Sunny WebBox, store t
     -> meter_history.db (SQLite)
     -> index.php / analytics.php (read-only UI)
 
-helpers/  (gitignored entire directory)
-    p1-sync.config.json  -> source path + SMB targets
-    p1-sync.ps1|.bat     -> robocopy MIR app + helpers/ to NAS
+helpers/  (gitignored entire directory; PC-only sync tool)
+    p1-sync.config.json  -> per-target path / excludes / optional source_subdir
+    p1-sync.ps1|.bat     -> Synology: app only (no helpers/); OneDrive: helpers/ only
                          -> never copies .env*
 ```
 
@@ -37,8 +37,8 @@ helpers/  (gitignored entire directory)
 |---|---|---|---|
 | Device IPs + passwords | `.env` | `.env.example` only | **never** |
 | UI title / subtitle / labels | `.env` (`SITE_*`) | placeholders in example | **never** |
-| Sync source + SMB targets | `helpers/p1-sync.config.json` | no | **yes** |
-| Sync scripts + local helpers README | `helpers/` | no (whole dir gitignored) | **yes** |
+| Sync source + SMB targets | `helpers/p1-sync.config.json` | no | Synology: **no** / OneDrive helpers-backup: **yes** |
+| Sync scripts + local helpers README | `helpers/` | no (whole dir gitignored) | Synology: **no** / OneDrive helpers-backup: **yes** |
 
 Committed files (code + docs): **no** real LAN IPs, **no** household/site nicknames.
 

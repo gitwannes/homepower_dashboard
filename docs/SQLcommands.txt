@@ -1,0 +1,57 @@
+# check table size
+python3 -c "
+import sqlite3
+c=sqlite3.connect('meter_history.db')
+for t in ['history_5min','sensorbox_history_5min','inverter_history_5min','readings']:
+  try:
+    n,a,b=c.execute(f'SELECT COUNT(*), MIN(timestamp), MAX(timestamp) FROM {t}').fetchone()
+    print(f'{t}: {n:,} | {a} -> {b}')
+  except Exception as e:
+    print(t, e)
+"
+history_5min: 1,058,916 | 2010-03-27 23:25:00 -> 2020-06-27 15:50:00
+sensorbox_history_5min: 1,739,783 | 2009-08-05 12:30:49 -> 2026-10-22 10:35:37
+inverter_history_5min: 881,711 | 2009-08-05 12:45:49 -> 2026-10-22 10:35:37
+readings: 2,517 | 2026-10-20 17:11:01 -> 2026-10-22 10:57:01
+
+# delete table
+python3 -c "
+import sqlite3
+c=sqlite3.connect('meter_history.db')
+cur=c.execute('DELETE FROM history_5min')
+c.commit()
+print('deleted', cur.rowcount)
+print('left', c.execute('SELECT COUNT(*) FROM history_5min').fetchone()[0])
+"
+
+# check largest gaps
+python3 -c "
+import sqlite3
+c=sqlite3.connect('meter_history.db')
+c.execute('PRAGMA temp_store=MEMORY')
+
+def top_gaps(table, n=10):
+  q=f'''
+  WITH ordered AS (
+    SELECT timestamp AS ts,
+           LAG(timestamp) OVER (ORDER BY timestamp) AS prev_ts
+    FROM {table}
+  ),
+  gaps AS (
+    SELECT prev_ts AS gap_start, ts AS gap_end,
+           (julianday(ts)-julianday(prev_ts))*24.0 AS hours
+    FROM ordered
+    WHERE prev_ts IS NOT NULL
+  )
+  SELECT gap_start, gap_end, ROUND(hours,2) AS hours
+  FROM gaps
+  ORDER BY hours DESC
+  LIMIT {n}
+  '''
+  print('===', table, '===')
+  for row in c.execute(q):
+    print(row)
+
+top_gaps('inverter_history_5min')
+top_gaps('sensorbox_history_5min')
+"

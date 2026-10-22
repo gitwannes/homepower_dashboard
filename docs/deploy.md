@@ -22,8 +22,14 @@ On the operator PC, keep under `helpers/` (gitignored):
 | `p1-sync.config.json` | Source path + named SMB targets (UNC / probe IP) |
 | `README.md` | Local notes |
 
-MIR **must include** the whole `helpers/` directory on the NAS.  
-MIR **must exclude** `.env*`, SQLite DBs, and import working dirs.
+Per-target rules (local `p1-sync.config.json`):
+
+| Target type | Behaviour |
+|---|---|
+| Synology | Mirror **app** files; **`helpers/` not copied** (`exclude_dirs`) |
+| OneDrive (optional) | Mirror **`helpers/` only** (`source_subdir`) — backup of sync tool, not the app |
+
+Shared excludes: `.env*`, SQLite DBs, import working dirs, `.gitignore`, `LICENSE`, `*.md`, `docs/`.
 
 Example config shape (placeholders only — put real values only in the local JSON):
 
@@ -31,7 +37,16 @@ Example config shape (placeholders only — put real values only in the local JS
 {
   "source": "C:\\path\\to\\homepower_dashboard",
   "targets": {
-    "nas_a": { "path": "\\\\0.0.0.0\\web", "ip": "0.0.0.0" }
+    "nas_a": {
+      "path": "\\\\0.0.0.0\\web",
+      "ip": "0.0.0.0",
+      "exclude_dirs": [ "helpers" ]
+    },
+    "onedrive": {
+      "path": "C:\\path\\to\\onedrive\\p1",
+      "ip": "127.0.0.1",
+      "source_subdir": "helpers"
+    }
   }
 }
 ```
