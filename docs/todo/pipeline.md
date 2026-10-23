@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-22 (**A0–A3 / Q3 + Ops4 Done** — Phase A ready for offline archive)
+**Last updated:** 2026-10-23 (**A4–A6** queued; **P1–P3** queued; A0–A3 archived)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -34,7 +34,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **Ops4** | Purge master + re-import `.sql` + consolidate/daily/buildall — **2026-10-22** |
 | **A1** | Q4: `-purge_derived` keeps wiping `history_5min` (rebuildable) — leave as-is — **2026-10-22** |
 | **A2** | Smoke analytics / Hall of Fame — **2026-10-22** |
-| **A3 / Q3** | `analytics.php` + `summary.php` UI split; operator smoke Done — **2026-10-22** — [`phaseA-aggregation.md`](phaseA-aggregation.md) (**archive ready**) |
+| **A3 / Q3** | `analytics.php` + `summary.php` UI split; operator smoke Done — **2026-10-22** — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md) |
 
 ---
 
@@ -42,7 +42,12 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| — | — | — | — | (none open) | — |
+| 1 | open | M | **A4** | Top-N days/months/years tables + graphs | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 2 | open | M | **A5** | Multi-series power graph (PV + grid import + home usage); ref `docs/todo/HomeWizard-graph.jpg` | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 3 | open | S | **A6** | Plant config: max converter PAC + expected generation (env vs config at kickoff) | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 4 | open | L | **P1** | Sunny Portal (cloud) ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
+| 5 | open | L | **P2** | SMA portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
+| 6 | open | L | **P3** | Fluvius Energy Portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
 
 ---
 
@@ -59,4 +64,5 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | Letter | Affinity | File |
 |---|---|---|
 | **M** | Migration + public-repo hygiene + local sync | [`_archive/phaseM-migration.md`](_archive/phaseM-migration.md) (**archived**) |
-| **A** | Aggregation warehouse + analytics UI | [`phaseA-aggregation.md`](phaseA-aggregation.md) (**Done — move offline**) |
+| **A** | Aggregation warehouse + analytics UI | [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md) (A0–A3 Done) · [`phaseA-analytics.md`](phaseA-analytics.md) (A4+) |
+| **P** | Cloud / utility portal ingest (Sunny / SMA / Fluvius) | [`phaseP-portals.md`](phaseP-portals.md) |
