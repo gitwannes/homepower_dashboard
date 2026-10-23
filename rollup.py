@@ -18,6 +18,22 @@ MAX_ETOTAL_STEP_KWH = 3.0
 # Instantaneous PAC spikes (bad WebBox/P1 samples). Home array peaks are a few kW, not 30+ kW.
 # Used by clear_sky_envelopes, daily peak, and top_records peak_surge.
 MAX_PLAUSIBLE_PAC_W = 12000.0
+
+# Only annotate status lines when a step took longer than this (seconds).
+STATUS_TIME_MIN_S = 10.0
+
+
+def _status_time_suffix(duration_s: float) -> str:
+    """Append ' (Ns)' only when elapsed time exceeds STATUS_TIME_MIN_S."""
+    if duration_s > STATUS_TIME_MIN_S:
+        return f" ({duration_s:.1f}s)"
+    return ""
+
+
+def _status_line(step: int, body: str, duration_s: float) -> None:
+    """One-line step status: '-> N: ...'; optional time if > 10s."""
+    print(f"-> {step}: {body}{_status_time_suffix(duration_s)}")
+
 # WebBox archive night junk (audit 2026-10-22): non-zero PAC with ~0 radiation after
 # a clean sunset zero-gap. Deep night always untrusted; shoulder needs radiation.
 PAC_RAD_FLOOR = 5.0  # W/m2
@@ -121,7 +137,7 @@ def init_analytical_db(conn: sqlite3.Connection) -> None:
             )
         """)
 
-        # 5. Hall of Fame (All-time records)
+        # 5. Hall of Fame (All-time records) — legacy singles; fate = A7
         conn.execute("""
             CREATE TABLE IF NOT EXISTS top_records (
                 record_id TEXT PRIMARY KEY,
@@ -131,10 +147,25 @@ def init_analytical_db(conn: sqlite3.Connection) -> None:
             )
         """)
 
+        # 6. Top-N / worst-N period rankings (A4) — solar yield kWh
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS top_periods (
+                grain TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                rank INTEGER NOT NULL,
+                period_key TEXT NOT NULL,
+                yield_kwh REAL NOT NULL,
+                PRIMARY KEY (grain, direction, rank)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_top_periods_lookup "
+            "ON top_periods(grain, direction, rank)"
+        )
 
-def consolidate_historical_webbox(conn):
+
+def consolidate_historical_webbox(conn: sqlite3.Connection, step: int = 1) -> None:
     """Snaps and merges raw sensorbox and inverter tables into history_5min."""
-    print("--- 1. Consolidating Staging into history_5min ---")
     start_time = time.time()
     
     with conn:
@@ -184,10 +215,18 @@ def consolidate_historical_webbox(conn):
         
     duration = time.time() - start_time
     count = conn.execute("SELECT COUNT(*) FROM history_5min").fetchone()[0]
-    print(f"-> Complete in {duration:.1f}s. history_5min rows: {count:,}")
+    _status_line(
+        step,
+        f"history_5min: consolidate staging; table total {count:,} rows",
+        duration,
+    )
 
 
-def build_daily_history(conn: sqlite3.Connection, days_back=None) -> None:
+def build_daily_history(
+    conn: sqlite3.Connection,
+    days_back: Optional[int] = None,
+    step: int = 2,
+) -> None:
     """Crunches 5-minute data into daily yields and weather extremes.
 
     Solar yield preference:
@@ -199,9 +238,6 @@ def build_daily_history(conn: sqlite3.Connection, days_back=None) -> None:
     where_clause = ""
     if days_back:
         where_clause = f"WHERE timestamp >= datetime('now', '-{days_back} days')"
-        print(f"--- 2. Updating daily_history (Last {days_back} days) ---")
-    else:
-        print("--- 2. Building daily_history (Full History) ---")
 
     start_time = time.time()
     with conn:
@@ -335,12 +371,18 @@ def build_daily_history(conn: sqlite3.Connection, days_back=None) -> None:
 
     duration = time.time() - start_time
     count = conn.execute("SELECT COUNT(*) FROM daily_history").fetchone()[0]
-    print(f"-> Complete in {duration:.1f}s. daily_history rows: {count:,}")
+    if days_back:
+        body = (
+            f"daily_history: upserted last {days_back} days; "
+            f"table total {count:,} days"
+        )
+    else:
+        body = f"daily_history: full rebuild; table total {count:,} days"
+    _status_line(step, body, duration)
 
 
-def build_monthly_history(conn):
+def build_monthly_history(conn: sqlite3.Connection, step: int = 3) -> None:
     """Rolls up daily totals into months and tracks against PVGIS expected baselines."""
-    print("--- 3. Building monthly_history (PVGIS Targets) ---")
     start_time = time.time()
     
     with conn:
@@ -365,16 +407,19 @@ def build_monthly_history(conn):
 
     duration = time.time() - start_time
     count = conn.execute("SELECT COUNT(*) FROM monthly_history").fetchone()[0]
-    print(f"-> Complete in {duration:.1f}s. monthly_history rows: {count:,}")
+    _status_line(
+        step,
+        f"monthly_history: full rebuild; table total {count:,} months",
+        duration,
+    )
 
 
-def build_clear_sky_envelopes(conn: sqlite3.Connection) -> None:
+def build_clear_sky_envelopes(conn: sqlite3.Connection, step: int = 4) -> None:
     """Finds the all-time highest plausible AC power for every 5-min slice (288) per month.
 
     Uses interval mean solar_power_w (not solar_power_max_w surge). Ignores samples
     above MAX_PLAUSIBLE_PAC_W and night / no-radiation shoulder junk (sql_pac_plausible).
     """
-    print("--- 4. Building clear_sky_envelopes ---")
     start_time = time.time()
     pac_ok = sql_pac_plausible("COALESCE(solar_power_w, 0)")
 
@@ -403,12 +448,15 @@ def build_clear_sky_envelopes(conn: sqlite3.Connection) -> None:
 
     duration = time.time() - start_time
     count = conn.execute("SELECT COUNT(*) FROM clear_sky_envelopes").fetchone()[0]
-    print(f"-> Complete in {duration:.1f}s. Envelopes mapped: {count:,} timepoints")
+    _status_line(
+        step,
+        f"clear_sky_envelopes: full rebuild; table total {count:,} timepoints",
+        duration,
+    )
 
 
-def build_top_records(conn):
+def build_top_records(conn: sqlite3.Connection, step: int = 5) -> None:
     """Calculates Hall of Fame extremes across all 17 years."""
-    print("--- 5. Building top_records (Hall of Fame) ---")
     start_time = time.time()
     
     with conn:
@@ -436,10 +484,98 @@ def build_top_records(conn):
                 conn.execute("INSERT INTO top_records VALUES (?, ?, ?, ?)", (record_id, row[1], row[0], desc))
                 
     duration = time.time() - start_time
-    print(f"-> Complete in {duration:.1f}s. top_records updated.")
+    _status_line(step, "top_records: updated", duration)
 
 
-def downsample_live_readings(conn: sqlite3.Connection, day_iso: Optional[str] = None) -> int:
+def build_top_periods(conn: sqlite3.Connection, step: int = 6) -> None:
+    """Rebuild Top-N / worst-N yield rankings (A4): days 20, months/years 10 each."""
+    start_time = time.time()
+    limits = {"day": 20, "month": 10, "year": 10}
+
+    def _insert_list(
+        grain: str,
+        direction: str,
+        rows: list,
+    ) -> None:
+        limit = limits[grain]
+        for i, (period_key, yield_kwh) in enumerate(rows[:limit], start=1):
+            if period_key is None or yield_kwh is None:
+                continue
+            conn.execute(
+                "INSERT INTO top_periods (grain, direction, rank, period_key, yield_kwh) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (grain, direction, i, str(period_key), float(yield_kwh)),
+            )
+
+    with conn:
+        conn.execute("DELETE FROM top_periods;")
+
+        best_days = conn.execute(
+            "SELECT date, solar_yield_kwh FROM daily_history "
+            "WHERE solar_yield_kwh IS NOT NULL "
+            "ORDER BY solar_yield_kwh DESC, date ASC LIMIT ?",
+            (limits["day"],),
+        ).fetchall()
+        # Worst days: only days with some production (exclude 0 kWh / no-gen days).
+        worst_days = conn.execute(
+            "SELECT date, solar_yield_kwh FROM daily_history "
+            "WHERE solar_yield_kwh IS NOT NULL AND solar_yield_kwh > 0 "
+            "ORDER BY solar_yield_kwh ASC, date ASC LIMIT ?",
+            (limits["day"],),
+        ).fetchall()
+        _insert_list("day", "best", best_days)
+        _insert_list("day", "worst", worst_days)
+
+        best_months = conn.execute(
+            "SELECT year_month, total_solar_kwh FROM monthly_history "
+            "WHERE total_solar_kwh IS NOT NULL "
+            "ORDER BY total_solar_kwh DESC, year_month ASC LIMIT ?",
+            (limits["month"],),
+        ).fetchall()
+        worst_months = conn.execute(
+            "SELECT year_month, total_solar_kwh FROM monthly_history "
+            "WHERE total_solar_kwh IS NOT NULL "
+            "ORDER BY total_solar_kwh ASC, year_month ASC LIMIT ?",
+            (limits["month"],),
+        ).fetchall()
+        _insert_list("month", "best", best_months)
+        _insert_list("month", "worst", worst_months)
+
+        # Prefer monthly_history year sums; fall back to daily_history
+        year_rows = conn.execute(
+            "SELECT substr(year_month, 1, 4) AS y, SUM(total_solar_kwh) AS tot "
+            "FROM monthly_history "
+            "WHERE total_solar_kwh IS NOT NULL "
+            "GROUP BY y"
+        ).fetchall()
+        if not year_rows:
+            year_rows = conn.execute(
+                "SELECT substr(date, 1, 4) AS y, SUM(solar_yield_kwh) AS tot "
+                "FROM daily_history "
+                "WHERE solar_yield_kwh IS NOT NULL "
+                "GROUP BY y"
+            ).fetchall()
+        year_sorted_best = sorted(
+            [(r[0], r[1]) for r in year_rows if r[0] and r[1] is not None],
+            key=lambda t: (-float(t[1]), str(t[0])),
+        )
+        year_sorted_worst = sorted(
+            [(r[0], r[1]) for r in year_rows if r[0] and r[1] is not None],
+            key=lambda t: (float(t[1]), str(t[0])),
+        )
+        _insert_list("year", "best", year_sorted_best)
+        _insert_list("year", "worst", year_sorted_worst)
+
+    count = conn.execute("SELECT COUNT(*) FROM top_periods").fetchone()[0]
+    duration = time.time() - start_time
+    _status_line(step, f"top_periods: {count:,} rows", duration)
+
+
+def downsample_live_readings(
+    conn: sqlite3.Connection,
+    day_iso: Optional[str] = None,
+    step: int = 1,
+) -> int:
     """Downsample 1-minute readings into history_5min.
 
     day_iso: optional YYYY-MM-DD (local calendar day). None = last 2 local days.
@@ -453,13 +589,12 @@ def downsample_live_readings(conn: sqlite3.Connection, day_iso: Optional[str] = 
             raise ValueError(f"Invalid day_iso: {day_iso}")
         where_sql = "timestamp LIKE ?"
         where_params = (day_iso + '%',)
-        label = day_iso
+        scope_label = day_iso
     else:
         where_sql = "timestamp >= datetime('now', 'localtime', '-2 days')"
         where_params = ()
-        label = "last 2 local days"
+        scope_label = "last 2 days"
 
-    print(f"--- Downsampling readings -> history_5min ({label}) ---")
     start_time = time.time()
     # Open 5-min bucket in local time (exclude incomplete current slice)
     now_cut = """strftime('%Y-%m-%d %H:', datetime('now', 'localtime')) ||
@@ -515,7 +650,12 @@ def downsample_live_readings(conn: sqlite3.Connection, day_iso: Optional[str] = 
         cur = conn.execute(sql, where_params)
         changed = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else -1
     duration = time.time() - start_time
-    print(f"-> Complete in {duration:.1f}s. Upsert rowcount: {changed}")
+    rows_txt = f"{changed:,}" if isinstance(changed, int) and changed >= 0 else str(changed)
+    _status_line(
+        step,
+        f"history_5min: downsampling {scope_label}; {rows_txt} rows",
+        duration,
+    )
     return int(changed) if changed is not None else -1
 
 if __name__ == '__main__':
@@ -525,28 +665,31 @@ if __name__ == '__main__':
     
     if '-consolidate' in args:
         # Step 2: Bridge raw staging into consolidated master
-        consolidate_historical_webbox(conn)
+        consolidate_historical_webbox(conn, step=1)
 
     elif '-buildall' in args:
         # Step 5: Full 17-Year Analytics Rebuild
-        print(f"=== FULL WAREHOUSE BUILD INITIATED ===")
-        build_daily_history(conn)
-        build_monthly_history(conn)
-        build_clear_sky_envelopes(conn)
-        build_top_records(conn)
-        print("=== SUCCESS: Open analytics.php in browser ===")
+        print("=== FULL WAREHOUSE BUILD INITIATED ===")
+        build_daily_history(conn, step=1)
+        build_monthly_history(conn, step=2)
+        build_clear_sky_envelopes(conn, step=3)
+        build_top_records(conn, step=4)
+        build_top_periods(conn, step=5)
+        print("=== SUCCESS: Open analytics.php / topn.php in browser ===")
 
     elif '-daily' in args:
         # Step 6: Routine automated midnight downsampler
-        downsample_live_readings(conn)
-        build_daily_history(conn, days_back=3)
-        build_monthly_history(conn)
+        downsample_live_readings(conn, step=1)
+        build_daily_history(conn, days_back=3, step=2)
+        build_monthly_history(conn, step=3)
+        build_top_periods(conn, step=4)
 
     elif '-today' in args:
         # On-demand: downsample today's readings only (same as analytics Generate table)
         today = datetime.now().strftime('%Y-%m-%d')
-        downsample_live_readings(conn, day_iso=today)
-        build_daily_history(conn, days_back=1)
+        downsample_live_readings(conn, day_iso=today, step=1)
+        build_daily_history(conn, days_back=1, step=2)
+        build_top_periods(conn, step=3)
 
     elif '-purge_derived' in args:
         # Dev utility: safely wipes all derived analytical tables for fresh testing
@@ -556,6 +699,7 @@ if __name__ == '__main__':
             conn.execute('DELETE FROM monthly_history;')
             conn.execute('DELETE FROM clear_sky_envelopes;')
             conn.execute('DELETE FROM top_records;')
+            conn.execute('DELETE FROM top_periods;')
         conn.execute('VACUUM;')
         print("[INFO] All derived analytical tables purged and vacuumed. (Raw staging & readings untouched).")
 
@@ -563,7 +707,7 @@ if __name__ == '__main__':
         print("P1 & Solar Data Warehouse Manager")
         print("Usage:")
         print("  python3 rollup.py -consolidate  (Snaps and merges raw staging into history_5min)")
-        print("  python3 rollup.py -buildall     (Populates all daily, monthly, envelope, and top_records tables)")
+        print("  python3 rollup.py -buildall     (Populates all daily, monthly, envelope, top_records, top_periods)")
         print("  python3 rollup.py -daily        (Automated nightly cron: downsamples live P1 readings)")
         print("  python3 rollup.py -today        (On-demand: downsample today's readings into history_5min)")
         print("  python3 rollup.py -purge_derived (Dev tool: deletes all analytical data safely to restart tests)")

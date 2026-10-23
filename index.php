@@ -376,6 +376,9 @@ $pageTitle = (is_array($env) && !empty($env['SITE_PAGE_TITLE'])) ? $env['SITE_PA
             <a href="summary.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                 <i data-lucide="calendar-range" class="w-3.5 h-3.5 text-emerald-600"></i> Summary
             </a>
+            <a href="topn.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
+                <i data-lucide="trophy" class="w-3.5 h-3.5 text-amber-500"></i> Top-N
+            </a>
             <button type="button" onclick="openRawModal()" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all cursor-pointer">
                 <i data-lucide="table-properties" class="w-3.5 h-3.5 text-blue-600"></i> Raw readings
             </button>

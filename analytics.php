@@ -390,6 +390,10 @@ if (isset($_GET['ajax'])) {
 $today = date('Y-m-d');
 $yesterday = date('Y-m-d', strtotime('-1 day'));
 $defaultDay = $yesterday;
+// Deep link from topn.php: ?date=YYYY-MM-DD
+if (isset($_GET['date']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$_GET['date'])) {
+    $defaultDay = (string)$_GET['date'];
+}
 $defaultCompare1 = $today;
 $defaultCompare2 = $yesterday;
 ?>
@@ -454,6 +458,9 @@ $defaultCompare2 = $yesterday;
             </a>
             <a href="summary.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                 <i data-lucide="calendar-range" class="w-3.5 h-3.5 text-emerald-600"></i> Summary
+            </a>
+            <a href="topn.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
+                <i data-lucide="trophy" class="w-3.5 h-3.5 text-amber-500"></i> Top-N
             </a>
         </div>
     </header>

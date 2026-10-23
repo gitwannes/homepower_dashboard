@@ -86,7 +86,8 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 - [x] Summary period views (`summary.php`):
       - **All years** (lifetime bars vs PVGIS year baseline), week, month, year (months vs PVGIS).
 - [x] Hall of Fame / Top 10:
-      - Built earlier; **removed from UI** in A3 (too slow on full archive). `top_records` still populated by `-buildall`.
+      - Old live Top 10 removed in A3. **A4:** `topn.php` + `top_periods` (best/worst days 20, months/years 10); rebuilt by `-buildall`/`-daily`.
+      - Legacy `top_records` singles still built; fate = **A7**.
 - [x] Verify analytics / summary with populated rollups (A2/A3 + operator smoke).
 
 ---

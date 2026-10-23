@@ -40,7 +40,7 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 | `readings` | Live 1-min SoT (logger). Not purged by `-purge_derived`. |
 | `sensorbox_history_5min` / `inverter_history_5min` | Staging SoT (ZIP / SQL import). |
 | `history_5min` | Derived master (5-min). From `-consolidate` (staging) + `-daily`/`-today` (`readings`). Rebuildable. |
-| `daily_history` / `monthly_history` / `clear_sky_envelopes` / `top_records` | Derived analytics. `-buildall` or incremental `-daily`. |
+| `daily_history` / `monthly_history` / `clear_sky_envelopes` / `top_records` / `top_periods` | Derived analytics. `-buildall` or incremental `-daily` (Top-N yield lists in `top_periods`). |
 
 **PAC quality gates** (rollup + analytics charts): hard cap `MAX_PLAUSIBLE_PAC_W` (12 kW); ignore deep-night PAC (22–04); shoulder hours (20–21, 05) require `solar_radiation > 5`. Night WebBox junk with rad≈0 must not define envelopes or inflate integrals.
 
@@ -51,8 +51,9 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 | Page | Role |
 |---|---|
 | `index.php` | Live dashboard |
-| `analytics.php` | Exploration: daily 5-min curve (`history_5min`), two-day overlay, clear-sky envelope. **Generate table** (today only) downsamples today’s `readings` → `history_5min`. |
-| `summary.php` | Period bars: **All years**, week, month, year (from `daily_history` / `monthly_history` + PVGIS). No single-day summary mode. |
+| `analytics.php` | Exploration: daily 5-min curve (`history_5min`), two-day overlay, clear-sky envelope. **Generate table** (today only) downsamples today’s `readings` → `history_5min`. Deep link: `?date=YYYY-MM-DD`. |
+| `summary.php` | Period bars: **All years**, week, month, year (from `daily_history` / `monthly_history` + PVGIS). Deep link: `?month=YYYY-MM`, `?year=YYYY`. |
+| `topn.php` | Best/worst yield rankings (20 days, 10 months, 10 years) from `top_periods`; click bar → analytics/summary. |
 
 ## Rollup CLI (operator)
 
@@ -61,7 +62,7 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 | `-consolidate` | Staging → `history_5min` |
 | `-daily` | Last 2 local days `readings` → `history_5min`; refresh recent daily/monthly |
 | `-today` | Today only (same path as analytics **Generate table**) |
-| `-buildall` | Rebuild daily, monthly, envelopes, top_records from `history_5min` (does **not** ingest `readings`) |
+| `-buildall` | Rebuild daily, monthly, envelopes, top_records, **top_periods** from `history_5min` (does **not** ingest `readings`) |
 | `-purge_derived` | Wipes `history_5min` + analytical tables; staging + `readings` stay |
 
 ## Config split

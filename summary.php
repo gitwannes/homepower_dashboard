@@ -362,6 +362,9 @@ if (isset($_GET['ajax'])) {
             <a href="analytics.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                 <i data-lucide="line-chart" class="w-3.5 h-3.5 text-indigo-600"></i> Analytics
             </a>
+            <a href="topn.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
+                <i data-lucide="trophy" class="w-3.5 h-3.5 text-amber-500"></i> Top-N
+            </a>
         </div>
     </header>
 
@@ -646,10 +649,27 @@ if (isset($_GET['ajax'])) {
         current.week = periods.weeks.length ? periods.weeks[periods.weeks.length - 1] : null;
         current.month = periods.months.length ? periods.months[periods.months.length - 1] : null;
         current.year = periods.years.length ? periods.years[periods.years.length - 1] : null;
+
+        // Deep link from topn.php: ?month=YYYY-MM or ?year=YYYY
+        const params = new URLSearchParams(window.location.search);
+        const qMonth = params.get('month');
+        const qYear = params.get('year');
+        if (qMonth && periods.months.includes(qMonth)) {
+            current.month = qMonth;
+        }
+        if (qYear && periods.years.includes(qYear)) {
+            current.year = qYear;
+        }
+
         await loadAllYears();
         if (current.week) await loadSection('week');
         if (current.month) await loadSection('month');
         if (current.year) await loadSection('year');
+
+        if (qMonth || qYear) {
+            const el = document.getElementById(qMonth ? 'chart-month' : 'chart-year');
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
         lucide.createIcons();
     });
 </script>

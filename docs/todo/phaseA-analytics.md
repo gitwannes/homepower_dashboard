@@ -1,9 +1,9 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** A4–A6 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Status:** **A4 shipped** (await NAS smoke); A5–A7 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
 **Last updated:** 2026-10-23  
-**Product pointers:** [`docs/architecture.md`](../architecture.md) · `analytics.php` · `summary.php` · `index.php` · `rollup.py` · `expected_monthly`
+**Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `analytics.php` · `summary.php` · `rollup.py`
 
 ---
 
@@ -11,13 +11,14 @@
 
 | Id | Status | What |
 |---|---|---|
-| **A4** | open | Top-N tables (days / months / years) + graphs |
+| **A4** | shipped | Top-N tables (days / months / years) + graphs |
 | **A5** | open | Multi-series power graph (PV + grid import + home usage) — ref image |
 | **A6** | open | Plant config: max converter power + expected generation (env vs config at kickoff) |
+| **A7** | open | `top_records`: drop or change (assess at kickoff) |
 
-**Parallel:** A4–A6 are independent of **P1–P3** (portal ingest); kickoff order TBD by operator.
+**Parallel:** A4–A7 independent of **P1–P3**.
 
-**Related (not open duplicates):** A3 removed Hall of Fame / Top 10 UI (slow). `top_records` still exists for single extremes. **A4** is the new Top-N design (days/months/years + graphs) — not a silent reopen of the old Top 10 page.
+**Related:** A3 removed Hall of Fame UI. A4 is new Top-N. A7 decides fate of leftover `top_records` singles table.
 
 ---
 
@@ -30,14 +31,59 @@
 > - add , next to PV power generation, power pull from net and net power usage (more or less the graph like HomeWizard-graph.jpg - image is saved in \docs\todo in repo)
 > - add to .env (or maybe split env and config, to assess at kickoff): max converter power (and remove spikes based on this), expected power generation for the plant (now hardcoded)
 
+### 2026-10-23 — A4 kickoff answers + top_records triage
+
+> 1: top 20 day, top 10 mointh & year
+> 2: ??
+> 3: also worst days/months/years - that what you mean?
+> 4: new page
+> 5: generated now with -buildall, and also with -daily
+> 6: good idea: clicking on a bar will show that day/month/year in the other page
+> 7: what does top_records do?
+
+> 2A
+> 7B + add to triage to either drop or change
+
 ---
 
 ## A4 — Top-N days / months / years + graphs
 
-**Status:** open (not kicked off)  
-**Scope (placement):** Derived table(s) for top-N periods + UI graphs.  
-**Ref:** replaces/supersedes removed Top 10 UI intent; broader (months/years).  
-**Locks:** N, schema, which page (`summary` / `analytics` / both), rebuild hook — kickoff.
+**Status:** **shipped** 2026-10-23 (operator smoke on NAS)  
+**Last kickoff:** 2026-10-23
+
+### Locks (confirmed)
+
+| # | Topic | Lock |
+|---|---|---|
+| **A4-L1** | N | Top **20** days; Top **10** months; Top **10** years |
+| **A4-L2** | Direction | Best **and** worst for days / months / years (**6** lists). Worst **days** exclude yield ≤ 0. |
+| **A4-L3** | Metric | Solar yield **kWh only** (2A) |
+| **A4-L4** | UI page | **`topn.php`** |
+| **A4-L5** | Rebuild | Table **`top_periods`**; filled by **`-buildall`**, **`-daily`**, **`-today`** |
+| **A4-L6** | Graphs + nav | Horizontal bars; click → `analytics.php?date=` / `summary.php?month=` / `?year=` |
+| **A4-L7** | `top_records` | Unused by A4; fate = **A7** |
+
+### Shipped
+
+- `top_periods` schema + `build_top_periods()` in `rollup.py`
+- `topn.php` (6 charts + AJAX)
+- Deep links on analytics/summary; Top-N nav on index/analytics/summary
+- Product docs updated
+
+### DoD
+
+- [x] Derived storage for 6 rankings
+- [x] Rollup fills on `-buildall` and `-daily`
+- [x] New PHP page: 6 bar charts
+- [x] Click-through to analytics day / summary month / year
+- [x] Cross-nav links; product docs pointer
+- [ ] Operator smoke on NAS after `-buildall`
+
+### Out of scope (A4)
+
+- Peak-W Top-N
+- Dropping/altering `top_records` (→ **A7**)
+- Old live Top-10 AJAX scan
 
 ---
 
@@ -54,6 +100,19 @@
 **Status:** open (not kicked off)  
 **Scope (placement):** Configurable max converter power (drive spike rejection instead of hardcoded `MAX_PLAUSIBLE_PAC_W`); plant expected generation (today inclination=30 / `expected_monthly` + code constants). Assess **`.env` vs split config file** at kickoff.  
 **Locks:** file home, key names, whether expected stays DB-seeded vs config-only — kickoff.
+
+---
+
+## A7 — `top_records`: drop or change
+
+**Status:** open (not kicked off)  
+**Scope (placement):** Decide whether to **drop** `top_records` (+ stop `build_top_records` in rollup) or **change** it (new purpose / UI).  
+**Context:** Single-row extremes (best day, peak surge, wind, temps). Unused in UI since A3. A4 covers Top-N yield lists instead.  
+**Locks:** drop vs redesign — kickoff.
+
+### Verbatim
+
+> 7B + add to triage to either drop or change
 
 ---
 
