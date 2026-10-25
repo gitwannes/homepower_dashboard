@@ -516,12 +516,14 @@ def build_top_periods(conn: sqlite3.Connection, step: int = 6) -> None:
             "ORDER BY solar_yield_kwh DESC, date ASC LIMIT ?",
             (limits["day"],),
         ).fetchall()
-        # Worst days: only days with some production (exclude 0 kWh / no-gen days).
+        # Worst days: some production, not today (partial day would unfairly rank as worst).
+        today_iso = datetime.now().strftime('%Y-%m-%d')
         worst_days = conn.execute(
             "SELECT date, solar_yield_kwh FROM daily_history "
             "WHERE solar_yield_kwh IS NOT NULL AND solar_yield_kwh > 0 "
+            "AND date <> ? "
             "ORDER BY solar_yield_kwh ASC, date ASC LIMIT ?",
-            (limits["day"],),
+            (today_iso, limits["day"]),
         ).fetchall()
         _insert_list("day", "best", best_days)
         _insert_list("day", "worst", worst_days)

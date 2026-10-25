@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-23 (**A4** shipped — smoke on NAS; **A5–A7** + **P1–P3** queued)
+**Last updated:** 2026-10-25 (**A4 Done**; **A5–A7** + **P1–P3** queued)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -35,6 +35,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **A1** | Q4: `-purge_derived` keeps wiping `history_5min` (rebuildable) — leave as-is — **2026-10-22** |
 | **A2** | Smoke analytics / Hall of Fame — **2026-10-22** |
 | **A3 / Q3** | `analytics.php` + `summary.php` UI split; operator smoke Done — **2026-10-22** — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md) |
+| **A4** | Top-N yield rankings (`topn.php` / `top_periods`) — **2026-10-25** — [`phaseA-analytics.md`](phaseA-analytics.md) |
 
 ---
 
@@ -42,13 +43,12 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| 1 | coding | M | **A4** | Top-N days/months/years + graphs — shipped, await NAS smoke | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 2 | open | M | **A5** | Multi-series power graph (PV + grid import + home usage); ref `docs/todo/HomeWizard-graph.jpg` | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 3 | open | S | **A6** | Plant config: max converter PAC + expected generation (env vs config at kickoff) | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 4 | open | S | **A7** | `top_records`: drop or change (assess at kickoff) | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 5 | open | L | **P1** | Sunny Portal (cloud) ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
-| 6 | open | L | **P2** | SMA portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
-| 7 | open | L | **P3** | Fluvius Energy Portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
+| 1 | open | M | **A5** | Multi-series power graph (PV + grid import + home usage); ref `docs/todo/HomeWizard-graph.jpg` | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 2 | open | S | **A6** | Plant config: max converter PAC + expected generation (env vs config at kickoff) | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 3 | open | S | **A7** | `top_records`: drop or change (assess at kickoff) | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 4 | open | L | **P1** | Sunny Portal (cloud) ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
+| 5 | open | L | **P2** | SMA portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
+| 6 | open | L | **P3** | Fluvius Energy Portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
 
 ---
 

@@ -121,7 +121,7 @@ if (isset($_GET['ajax'])) {
         </div>
         <div class="card border-t-4 border-t-rose-500">
             <h2 class="text-lg font-bold text-slate-900 mb-1">Worst days</h2>
-            <p class="text-xs text-slate-400 mb-3">Bottom 20 by solar yield (kWh); days with no production excluded</p>
+            <p class="text-xs text-slate-400 mb-3">Bottom 20 by solar yield (kWh); no-production days and today excluded</p>
             <div id="chart-day-worst" class="w-full h-[360px]"></div>
         </div>
         <div class="card border-t-4 border-t-teal-500">

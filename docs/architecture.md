@@ -53,7 +53,7 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 | `index.php` | Live dashboard |
 | `analytics.php` | Exploration: daily 5-min curve (`history_5min`), two-day overlay, clear-sky envelope. **Generate table** (today only) downsamples today’s `readings` → `history_5min`. Deep link: `?date=YYYY-MM-DD`. |
 | `summary.php` | Period bars: **All years**, week, month, year (from `daily_history` / `monthly_history` + PVGIS). Deep link: `?month=YYYY-MM`, `?year=YYYY`. |
-| `topn.php` | Best/worst yield rankings (20 days, 10 months, 10 years) from `top_periods`; click bar → analytics/summary. |
+| `topn.php` | Best/worst yield rankings (20 days, 10 months, 10 years) from `top_periods`; click bar → analytics/summary. Worst **days** exclude yield ≤ 0 and the current calendar day. |
 
 ## Rollup CLI (operator)
 

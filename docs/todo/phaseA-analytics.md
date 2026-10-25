@@ -1,9 +1,9 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4 shipped** (await NAS smoke); A5–A7 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-23  
-**Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `analytics.php` · `summary.php` · `rollup.py`
+**Status:** **A4 Done**; A5–A7 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-25  
+**Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py`
 
 ---
 
@@ -11,7 +11,7 @@
 
 | Id | Status | What |
 |---|---|---|
-| **A4** | shipped | Top-N tables (days / months / years) + graphs |
+| **A4** | Done | Top-N tables (days / months / years) + graphs |
 | **A5** | open | Multi-series power graph (PV + grid import + home usage) — ref image |
 | **A6** | open | Plant config: max converter power + expected generation (env vs config at kickoff) |
 | **A7** | open | `top_records`: drop or change (assess at kickoff) |
@@ -48,42 +48,21 @@
 
 ## A4 — Top-N days / months / years + graphs
 
-**Status:** **shipped** 2026-10-23 (operator smoke on NAS)  
-**Last kickoff:** 2026-10-23
+**Status:** **Done** 2026-10-25  
+**Product:** [`docs/architecture.md`](../architecture.md) (`topn.php`, `top_periods`).
 
-### Locks (confirmed)
+### Done summary
 
-| # | Topic | Lock |
-|---|---|---|
-| **A4-L1** | N | Top **20** days; Top **10** months; Top **10** years |
-| **A4-L2** | Direction | Best **and** worst for days / months / years (**6** lists). Worst **days** exclude yield ≤ 0. |
-| **A4-L3** | Metric | Solar yield **kWh only** (2A) |
-| **A4-L4** | UI page | **`topn.php`** |
-| **A4-L5** | Rebuild | Table **`top_periods`**; filled by **`-buildall`**, **`-daily`**, **`-today`** |
-| **A4-L6** | Graphs + nav | Horizontal bars; click → `analytics.php?date=` / `summary.php?month=` / `?year=` |
-| **A4-L7** | `top_records` | Unused by A4; fate = **A7** |
-
-### Shipped
-
-- `top_periods` schema + `build_top_periods()` in `rollup.py`
-- `topn.php` (6 charts + AJAX)
-- Deep links on analytics/summary; Top-N nav on index/analytics/summary
-- Product docs updated
+Best/worst yield rankings (20 days, 10 months, 10 years) in `top_periods` via `-buildall`/`-daily`/`-today`; UI `topn.php` with click-through. Worst days exclude yield ≤ 0 and today. `top_records` unchanged → **A7**.
 
 ### DoD
 
-- [x] Derived storage for 6 rankings
-- [x] Rollup fills on `-buildall` and `-daily`
-- [x] New PHP page: 6 bar charts
-- [x] Click-through to analytics day / summary month / year
-- [x] Cross-nav links; product docs pointer
-- [ ] Operator smoke on NAS after `-buildall`
+- [x] Storage + rollup + page + deep links + nav + product docs
+- [x] Operator close (smoke)
 
 ### Out of scope (A4)
 
-- Peak-W Top-N
-- Dropping/altering `top_records` (→ **A7**)
-- Old live Top-10 AJAX scan
+- Peak-W Top-N; drop/change `top_records` (**A7**); old live Top-10 AJAX
 
 ---
 
