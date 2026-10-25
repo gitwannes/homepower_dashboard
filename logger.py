@@ -8,6 +8,7 @@ import sqlite3
 import hashlib
 import os
 import sys
+import fcntl
 from datetime import datetime
 
 # Allow both cron (www-data) and personal user to access created database
@@ -555,213 +556,225 @@ def fetch_webbox(ip, password, last_state):
 
 def run_poll():
     """Master polling pipeline enforcing fatal P1 hierarchy and addon solar processing."""
-    # 1. Check .env
-    config = load_env()
-    if config is None:
-        err_msg = "Configuration error: .env file not found."
-        log_event("ERROR", err_msg)
-        store_fatal_error(err_msg)
-        print(err_msg)
-        sys.exit(1)
-
-    # 2. Check P1_IP
-    p1_ip = config.get('P1_IP', '').strip()
-    if not p1_ip:
-        err_msg = "Configuration error: P1_IP is not defined in .env."
-        log_event("ERROR", err_msg)
-        store_fatal_error(err_msg)
-        print(err_msg)
-        sys.exit(1)
-
-    args = [a.lower() for a in sys.argv]
-    is_forced = '-force' in args or '--force' in args
-
-    now = datetime.now()
-    timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
-
-    conn = init_db()
-    cur = conn.cursor()
-
-    last_state_data = {}
-    if not is_forced:
-        cur.execute("SELECT updated_at, data_json FROM latest_state WHERE id = 1")
-        last_row = cur.fetchone()
-        if last_row:
-            try:
-                last_dt = datetime.strptime(last_row[0], '%Y-%m-%d %H:%M:%S')
-                if (now - last_dt).total_seconds() < 45:
-                    print("P1 meter live. (Already logged recently)")
-                    conn.close()
-                    sys.exit(0)
-                last_state_data = json.loads(last_row[1])
-            except Exception:
-                pass
-
-    # 3. Fetch P1 Meter
+    # Prevent concurrent runs from stacking processes if network or DB stalls
     try:
-        p1_data = fetch_p1(p1_ip)
-        if not isinstance(p1_data, dict) or 'active_power_w' not in p1_data:
-            raise ValueError("Payload missing active_power_w")
-    except (urllib.error.URLError, socket.timeout):
-        err_msg = f"Connection error: Unable to reach P1 meter at {p1_ip}."
-        log_event("ERROR", err_msg)
-        store_fatal_error(err_msg)
-        conn.close()
-        print(err_msg)
-        sys.exit(1)
-    except Exception:
-        err_msg = f"Payload error: P1 smart meter at {p1_ip} returned malformed data."
-        log_event("ERROR", err_msg)
-        store_fatal_error(err_msg)
-        conn.close()
-        print(err_msg)
-        sys.exit(1)
-
-    # 4. Check Solar Addons (SMA & WebBox)
-    alerts = []
-
-    # SMA Inverter
-    has_sma_conf = 'SMA_IP' in config and config['SMA_IP'].strip() != ''
-    sma_data = None
-    if has_sma_conf:
-        sma_ip = config['SMA_IP'].strip()
-        sma_user = config.get('SMA_USER', 'usr').strip()
-        sma_pwd = config.get('SMA_PASSWORD', '').strip()
-        sma_data, sma_alert = fetch_sma(sma_ip, sma_user, sma_pwd, last_state_data)
-        if sma_alert:
-            alerts.append(sma_alert)
-
-    # Sunny WebBox
-    has_webbox_conf = 'SUNNYWEBBOX_IP' in config and config['SUNNYWEBBOX_IP'].strip() != ''
-    webbox_data = None
-    if has_webbox_conf:
-        wb_ip = config['SUNNYWEBBOX_IP'].strip()
-        wb_pwd = config.get('SUNNYWEBBOX_PASSWORD', '').strip()
-        webbox_data, wb_alert = fetch_webbox(wb_ip, wb_pwd, last_state_data)
-        if wb_alert:
-            alerts.append(wb_alert)
-
-    # 5. Aggregate Solar Generation
-    total_solar_w = 0
-    today_solar_kwh = 0.0
-    total_solar_kwh = 0.0
-    has_solar = False
-
-    if sma_data is not None:
-        has_solar = True
-        total_solar_w += sma_data.get('current_w', 0)
-        if sma_data.get('today_kwh') is not None:
-            today_solar_kwh += sma_data['today_kwh']
-        if sma_data.get('total_kwh') is not None:
-            total_solar_kwh += sma_data['total_kwh']
-
-    if webbox_data is not None:
-        has_solar = True
-        total_solar_w += webbox_data.get('current_w', 0)
-        if webbox_data.get('today_kwh') is not None:
-            today_solar_kwh += webbox_data['today_kwh']
-        if webbox_data.get('total_kwh') is not None:
-            total_solar_kwh += webbox_data['total_kwh']
-
-    # 6. Extract P1 Utility Meters (Nullable water handling)
-    gas, water = None, None
-    for ext in p1_data.get('external', []):
-        if ext.get('type') == 'gas_meter':
-            gas = float(ext['value'])
-        elif ext.get('type') == 'water_meter':
-            water = float(ext['value'])
-
-    active_power = int(p1_data.get('active_power_w', 0))
-    home_consumption_w = max(0, total_solar_w + active_power) if has_solar else max(0, active_power)
-
-    # 7. Construct Full JSON Snapshot
-    full_state = {
-        'fatal_error': None,
-        'has_solar': has_solar,
-        'has_sma': (sma_data is not None),
-        'has_webbox': (webbox_data is not None),
-        'has_water': (water is not None),
-        'alerts': alerts,
-        'p1_data': p1_data,
-        'sma_data': sma_data,
-        'webbox_data': webbox_data,
-        'calculated': {
-            'total_solar_w': total_solar_w,
-            'today_solar_kwh': today_solar_kwh if has_solar else None,
-            'total_solar_kwh': total_solar_kwh if has_solar else None,
-            'home_consumption_w': home_consumption_w
-        }
-    }
-
-    # Extract SensorBox metrics if available
-    s_box = webbox_data.get('sensorbox') if webbox_data else None
-    rad = s_box.get('radiation') if s_box else None
-    t_mod = s_box.get('temp_module') if s_box else None
-    w_spd = s_box.get('wind_speed') if s_box else None
-
-    # Calculate total import / export and fetch capacity peak
-    tot_import = float(p1_data.get('total_power_import_kwh') or 0.0)
-    tot_export = float(p1_data.get('total_power_export_kwh') or 0.0)
-    cap_peak = int(p1_data.get('montly_power_peak_w') or 0)
-
-    # 8. Commit to Database
-    try:
-        with conn:
-            conn.execute("""
-                INSERT OR IGNORE INTO readings
-                (timestamp, active_power, solar_power, import_t1, import_t2, export_t1, export_t2,
-                 total_import, total_export, capacity_peak_w, solar_total_kwh,
-                 solar_radiation, temp_module, wind_speed, gas, water)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                timestamp,
-                active_power,
-                total_solar_w,
-                float(p1_data.get('total_power_import_t1_kwh', 0.0)),
-                float(p1_data.get('total_power_import_t2_kwh', 0.0)),
-                float(p1_data.get('total_power_export_t1_kwh', 0.0)),
-                float(p1_data.get('total_power_export_t2_kwh', 0.0)),
-                tot_import,
-                tot_export,
-                cap_peak,
-                total_solar_kwh if has_solar else None,
-                rad,
-                t_mod,
-                w_spd,
-                gas,
-                water
-            ))
-            conn.execute("""
-                INSERT INTO latest_state (id, updated_at, data_json)
-                VALUES (1, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at, data_json=excluded.data_json
-            """, (timestamp, json.dumps(full_state)))
-
-            # no deletion!
-            # conn.execute("DELETE FROM readings WHERE id NOT IN (SELECT id FROM readings ORDER BY id DESC LIMIT ?)", (MAX_ROWS,))
-
-        conn.close()
-
-        # Update event streak
-        if alerts:
-            log_event("WARN", "P1 read & DB saved. Alerts: " + "; ".join(alerts))
-        else:
-            devs = ["P1"]
-            if sma_data:
-                devs.append(f"SMA({sma_data['status']})")
-            if webbox_data:
-                devs.append(f"WebBox({webbox_data['status']})")
-            log_event("SUCCESS", "Polled " + " & ".join(devs))
-
-        print(f"Poll successful. P1: {p1_ip} | Solar: {total_solar_w}W")
+        lock_fd = open('/tmp/p1_logger.lock', 'w')
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (IOError, BlockingIOError):
         sys.exit(0)
 
-    except Exception as e:
-        msg = f"Database commit error: {e}"
-        print(msg)
-        log_event("ERROR", msg)
-        conn.close()
-        sys.exit(1)
+    try:
+        # 1. Check .env
+        config = load_env()
+        if config is None:
+            err_msg = "Configuration error: .env file not found."
+            log_event("ERROR", err_msg)
+            store_fatal_error(err_msg)
+            print(err_msg)
+            sys.exit(0)
+
+        # 2. Check P1_IP
+        p1_ip = config.get('P1_IP', '').strip()
+        if not p1_ip:
+            err_msg = "Configuration error: P1_IP is not defined in .env."
+            log_event("ERROR", err_msg)
+            store_fatal_error(err_msg)
+            print(err_msg)
+            sys.exit(0)
+
+        args = [a.lower() for a in sys.argv]
+        is_forced = '-force' in args or '--force' in args
+
+        now = datetime.now()
+        timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
+
+        conn = init_db()
+        cur = conn.cursor()
+
+        last_state_data = {}
+        if not is_forced:
+            cur.execute("SELECT updated_at, data_json FROM latest_state WHERE id = 1")
+            last_row = cur.fetchone()
+            if last_row:
+                try:
+                    last_dt = datetime.strptime(last_row[0], '%Y-%m-%d %H:%M:%S')
+                    if (now - last_dt).total_seconds() < 45:
+                        print("P1 meter live. (Already logged recently)")
+                        conn.close()
+                        sys.exit(0)
+                    last_state_data = json.loads(last_row[1])
+                except Exception:
+                    pass
+
+        # 3. Fetch P1 Meter
+        try:
+            p1_data = fetch_p1(p1_ip)
+            if not isinstance(p1_data, dict) or 'active_power_w' not in p1_data:
+                raise ValueError("Payload missing active_power_w")
+        except (urllib.error.URLError, socket.timeout):
+            err_msg = f"Connection error: Unable to reach P1 meter at {p1_ip}."
+            log_event("ERROR", err_msg)
+            store_fatal_error(err_msg)
+            conn.close()
+            print(err_msg)
+            sys.exit(0)
+        except Exception:
+            err_msg = f"Payload error: P1 smart meter at {p1_ip} returned malformed data."
+            log_event("ERROR", err_msg)
+            store_fatal_error(err_msg)
+            conn.close()
+            print(err_msg)
+            sys.exit(0)
+
+        # 4. Check Solar Addons (SMA & WebBox)
+        alerts = []
+
+        # SMA Inverter
+        has_sma_conf = 'SMA_IP' in config and config['SMA_IP'].strip() != ''
+        sma_data = None
+        if has_sma_conf:
+            sma_ip = config['SMA_IP'].strip()
+            sma_user = config.get('SMA_USER', 'usr').strip()
+            sma_pwd = config.get('SMA_PASSWORD', '').strip()
+            sma_data, sma_alert = fetch_sma(sma_ip, sma_user, sma_pwd, last_state_data)
+            if sma_alert:
+                alerts.append(sma_alert)
+
+        # Sunny WebBox
+        has_webbox_conf = 'SUNNYWEBBOX_IP' in config and config['SUNNYWEBBOX_IP'].strip() != ''
+        webbox_data = None
+        if has_webbox_conf:
+            wb_ip = config['SUNNYWEBBOX_IP'].strip()
+            wb_pwd = config.get('SUNNYWEBBOX_PASSWORD', '').strip()
+            webbox_data, wb_alert = fetch_webbox(wb_ip, wb_pwd, last_state_data)
+            if wb_alert:
+                alerts.append(wb_alert)
+
+        # 5. Aggregate Solar Generation
+        total_solar_w = 0
+        today_solar_kwh = 0.0
+        total_solar_kwh = 0.0
+        has_solar = False
+
+        if sma_data is not None:
+            has_solar = True
+            total_solar_w += sma_data.get('current_w', 0)
+            if sma_data.get('today_kwh') is not None:
+                today_solar_kwh += sma_data['today_kwh']
+            if sma_data.get('total_kwh') is not None:
+                total_solar_kwh += sma_data['total_kwh']
+
+        if webbox_data is not None:
+            has_solar = True
+            total_solar_w += webbox_data.get('current_w', 0)
+            if webbox_data.get('today_kwh') is not None:
+                today_solar_kwh += webbox_data['today_kwh']
+            if webbox_data.get('total_kwh') is not None:
+                total_solar_kwh += webbox_data['total_kwh']
+
+        # 6. Extract P1 Utility Meters (Nullable water handling)
+        gas, water = None, None
+        for ext in p1_data.get('external', []):
+            if ext.get('type') == 'gas_meter':
+                gas = float(ext['value'])
+            elif ext.get('type') == 'water_meter':
+                water = float(ext['value'])
+
+        active_power = int(p1_data.get('active_power_w', 0))
+        home_consumption_w = max(0, total_solar_w + active_power) if has_solar else max(0, active_power)
+
+        # 7. Construct Full JSON Snapshot
+        full_state = {
+            'fatal_error': None,
+            'has_solar': has_solar,
+            'has_sma': (sma_data is not None),
+            'has_webbox': (webbox_data is not None),
+            'has_water': (water is not None),
+            'alerts': alerts,
+            'p1_data': p1_data,
+            'sma_data': sma_data,
+            'webbox_data': webbox_data,
+            'calculated': {
+                'total_solar_w': total_solar_w,
+                'today_solar_kwh': today_solar_kwh if has_solar else None,
+                'total_solar_kwh': total_solar_kwh if has_solar else None,
+                'home_consumption_w': home_consumption_w
+            }
+        }
+
+        # Extract SensorBox metrics if available
+        s_box = webbox_data.get('sensorbox') if webbox_data else None
+        rad = s_box.get('radiation') if s_box else None
+        t_mod = s_box.get('temp_module') if s_box else None
+        w_spd = s_box.get('wind_speed') if s_box else None
+
+        # Calculate total import / export and fetch capacity peak
+        tot_import = float(p1_data.get('total_power_import_kwh') or 0.0)
+        tot_export = float(p1_data.get('total_power_export_kwh') or 0.0)
+        cap_peak = int(p1_data.get('montly_power_peak_w') or 0)
+
+        # 8. Commit to Database
+        try:
+            with conn:
+                conn.execute("""
+                    INSERT OR IGNORE INTO readings
+                    (timestamp, active_power, solar_power, import_t1, import_t2, export_t1, export_t2,
+                     total_import, total_export, capacity_peak_w, solar_total_kwh,
+                     solar_radiation, temp_module, wind_speed, gas, water)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    timestamp,
+                    active_power,
+                    total_solar_w,
+                    float(p1_data.get('total_power_import_t1_kwh', 0.0)),
+                    float(p1_data.get('total_power_import_t2_kwh', 0.0)),
+                    float(p1_data.get('total_power_export_t1_kwh', 0.0)),
+                    float(p1_data.get('total_power_export_t2_kwh', 0.0)),
+                    tot_import,
+                    tot_export,
+                    cap_peak,
+                    total_solar_kwh if has_solar else None,
+                    rad,
+                    t_mod,
+                    w_spd,
+                    gas,
+                    water
+                ))
+                conn.execute("""
+                    INSERT INTO latest_state (id, updated_at, data_json)
+                    VALUES (1, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at, data_json=excluded.data_json
+                """, (timestamp, json.dumps(full_state)))
+
+                # no deletion!
+                # conn.execute("DELETE FROM readings WHERE id NOT IN (SELECT id FROM readings ORDER BY id DESC LIMIT ?)", (MAX_ROWS,))
+
+            conn.close()
+
+            # Update event streak
+            if alerts:
+                log_event("WARN", "P1 read & DB saved. Alerts: " + "; ".join(alerts))
+            else:
+                devs = ["P1"]
+                if sma_data:
+                    devs.append(f"SMA({sma_data['status']})")
+                if webbox_data:
+                    devs.append(f"WebBox({webbox_data['status']})")
+                log_event("SUCCESS", "Polled " + " & ".join(devs))
+
+            print(f"Poll successful. P1: {p1_ip} | Solar: {total_solar_w}W")
+            sys.exit(0)
+
+        except Exception as e:
+            msg = f"Database commit error: {e}"
+            print(msg)
+            log_event("ERROR", msg)
+            conn.close()
+            sys.exit(0)
+
+    except Exception as unexpected:
+        sys.stderr.write(f"Unexpected error: {unexpected}\n")
+        sys.exit(0)
 
 
 def show_log():

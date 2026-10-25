@@ -659,57 +659,67 @@ def downsample_live_readings(
     return int(changed) if changed is not None else -1
 
 if __name__ == '__main__':
-    args = [a.lower() for a in sys.argv]
-    conn = sqlite3.connect(DB_FILE, timeout=30.0)
-    init_analytical_db(conn)
-    
-    if '-consolidate' in args:
-        # Step 2: Bridge raw staging into consolidated master
-        consolidate_historical_webbox(conn, step=1)
-
-    elif '-buildall' in args:
-        # Step 5: Full 17-Year Analytics Rebuild
-        print("=== FULL WAREHOUSE BUILD INITIATED ===")
-        build_daily_history(conn, step=1)
-        build_monthly_history(conn, step=2)
-        build_clear_sky_envelopes(conn, step=3)
-        build_top_records(conn, step=4)
-        build_top_periods(conn, step=5)
-        print("=== SUCCESS: Open analytics.php / topn.php in browser ===")
-
-    elif '-daily' in args:
-        # Step 6: Routine automated midnight downsampler
-        downsample_live_readings(conn, step=1)
-        build_daily_history(conn, days_back=3, step=2)
-        build_monthly_history(conn, step=3)
-        build_top_periods(conn, step=4)
-
-    elif '-today' in args:
-        # On-demand: downsample today's readings only (same as analytics Generate table)
-        today = datetime.now().strftime('%Y-%m-%d')
-        downsample_live_readings(conn, day_iso=today, step=1)
-        build_daily_history(conn, days_back=1, step=2)
-        build_top_periods(conn, step=3)
-
-    elif '-purge_derived' in args:
-        # Dev utility: safely wipes all derived analytical tables for fresh testing
-        with conn:
-            conn.execute('DELETE FROM history_5min;')
-            conn.execute('DELETE FROM daily_history;')
-            conn.execute('DELETE FROM monthly_history;')
-            conn.execute('DELETE FROM clear_sky_envelopes;')
-            conn.execute('DELETE FROM top_records;')
-            conn.execute('DELETE FROM top_periods;')
-        conn.execute('VACUUM;')
-        print("[INFO] All derived analytical tables purged and vacuumed. (Raw staging & readings untouched).")
-
-    else:
-        print("P1 & Solar Data Warehouse Manager")
-        print("Usage:")
-        print("  python3 rollup.py -consolidate  (Snaps and merges raw staging into history_5min)")
-        print("  python3 rollup.py -buildall     (Populates all daily, monthly, envelope, top_records, top_periods)")
-        print("  python3 rollup.py -daily        (Automated nightly cron: downsamples live P1 readings)")
-        print("  python3 rollup.py -today        (On-demand: downsample today's readings into history_5min)")
-        print("  python3 rollup.py -purge_derived (Dev tool: deletes all analytical data safely to restart tests)")
+    conn = None
+    try:
+        args = [a.lower() for a in sys.argv]
+        conn = sqlite3.connect(DB_FILE, timeout=30.0)
+        init_analytical_db(conn)
         
-    conn.close()
+        if '-consolidate' in args:
+            # Step 2: Bridge raw staging into consolidated master
+            consolidate_historical_webbox(conn, step=1)
+
+        elif '-buildall' in args:
+            # Step 5: Full 17-Year Analytics Rebuild
+            print("=== FULL WAREHOUSE BUILD INITIATED ===")
+            build_daily_history(conn, step=1)
+            build_monthly_history(conn, step=2)
+            build_clear_sky_envelopes(conn, step=3)
+            build_top_records(conn, step=4)
+            build_top_periods(conn, step=5)
+            print("=== SUCCESS: Open analytics.php / topn.php in browser ===")
+
+        elif '-daily' in args:
+            # Step 6: Routine automated midnight downsampler
+            downsample_live_readings(conn, step=1)
+            build_daily_history(conn, days_back=3, step=2)
+            build_monthly_history(conn, step=3)
+            build_top_periods(conn, step=4)
+
+        elif '-today' in args:
+            # On-demand: downsample today's readings only (same as analytics Generate table)
+            today = datetime.now().strftime('%Y-%m-%d')
+            downsample_live_readings(conn, day_iso=today, step=1)
+            build_daily_history(conn, days_back=1, step=2)
+            build_top_periods(conn, step=3)
+
+        elif '-purge_derived' in args:
+            # Dev utility: safely wipes all derived analytical tables for fresh testing
+            with conn:
+                conn.execute('DELETE FROM history_5min;')
+                conn.execute('DELETE FROM daily_history;')
+                conn.execute('DELETE FROM monthly_history;')
+                conn.execute('DELETE FROM clear_sky_envelopes;')
+                conn.execute('DELETE FROM top_records;')
+                conn.execute('DELETE FROM top_periods;')
+            conn.execute('VACUUM;')
+            print("[INFO] All derived analytical tables purged and vacuumed. (Raw staging & readings untouched).")
+
+        else:
+            print("P1 & Solar Data Warehouse Manager")
+            print("Usage:")
+            print("  python3 rollup.py -consolidate  (Snaps and merges raw staging into history_5min)")
+            print("  python3 rollup.py -buildall     (Populates all daily, monthly, envelope, top_records, top_periods)")
+            print("  python3 rollup.py -daily        (Automated nightly cron: downsamples live P1 readings)")
+            print("  python3 rollup.py -today        (On-demand: downsample today's readings into history_5min)")
+            print("  python3 rollup.py -purge_derived (Dev tool: deletes all analytical data safely to restart tests)")
+
+    except Exception as e:
+        sys.stderr.write(f"Rollup execution error: {e}\n")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        sys.exit(0)
