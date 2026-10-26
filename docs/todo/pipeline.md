@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-26 (**A10** coding, locked, not closed — warehouse rebuild; **A4 Done**; **A6** coding; **A5**, **A7–A9**, **P1–P3** queued)
+**Last updated:** 2026-10-26 (**P3** backfill locked in the phase file — stitch empty quarters, fall-out uses Fluvius; no code; **A11** / **A12** not kicked off; **A10** coding)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -43,15 +43,17 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| 1 | open | M | **A5** | Multi-series power graph (PV + grid import + home usage); ref `docs/todo/HomeWizard-graph.jpg` | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 2 | coding | L | **A6** | Settings page implemented; operator smoke not done; `DB_BACKUP_ENCRYPTION_KEY` stays in `.env` | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 3 | open | S | **A7** | `top_records`: drop or change (assess at kickoff) | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 4 | open | L | **P1** | ennexOS one-time CSV history — kickoff, paid API out, not locked | [`phaseP-portals.md`](phaseP-portals.md) |
-| 5 | open | L | **P2** | SMA portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
-| 6 | open | L | **P3** | Fluvius Energy Portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
+| 1 | kickoff | L | **P3** | Fluvius manual CSV into `fluvius_interval` for the settings EANs only. No portal script. Locked, no code | [`phaseP-portals.md`](phaseP-portals.md) |
+| 2 | open | M | **A5** | Multi-series power graph (PV + grid import + home usage); ref `docs/todo/HomeWizard-graph.jpg` | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 3 | coding | L | **A6** | Settings page implemented; operator smoke not done; `DB_BACKUP_ENCRYPTION_KEY` stays in `.env` | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 4 | open | S | **A7** | `top_records`: drop or change (assess at kickoff) | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 5 | open | L | **P1** | ennexOS one-time CSV history — kickoff, paid API out, not locked | [`phaseP-portals.md`](phaseP-portals.md) |
+| 6 | open | L | **P2** | SMA portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
 | 7 | open | M | **A8** | Live Solar & Consumption chart: scaled X-axis (no line across gaps), zoom to 1 week of 1-minute data, drop "(Last 2 Hours)" | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 8 | open | L | **A9** | Full DB download + restore on the A6 page (admin password); no wipe; `p1-sync` pulls `meter_history.db` to the PC | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 9 | coding | M | **A10** | Warehouse rebuild — drop `-aggregate5min` and `-today`; `-buildall` refills `history_5min` then aggregates. Locked, not closed | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 10 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 11 | open | S | **A12** | Historical monthly Fluvius peak on a page. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
 
 ---
 

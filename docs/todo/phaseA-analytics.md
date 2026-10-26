@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4 Done**; A10 coding; A5–A9 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-26 (A10 coding — warehouse rebuild locked, not closed)  
+**Status:** **A4 Done**; A10 coding; A5–A9 and A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-26 (A11–A12 triaged from P3; no code)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py`
 
 ---
@@ -18,8 +18,10 @@
 | **A8** | open | Live Solar & Consumption chart: scaled X-axis, gaps, zoom to 1 week, title |
 | **A9** | open | Full DB download + restore on the A6 page (admin password); `p1-sync` pulls the DB |
 | **A10** | coding | Warehouse rebuild: drop `-aggregate5min` and `-today`; `-buildall` refills `history_5min` then aggregates. Locked, not closed |
+| **A11** | open | Historical gas, wind, and similar series on the pages. Not P3. Not kicked off |
+| **A12** | open | Historical monthly Fluvius peak on a page. Not P3. Not kicked off |
 
-**Parallel:** A5, A7, A8, A10 independent of **P1–P3**. **A9** depends on **A6** (control sits on that page). A8 is not part of **A5**. A10 has no code dependency on A5–A9.
+**Parallel:** A5, A7, A8, A10 independent of **P1–P3**. **A9** depends on **A6** (control sits on that page). A8 is not part of **A5**. A10 has no code dependency on A5–A9. **A11** and **A12** wait on P3 only for the Fluvius rows they will read. Wind for A11 is already in the warehouse.
 
 **Related:** A3 removed Hall of Fame UI. A4 is new Top-N. A7 decides fate of leftover `top_records` singles table.
 
@@ -325,6 +327,38 @@ None for the lock. Live NAS smoke is not done. Do not mark Done from this branch
 ### Verbatim — 2026-10-26 (fold + kickoff)
 
 > fold all in A10, then kickoff
+
+---
+
+## A11 — Historical gas, wind, and similar
+
+**Status:** open (triaged 2026-10-26, not kicked off)  
+**Size:** **M**  
+**Depends on:** P3 for gas rows in `fluvius_interval`. Wind is already on `history_5min` / `daily_history`.
+
+### Placement
+
+Not part of P3. P3 stores gas for the configured gas EAN and does not put it on a page. This phase is the first UI for that gas, and for warehouse series the pages still do not show (wind, and whatever the kickoff adds to “etc”). No code until kickoff locks the page and the series list.
+
+### Verbatim — 2026-10-26
+
+> Q3: hitorical gas, wind speed, etc is not for this phase - tirage that into another phase
+
+---
+
+## A12 — Historical monthly Fluvius peak
+
+**Status:** open (triaged 2026-10-26, not kicked off)  
+**Size:** **S**  
+**Depends on:** P3 stores `piekvermogen` in `fluvius_interval`. The live `capacity_peak_w` register on `index.php` stays as it is.
+
+### Placement
+
+Not part of P3. P3 does not write the monthly peak into `capacity_peak_w` and does not add it to the live card. This phase decides where the monthly kW series is shown. No code until kickoff.
+
+### Verbatim — 2026-10-26
+
+> Q4: also another phase: triage
 
 ---
 

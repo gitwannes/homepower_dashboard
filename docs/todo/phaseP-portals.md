@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseP-portals.md ---
 # Phase P — Cloud / utility portal ingest
 
-**Status:** P1 kickoff in progress (not locked). P2–P3 still queued.  
-**Last updated:** 2026-10-25  
+**Status:** P3 kickoff locked, no code. P1 kickoff in progress. P2 queued.  
+**Last updated:** 2026-10-26 (P3 backfill — stitch empty quarters, fall-out uses Fluvius)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) · `logger.py` (local SMA/WebBox already — **not** this track)
 
 ---
@@ -19,7 +19,7 @@ Pull historical / periodic data from **cloud or utility portals** into the wareh
 |---|---|---|
 | **P1** | kickoff | Sunny Portal / ennexOS cloud ingest |
 | **P2** | open | SMA portal ingest |
-| **P3** | open | Fluvius Energy Portal ingest |
+| **P3** | kickoff, locked, no code | Fluvius manual CSV into `fluvius_interval`. No portal script |
 
 **Source / API / auth / target tables:** TBD at each kickoff (operator lock). Do not assume APIs or credentials.
 
@@ -64,6 +64,10 @@ Pull historical / periodic data from **cloud or utility portals** into the wareh
 > cool; then it works - i will run this one-time-import on a different machine then where the DB sits - so create a script that pulls ALL data and puts it in a DB table, then this DB table must be transferreed to the real DB somehow, give insight
 
 `ennexos_pull.py` writes a standalone `ennexos_pv.sqlite` (PV channel only, every component that returns samples). It does not open `meter_history.db`. Copy that closed file to the dashboard host and `ATTACH` it. Do not merge into `history_5min` on the pull machine.
+
+### 2026-10-26 — kickoff P3
+
+> kickoff this P3, don't implement step 2 (automatic importer) - which table is needed additionaly, give what needs to be added/changed - any open items or questions?
 
 ---
 
@@ -155,9 +159,105 @@ Night zeros that the API returns are real zeros. Missing stamps stay missing. Th
 
 ## P3 — Fluvius Energy Portal
 
-**Status:** open (not kicked off)  
-**Scope (placement only):** ingest from Fluvius Energy Portal.  
-**Locks:** none yet — kickoff required before code.
+**Status:** kickoff, locked 2026-10-26, no code  
+**Size:** **L**  
+**Depends on:** none. Parallel with A5–A10 and P1–P2. Display of gas, wind, and monthly peak is **A11** / **A12**. The multi-series chart stays **A5**.
+
+### Locked
+
+Manual CSV only. Step 2 (a script that logs into the portal and pulls the last x days) is out. The P1 logger is already the finer source for every day it ran. A portal session has no stable consumer API in what we have seen, and recent gas kWh is often still `Voorlopig`.
+
+Settings holds the electricity EAN and the gas EAN. `fluvius_import` imports a row only when its EAN matches one of those two. Any other EAN in a file is skipped and is not an error. A file that contains none of the configured EANs is still moved to `processed/` after that skip. If both settings are empty, the import stops before reading files and says so. No EAN is hardcoded and none go into git.
+
+Backfill comes after the CSV is stored. Historical days with no `readings` and days that fall out use the same path. A passing day keeps its counter total and only borrows Fluvius where a whole quarter is empty. Details are under **Backfill** below.
+
+P3 does not draw the day chart. **A5** does. P3 does not add historical gas, wind, or the monthly peak to any page. **A11** and **A12** do. Gas and peak rows for the configured EANs are still stored here.
+
+### One additional table
+
+`fluvius_interval`. Nothing else. It is source of truth. `-purge_derived` and `-buildall` must not delete it. Peak fits in this table: same CSV shape, resolution `month`, unit `kW`.
+
+| Column | Role |
+|---|---|
+| `ean` | Digits only. The Excel `="5414…"` wrapper is stripped. |
+| `register` | `afname_dag`, `afname_nacht`, `injectie_dag`, `injectie_nacht`, `afname` (gas), `piekvermogen` |
+| `unit` | `kWh`, `m3`, `kW` |
+| `resolution` | `15min`, `hour`, `day`, `month` |
+| `interval_start` | `Van`, local `YYYY-MM-DD HH:MM:SS` |
+| `interval_end` | `Tot`, same form. Gas day is 06:00–06:00. DST moves that end to 05:00 or 07:00. Electricity day is calendar midnight, with the spring row running to 01:00 next day and the fall row stopping at 23:00. |
+| `occurrence` | 0, then 1, for a DST fall-back clock that appears twice. Order is file order. |
+| `volume` | Number, including `0`. `Geen verbruik` with a blank volume is 0. |
+| `validation` | `Uitgelezen` or `Geen verbruik` |
+| `calorific` | Gas kWh only: `Definitief`, `Voorlopig`, or empty. Not a conversion factor. |
+| `meter`, `meter_type`, `source_file` | Trace. Not part of the key. |
+
+Primary key: `(ean, register, unit, resolution, interval_start, occurrence)`. A second drop of the same interval replaces the row, so a later `Definitief` file replaces `Voorlopig`.
+
+Do not hardcode an EAN, a meter, or a cutoff. The samples are two different sites.
+
+Grain inside `fluvius_interval`, for a day that is taken from Fluvius (no `readings`, or the day fell out):
+
+- Electricity: a complete 15-minute day wins, else an hour file if one is ever dropped, else the day file. Do not expand one quarter into three rows. Do not invent a load curve from a day total. A passing P1 day does not use this choice. Its total stays the counter delta. See **Backfill**.
+- Gas m³ and gas kWh are chosen separately. A complete hour window wins, else the day row. If any hour kWh is `Voorlopig` and the day kWh is `Definitief`, the day kWh wins. m³ has no calorific flag; the hour sum matches the day file on the samples.
+- Peak stays a monthly kW. It is electricity, not gas. It is not added to any kWh sum and it is not written into `capacity_peak_w`.
+
+Counters on a Fluvius `history_5min` row stay empty. Do not write a quarter kWh into `total_import` or `total_export`. A Fluvius day total is the sum of the published quarter kWh, not `SUM(watts) * 5/60` and not counter MAX−MIN.
+
+Cross-check on import, log only: electricity quarter sum vs day file within 0.001 kWh on a complete day; gas m³ exact to 0.001; gas kWh within 0.002 when both sides are `Definitief`. `Voorlopig` against `Definitief` is not a failure.
+
+### Backfill
+
+Two paths. Fluvius never fills solar. An empty solar slot stays empty.
+
+**Quarter stitch.** For one Fluvius quarter (`:00–:15`, `:15–:30`, `:30–:45`, `:45–:00`), if all three 5-minute slots are missing from P1, write one `history_5min` row at the quarter start. Grid import is Afname Dag or Afname Nacht, whichever that quarter has. Grid injection is Injectie Dag or Injectie Nacht. `0,000` stays zero. A register that is not in the file is left empty. The other two slots of the quarter stay absent. Six missing slots are two quarters, so both are written. Three missing slots that cross a quarter boundary are not a Fluvius quarter. Leave them as a gap.
+
+A WebBox row at that timestamp does not block this. WebBox has no grid import or injection. Fill those fields on the existing row when the P1 slots for that quarter are missing.
+
+On a day that still passes, the official electricity kWh stays the P1 counter delta. That delta already includes the energy inside the hole. The stitched quarter is only the curve point. Do not add it to the daily sum.
+
+**Day falls out.** An electricity day falls out when `readings` has no sample at or before 00:15, or no sample at or after 23:45, or `total_import` or `total_export` steps down by more than 0.01 kWh. A hole longer than 30 minutes does not fall the day out. The missing hour on a spring DST day (02:00–03:00) is not a hole. The repeated 02:00 in autumn counts as continuous. Partial P1 samples on a fallen-out day are ignored.
+
+A day with no `readings` at all, which is the historical case, is this same path. Use the 15-minute series when that day has a complete one. The day total is the sum of those quarters. When the 15-minute series is missing or incomplete, the day file is the total and no quarter rows are written. Do not spread one day total across the 5-minute slots.
+
+**Gas.** Gas does not go into `history_5min`. A clock hour with no gas-counter samples takes the Fluvius hour. A gas day falls out when the 06:00–06:00 window is not bracketed by counter samples, or the m³ counter steps down. Then use the hours when that window is complete, otherwise the day row. The electricity midnight test does not apply. Hour kWh that is `Voorlopig` still loses to a `Definitief` day kWh. A passing gas day keeps the counter delta. Filled hours are not added on top of it. Showing gas is **A11**.
+
+### What has to be added or changed (not in this kickoff)
+
+- New `fluvius_import.py`. It reads Fluvius CSVs and writes `fluvius_interval`. It does not parse WebBox archives. `importer.py` ignores `.csv`, so the files can sit in `import_queue/fluvius/` and move to `import_queue/fluvius/processed/`.
+- `rollup.py -purge_derived` keeps `fluvius_interval`.
+- `rollup.py -buildall` and `-daily`, after `history_5min` is rebuilt from `readings` and WebBox: apply the backfill above. `data_source` `fluvius` on a row that Fluvius created. Counters on that row stay null. A WebBox row that only gains grid fields keeps its solar source and records that grid came from Fluvius. Gas hours do not go into `history_5min`.
+- Derived day and month grid import/export: counter delta on a passing electricity day, Fluvius quarter sum or day file on a fallen-out day. Solar on those days is untouched. No `gas_m3` / `gas_kwh` columns in this phase.
+- Settings page: two `app_settings` keys, electricity EAN and gas EAN. The loader reads those keys and ignores every other EAN.
+- `docs/architecture.md`, `README.md`, and `.cursor/rules/history-5min-derived.mdc` when the code lands. The cursor rule already forbids purging this source and already states the 1-of-3 chart rule.
+
+`analytics.php` still fills 288 solar slots with 0 and does not plot grid. That drawing is **A5**, not P3. P3 only writes the empty quarter slots so A5 has something to read.
+
+### Still open
+
+None. No code until the operator says implement.
+
+### Verbatim — 2026-10-26 (kickoff)
+
+> kickoff this P3, don't implement step 2 (automatic importer) - which table is needed additionaly, give what needs to be added/changed - any open items or questions?
+
+### Verbatim — 2026-10-26 (locks)
+
+> Q1: EANs to be entered in the settings page - fluvius_import will import only CSVs for those EANs so no errors occur
+> Q2: confirm
+> Q3: hitorical gas, wind speed, etc is not for this phase - tirage that into another phase
+> Q4: also another phase: triage
+> Q5: Q5 is seperate
+> write docs, no code
+
+### Verbatim — 2026-10-26 (backfill)
+
+> we need to rethink this - first part is easy: fill historical data
+> second part is trickier: it is used as backfill where P1 (or webbox) has no data. if 3 consecutive 5min records are missing: then the 15min record from fluvius should be used (for both injection and export, where available)
+> if a whole day falls out (and this is where those numbers come in I assume): then also the 15min readings if available are used and if not the day reading is used
+> for gas: this becomes hours and days
+> - agree? what is the impact of this?
+
+The 30-minute hole was dropped from the fall-out test in the same pass. A long hole is stitched quarter by quarter. Fall-out stays the midnight brackets and a counter step down over 0.01 kWh.
 
 ---
 
@@ -165,3 +265,6 @@ Night zeros that the API returns are real zeros. Missing stamps stay missing. Th
 
 - Changing local `logger.py` SMA / WebBox poll behaviour
 - Replacing WebBox ZIP / `sql_importer` archive path without an explicit kickoff lock
+- Fluvius portal script (P3 step 2)
+- Drawing Fluvius quarters on the day chart (**A5**)
+- Pages for historical gas, wind, and the monthly peak (**A11**, **A12**)
