@@ -11,18 +11,18 @@ Never purged, and the only legal sources for a rebuild:
 
 - `readings` (1-minute logger)
 - `sensorbox_history_5min` and `inverter_history_5min` (WebBox staging; every WebBox year lives here)
-- Fluvius interval storage, once it exists (15-minute electricity, hourly gas, day totals, peak)
+- `fluvius_interval` (Fluvius CSV: 15-minute electricity, hourly gas, day totals, peak)
 
 `app_settings` and `expected_monthly` stay too. They are not timeseries sources.
 
-`rollup.py -buildall` deletes `history_5min`, `daily_history`, and `monthly_history` (no `VACUUM`), then reconstructs `history_5min` from all `readings` rows except the open 5-minute slice, then from staging (`data_source` `webbox_archive`), then rebuilds daily, monthly, envelopes, `top_records`, and `top_periods`. It does not read Fluvius yet. It does not rescan `import_queue/processed/`. The day chart is empty until that command finishes. The command is rare.
+`rollup.py -buildall` deletes `history_5min`, `daily_history`, and `monthly_history` (no `VACUUM`), then reconstructs `history_5min` from all `readings` rows except the open 5-minute slice, then from staging (`data_source` `webbox_archive`), then stitches Fluvius electricity quarters from `fluvius_interval`, then rebuilds daily, monthly, envelopes, `top_records`, and `top_periods`. It does not rescan `import_queue/processed/` or `import_queue/fluvius/processed/`. The day chart is empty until that command finishes. The command is rare.
 
-`rollup.py -daily` downsamples only the last 2 local days of `readings`, refreshes the last 3 local days of `daily_history`, then rewrites `monthly_history` and `top_periods`. That is not a rebuild.
+`rollup.py -daily` downsamples only the last 2 local days of `readings`, stitches Fluvius quarters for those calendar days, refreshes the last 3 local days of `daily_history`, then rewrites `monthly_history` and `top_periods`. That is not a rebuild.
 
 `importer.py` writes staging only. `importer.py -aggregate5min` and `rollup.py -today` are removed. Do not insert a series into `history_5min` unless a never-purged copy remains.
 
-Fluvius 15-minute electricity is placed in `history_5min` only when all three 5-minute slots of that quarter are missing from P1. One row at the quarter start (`:00`, `:15`, `:30`, `:45`), grid import and grid injection only. Leave the other two slots absent. Do not copy the value into them. Do not write the quarter kWh into the lifetime counters. A WebBox row at that timestamp does not block the grid fields. Three missing slots that cross a quarter boundary stay a gap. Gas hours do not go into `history_5min`.
+Fluvius 15-minute electricity is placed in `history_5min` only when all three 5-minute slots of that quarter are missing from P1. One row at the quarter start (`:00`, `:15`, `:30`, `:45`). Grid import is `grid_import_kwh` and grid injection is `grid_export_kwh` (the published quarter kWh). Leave the other two slots absent. Do not copy the value into them. Do not write the quarter kWh into the lifetime counters. A WebBox row at that timestamp does not block the grid fields; fill those two columns and keep the solar `data_source`. A row Fluvius creates uses `data_source` `fluvius` and null counters. Two occurrences that share one local start (autumn) are summed into that timestamp. The spring row that ends at 03:00 is stored at its start only. Three missing slots that cross a quarter boundary stay a gap. Gas stays in Fluvius interval storage and does not go into `history_5min`.
 
-A passing electricity day keeps the P1 counter delta as its kWh. Stitched quarters are curve points only and are not added to that delta. A day with no readings, or a day that falls out (no sample at or before 00:15, no sample at or after 23:45, or a counter step down over 0.01 kWh), uses the Fluvius quarters when that set is complete, otherwise the Fluvius day total and no invented curve. The spring DST gap (02:00–03:00) is not a hole.
+A passing electricity day keeps the P1 counter delta as its kWh. Stitched quarters are curve points only and are not added to that delta. A finished day with no readings, or a finished day that falls out (no sample at or before 00:15, no sample at or after 23:45, or a counter step down over 0.01 kWh), uses the Fluvius quarters when that set is complete, otherwise the Fluvius day total and no invented curve. The local calendar day still in progress is not a fall-out day. The spring DST gap (02:00–03:00) is not a hole.
 
 Day-graph rule for a 5-minute axis: up to 2 missing slots between known points is valid data and must be drawn (the 1-in-3 quarter pattern). More than 2 consecutive missing slots is no-info and must render as a gap, not as zero.

@@ -90,6 +90,8 @@ function hp_setting_defaults(): array
         'pac_shoulder_start' => '20',
         'pac_shoulder_end' => '6',
         'pac_rad_floor' => '5',
+        'fluvius_ean_electricity' => '',
+        'fluvius_ean_gas' => '',
     ];
 }
 

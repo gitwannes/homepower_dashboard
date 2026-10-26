@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 from typing import Optional, Tuple
 
+import fluvius_import
 import site_config
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -92,9 +93,14 @@ def init_analytical_db(conn: sqlite3.Connection) -> None:
                 wind_speed REAL,
                 wind_gust REAL,
                 sample_count INTEGER DEFAULT 1,
-                data_source TEXT
+                data_source TEXT,
+                grid_import_kwh REAL,
+                grid_export_kwh REAL
             )
         """)
+        # Existing databases were created before the Fluvius quarter columns.
+        fluvius_import.ensure_history_grid_columns(conn)
+        fluvius_import.ensure_interval_schema(conn)
 
         # 2. Daily Rollups
         conn.execute("""
@@ -288,6 +294,12 @@ def build_daily_history(
         where_clause = f"WHERE timestamp >= datetime('now', 'localtime', '-{days} days')"
 
     start_time = time.time()
+    # Fall-out days take Fluvius kWh. The open local day stays on the counter delta.
+    if days_back is None:
+        fluvius_import.prepare_day_overrides(conn, None, None)
+    else:
+        day_lo, day_hi = fluvius_import.local_span(conn, int(days_back))
+        fluvius_import.prepare_day_overrides(conn, day_lo, day_hi)
     with conn:
         conn.execute(f"""
             INSERT OR REPLACE INTO daily_history (
@@ -396,16 +408,17 @@ def build_daily_history(
                 , 2) AS yield_kwh,
                 peak_w,
                 sun_h,
-                import_kwh,
-                export_kwh,
+                CASE WHEN ovr.date IS NOT NULL THEN ovr.grid_import_kwh ELSE import_kwh END,
+                CASE WHEN ovr.date IS NOT NULL THEN ovr.grid_export_kwh ELSE export_kwh END,
                 ROUND(
                     CASE
                         WHEN et_first IS NOT NULL AND et_last IS NOT NULL
                              AND bad_etotal_steps = 0
                              AND (et_last - et_first) >= 0
                              AND (et_last - et_first) <= {MAX_DAY_YIELD_KWH}
-                             AND export_kwh IS NOT NULL
-                        THEN MAX(0.0, (et_last - et_first) - COALESCE(export_kwh, 0))
+                             AND (CASE WHEN ovr.date IS NOT NULL THEN ovr.grid_export_kwh ELSE export_kwh END) IS NOT NULL
+                        THEN MAX(0.0, (et_last - et_first) - COALESCE(
+                            CASE WHEN ovr.date IS NOT NULL THEN ovr.grid_export_kwh ELSE export_kwh END, 0))
                         ELSE NULL
                     END
                 , 2) AS self_consumption_kwh,
@@ -414,8 +427,10 @@ def build_daily_history(
                 t_mod_max,
                 wind_max,
                 rad_max
-            FROM et_ends;
+            FROM et_ends
+            LEFT JOIN fluvius_day_override ovr ON ovr.date = et_ends.dt;
         """)
+        fluvius_import.insert_missing_override_days(conn)
 
     duration = time.time() - start_time
     count = conn.execute("SELECT COUNT(*) FROM daily_history").fetchone()[0]
@@ -767,6 +782,7 @@ if __name__ == '__main__':
                     conn.execute('DELETE FROM monthly_history;')
                 downsample_live_readings(conn, all_rows=True, step=1)
                 consolidate_historical_webbox(conn, step=2)
+                fluvius_import.stitch_electricity_curve(conn)
                 build_daily_history(conn, step=3)
                 build_monthly_history(conn, step=4)
                 build_clear_sky_envelopes(conn, step=5)
@@ -777,6 +793,8 @@ if __name__ == '__main__':
         elif '-daily' in args:
             # Nightly: last 2 local days of readings, last 3 local days of daily_history.
             downsample_live_readings(conn, step=1)
+            stitch_lo, stitch_hi = fluvius_import.local_span(conn, 2)
+            fluvius_import.stitch_electricity_curve(conn, stitch_lo, stitch_hi)
             build_daily_history(conn, days_back=3, step=2)
             build_monthly_history(conn, step=3)
             build_top_periods(conn, step=4)

@@ -42,7 +42,8 @@ Never put real LAN IPs or site nicknames in committed files.
 | `summary.php` | All years / week / month / year (`daily_history` / `monthly_history`) |
 | `topn.php` | Best/worst yield Top-N (days/months/years); click-through to period views |
 | `importer.py` / `import_dashboard.php` | WebBox Mean XML and daily archives → staging tables |
-| `rollup.py` | Warehouse: `-consolidate`, nightly `-daily`, rare `-buildall` |
+| `fluvius_import.py` | Fluvius CSV in `import_queue/fluvius/` → `fluvius_interval` (Settings EANs only) |
+| `rollup.py` | Warehouse: `-consolidate`, nightly `-daily`, rare `-buildall` (includes Fluvius electricity backfill) |
 | `powertests.py` / `powertests.php` | Live hardware probes |
 
 ## Docs

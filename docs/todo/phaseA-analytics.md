@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4** and **A6 Done**; A10 coding; A5, A7–A9, A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-26 (A6 closed)  
+**Status:** **A4**, **A6**, and **A10 Done**; A5, A7–A9, A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-26 (A10 closed, NAS smoke)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py` · `settings.php`
 
 ---
@@ -17,11 +17,11 @@
 | **A7** | open | `top_records`: drop or change (assess at kickoff) |
 | **A8** | open | Live Solar & Consumption chart: scaled X-axis, gaps, zoom to 1 week, title |
 | **A9** | open | Full DB download + restore on the A6 page (admin password); `p1-sync` pulls the DB |
-| **A10** | coding | Warehouse rebuild: drop `-aggregate5min` and `-today`; `-buildall` refills `history_5min` then aggregates. Locked, not closed |
+| **A10** | Done | Warehouse rebuild. Product: [`docs/architecture.md`](../architecture.md) (Rollup CLI) |
 | **A11** | open | Historical gas, wind, and similar series on the pages. Not P3. Not kicked off |
 | **A12** | open | Historical monthly Fluvius peak on a page. Not P3. Not kicked off |
 
-**Parallel:** A5, A7, A8, A10 independent of **P1–P3**. **A9** depends on **A6** (control sits on that page). A8 is not part of **A5**. A10 has no code dependency on A5–A9. **A11** and **A12** wait on P3 only for the Fluvius rows they will read. Wind for A11 is already in the warehouse.
+**Parallel:** A5, A7, A8 independent of **P1–P2**. **A9** depends on **A6** (control sits on that page). A8 is not part of **A5**. **A11** and **A12** read Fluvius rows **P3** stored. They are not kicked off. Wind for A11 is already in the warehouse. **A10** and **P3** are Done.
 
 **Related:** A3 removed Hall of Fame UI. A4 is new Top-N. A7 decides fate of leftover `top_records` singles table.
 
@@ -242,59 +242,22 @@ None for placement. Kickoff still has to say how the pull takes a consistent sna
 
 ## A10 — Warehouse rebuild
 
-**Status:** coding (locked 2026-10-26, not closed)  
-**Size:** **M**  
-**Depends on:** none. Sequenced after A9. No code dependency.
+**Status:** **Done** 2026-10-26 (NAS smoke)  
+**Product:** [`docs/architecture.md`](../architecture.md) (Rollup CLI) · [`docs/roadmap.md`](../roadmap.md) · [`docs/deploy.md`](../deploy.md)
 
-### Locked scope
+### Done summary
 
-WebBox archives stay a one-time ingest. `importer.py` writes `sensorbox_history_5min` and `inverter_history_5min` from loose `Mean` XML and from daily `wb<serial>.<YYYYMMDD-HHMMSS>.zip|.7z`. `importer.py -outerzip` is only the extra pass for a master container that is not a daily archive. Both move consumed files to `import_queue/processed/`.
+`-buildall` deletes `history_5min`, `daily_history`, and `monthly_history` (no `VACUUM`), refills `history_5min` from all `readings` except the open 5-minute slice, then from WebBox staging, then rebuilds daily, monthly, envelopes, `top_records`, and `top_periods`. Rare. The day chart is empty until it finishes. `-daily` uses local time: last 2 days of `readings`, last 3 days of `daily_history`, then a full `monthly_history` and `top_periods`. `-purge_derived` is unchanged. `importer.py -aggregate5min` and `rollup.py -today` are removed. Generate table stays today-only. Import writes staging only. `processed/` is not scanned again. Both staging tables hold every WebBox year. P3 later stitches Fluvius electricity quarters in that same `-buildall`, after WebBox consolidate. See [`docs/architecture.md`](../architecture.md).
 
-`rollup.py -buildall` becomes the full derived rebuild:
+### Out of scope
 
-1. Delete `history_5min`, `daily_history`, `monthly_history`. No `VACUUM`. `readings` and both staging tables stay. `clear_sky_envelopes`, `top_records`, and `top_periods` already delete their own rows later in the run.
-2. Every row in `readings` → `history_5min`, using the existing downsample. Skip the open 5-minute slice (the bucket that contains now, local time).
-3. `consolidate_historical_webbox`: staging → solar and weather columns on `history_5min`, `data_source` `webbox_archive`.
-4. `history_5min` → `daily_history`, all days.
-5. `daily_history` → `monthly_history`, all months.
-6. `history_5min` → `clear_sky_envelopes`.
-7. `history_5min` and `daily_history` → `top_records`.
-8. `daily_history` and `monthly_history` → `top_periods`.
-
-`-purge_derived` stays a separate operator wipe. It still deletes the same six derived tables and runs `VACUUM`.
-
-Also in this phase:
-
-- Remove `importer.py -aggregate5min` (flag, direct insert into `history_5min`, branch).
-- Remove the `rollup.py -today` branch and its usage line. `downsample_live_readings` stays.
-- `build_daily_history` day window uses `datetime('now', 'localtime', …)`. `-daily` keeps last 2 local days of `readings` and last 3 local days of `daily_history`, then a full `monthly_history` and `top_periods`.
-- **Generate table** stays today-only into `history_5min`. Update the comment that calls it the same path as `-today`. Keep that PHP SQL in step with `downsample_live_readings`.
-- Update `docs/architecture.md`, `README.md`, `docs/roadmap.md`, and `.cursor/rules/history-5min-derived.mdc` to this command set.
-
-### Verified
-
-- `-aggregate5min` reads the same archives as plain import and writes solar and weather on `history_5min` with `data_source` `webbox`. `-consolidate` reads staging and writes `webbox_archive`. The live downsample only preserves an existing solar value when the source is `webbox_archive`.
-- Nothing calls `rollup.py -today`. **Generate table** does not write `daily_history` or `top_periods`.
-- `-buildall` today does not read `readings` or staging. It starts at `daily_history`.
-- `-daily`’s 3-day filter is `datetime('now', '-3 days')` (UTC). The 2-day readings filter already uses local time.
-- `sql_importer.py` is not in the repo. A0 records that the gap-fill into staging already ran.
-- No year table. Years are summed from `monthly_history`.
-
-### Out of this phase
-
-- Fluvius CSV / portal (**P3**) and SMA / ennexOS (**P1**, **P2**).
+- Fluvius (**P3**) and SMA / ennexOS (**P1**, **P2**).
 - Restoring `sql_importer.py`.
-- Running `top_records` from `-daily` (**A7**).
-- A second historical import on every rebuild. `processed/` is not scanned again.
+- `top_records` from `-daily` (**A7**).
 
-### Locked 2026-10-26
+### Verbatim — 2026-10-26 (close)
 
-1. Both staging tables hold every WebBox year. `history_5min` has no WebBox rows those tables lack. Dropping `-aggregate5min` does not drop a span.
-2. `-buildall` is rare (ideally never). An empty day chart while that one command runs is acceptable.
-
-### Still open
-
-None for the lock. Live NAS smoke is not done. Do not mark Done from this branch.
+> A10 smoke done: close
 
 ### Verbatim — 2026-10-26 (lock + implement)
 
@@ -320,7 +283,7 @@ None for the lock. Live NAS smoke is not done. Do not mark Done from this branch
 
 **Status:** open (triaged 2026-10-26, not kicked off)  
 **Size:** **M**  
-**Depends on:** P3 for gas rows in `fluvius_interval`. Wind is already on `history_5min` / `daily_history`.
+**Depends on:** P3 (Done) for gas rows in `fluvius_interval`. Wind is already on `history_5min` / `daily_history`.
 
 ### Placement
 
@@ -336,7 +299,7 @@ Not part of P3. P3 stores gas for the configured gas EAN and does not put it on 
 
 **Status:** open (triaged 2026-10-26, not kicked off)  
 **Size:** **S**  
-**Depends on:** P3 stores `piekvermogen` in `fluvius_interval`. The live `capacity_peak_w` register on `index.php` stays as it is.
+**Depends on:** P3 (Done) stores `piekvermogen` in `fluvius_interval`. The live `capacity_peak_w` register on `index.php` stays as it is.
 
 ### Placement
 

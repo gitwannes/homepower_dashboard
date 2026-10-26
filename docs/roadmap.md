@@ -35,11 +35,8 @@ Plain `importer.py` writes `sensorbox_history_5min` and `inverter_history_5min` 
 python3 rollup.py -consolidate
 ```
 
-**Step 3: Run the SQL Gap-Filler**
-Drop the legacy MariaDB dump (`.sql`) into `import_queue/` and run the SQL importer. This safely fills any missing historical intervals by pulling from `wpv_raw` and snapping to the same 5-minute grid:
-```bash
-python3 sql_importer.py
-```
+**Step 3: SQL gap-fill**
+Already ran (A0). `sql_importer.py` is not in this repo. A10 does not restore it. `-buildall` refills `history_5min` from `readings` and from the WebBox staging tables.
 
 **Step 4: Defragment and Optimize the Database**
 Decompressing and bulk-inserting millions of rows creates B-tree page fragmentation. Reclaim unallocated disk space and update SQLite's internal query planner statistics:
@@ -48,7 +45,7 @@ sqlite3 meter_history.db "VACUUM; PRAGMA optimize;"
 ```
 
 **Step 5: Run the Rollup Engine (`rollup.py`)**
-`-buildall` deletes `history_5min`, `daily_history`, and `monthly_history`, refills `history_5min` from all `readings` (open 5-minute slice skipped) and from staging, then builds `daily_history`, `monthly_history`, `clear_sky_envelopes`, `top_records`, and `top_periods`. Rare. The day chart is empty until the command finishes.
+`-buildall` deletes `history_5min`, `daily_history`, and `monthly_history`, refills `history_5min` from all `readings` (open 5-minute slice skipped), from WebBox staging, and from `fluvius_interval` electricity quarters, then builds `daily_history`, `monthly_history`, `clear_sky_envelopes`, `top_records`, and `top_periods`. Rare. The day chart is empty until the command finishes. Run `fluvius_import.py` first when new Fluvius CSVs are in `import_queue/fluvius/`.
 ```bash
 python3 rollup.py -buildall
 ```
@@ -61,7 +58,7 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 ## PHASE 1: AGGREGATION ENGINE (DATA FOUNDATION)
 - [x] Design and create the 3-Tier Data Architecture schemas:
       - `history_5min` (Consolidated 17-year master table).
-      - `daily_history` (date, solar_yield_kwh, peak_w, sun_hours, import_kwh, export_kwh, self_consumption_kwh, temps, wind, radiation).
+      - `daily_history` (date, solar_yield_kwh, solar_peak_w, sun_hours, grid_import_kwh, grid_export_kwh, self_consumption_kwh, temps, wind, radiation).
       - `monthly_history` & `expected_monthly` (PVGIS baseline tracking).
       - `clear_sky_envelopes` (month, timepoint [0..287], max_pac_w, max_pac_date, max_rad_wm2).
 - [x] Build `rollup.py` (CLI & Cron Worker) Framework:

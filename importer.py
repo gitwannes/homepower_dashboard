@@ -15,6 +15,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
+import fluvius_import
 import site_config
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -120,9 +121,12 @@ def init_db(conn):
                 wind_speed REAL,
                 wind_gust REAL,
                 sample_count INTEGER DEFAULT 1,
-                data_source TEXT
+                data_source TEXT,
+                grid_import_kwh REAL,
+                grid_export_kwh REAL
             )
         """)
+        fluvius_import.ensure_history_grid_columns(conn)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_hist5m_ts ON history_5min(timestamp)")
 
         # 2. Raw SensorBox 5-Minute Staging Table

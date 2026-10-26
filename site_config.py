@@ -63,6 +63,8 @@ SETTING_DEFAULTS = {
     'pac_shoulder_start': str(DEFAULT_SHOULDER_START),
     'pac_shoulder_end': str(DEFAULT_SHOULDER_END),
     'pac_rad_floor': str(DEFAULT_RAD_FLOOR),
+    'fluvius_ean_electricity': '',
+    'fluvius_ean_gas': '',
 }
 
 

@@ -58,7 +58,7 @@ Example config shape (placeholders only — put real values only in the local JS
 ## Synology
 
 - Web Station: PHP with `curl`, `pdo_sqlite`, `sqlite3`.
-- Task Scheduler: run `logger.py` on the poll interval; nightly `rollup.py -daily`. `rollup.py -buildall` is a rare full rebuild, not a weekly job.
+- Task Scheduler: run `logger.py` on the poll interval; nightly `rollup.py -daily`. `rollup.py -buildall` is a rare full rebuild, not a weekly job. `fluvius_import.py` is manual: drop CSVs in `import_queue/fluvius/` and run it when a file arrives. Nightly `-daily` then stitches those electricity quarters.
 - DB file lives beside the app on Synology (`meter_history.db`).
 
 ## Pi / log2ram (optional)

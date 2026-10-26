@@ -222,6 +222,8 @@ function hp_settings_from_post(array $stored): array
         'pac_shoulder_start' => $hourValues['pac_shoulder_start'],
         'pac_shoulder_end' => $hourValues['pac_shoulder_end'],
         'pac_rad_floor' => $radRaw,
+        'fluvius_ean_electricity' => (string)preg_replace('/\D/', '', $text('fluvius_ean_electricity')),
+        'fluvius_ean_gas' => (string)preg_replace('/\D/', '', $text('fluvius_ean_gas')),
         'config_saved' => '1',
     ];
 
@@ -356,6 +358,17 @@ function hp_field(array $settings, string $key): string
             </label>
             <label class="block text-sm font-semibold">Sunny Portal timezone
                 <input name="sunnyportal_timezone" value="<?= hp_h(hp_field($settings, 'sunnyportal_timezone')) ?>" placeholder="Europe/Paris" autocomplete="off" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+            </label>
+        </section>
+
+        <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
+            <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Fluvius</h2>
+            <p class="text-xs text-slate-500">Optional. The CSV import keeps rows for these EANs only. There is no import button. Put the files in import_queue/fluvius/ and run python3 fluvius_import.py. Grid backfill runs on rollup.py -buildall and -daily.</p>
+            <label class="block text-sm font-semibold">Electricity EAN
+                <input name="fluvius_ean_electricity" inputmode="numeric" autocomplete="off" value="<?= hp_h(hp_field($settings, 'fluvius_ean_electricity')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+            </label>
+            <label class="block text-sm font-semibold">Gas EAN
+                <input name="fluvius_ean_gas" inputmode="numeric" autocomplete="off" value="<?= hp_h(hp_field($settings, 'fluvius_ean_gas')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
         </section>
 
