@@ -1,9 +1,9 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4 Done**; A10 coding; A5–A9 and A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-26 (A11–A12 triaged from P3; no code)  
-**Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py`
+**Status:** **A4** and **A6 Done**; A10 coding; A5, A7–A9, A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-26 (A6 closed)  
+**Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py` · `settings.php`
 
 ---
 
@@ -13,7 +13,7 @@
 |---|---|---|
 | **A4** | Done | Top-N tables (days / months / years) + graphs |
 | **A5** | open | Multi-series power graph (PV + grid import + home usage) — ref image |
-| **A6** | implemented | Settings page in code; operator smoke not done; `DB_BACKUP_ENCRYPTION_KEY` stays in `.env` |
+| **A6** | Done | Settings page (`settings.php`). Product: [`docs/architecture.md`](../architecture.md) |
 | **A7** | open | `top_records`: drop or change (assess at kickoff) |
 | **A8** | open | Live Solar & Consumption chart: scaled X-axis, gaps, zoom to 1 week, title |
 | **A9** | open | Full DB download + restore on the A6 page (admin password); `p1-sync` pulls the DB |
@@ -140,13 +140,12 @@ Best/worst yield rankings (20 days, 10 months, 10 years) in `top_periods` via `-
 
 ---
 
-## A6 — Settings page (all site config)
+## A6 — Settings page
 
-**Status:** **implemented** 2026-10-25. Operator smoke not done. Not closed.  
-**Size:** **L** (settings page, first-open admin password, readers in PHP, `rollup.py`, `logger.py`).  
-**Supersedes** the earlier “secrets stay in `.env`” suggestion. A new install must be configurable from the browser. Site config is not edited in `.env`.
+**Status:** **Done** 2026-10-26
+**Product:** [`docs/architecture.md`](../architecture.md) (Settings, config split) · [`docs/deploy.md`](../deploy.md) (runtime `.env`)
 
-### Operator answers (2026-10-25)
+### Done summary
 
 - The page configures the current `.env` keys, including `SMA_PASSWORD`, `SUNNYWEBBOX_PASSWORD`, and the Sunny Portal user, password, plant id, and timezone, plus plant settings. **Exception (2026-10-25, A9):** `DB_BACKUP_ENCRYPTION_KEY` stays in `.env`. It is the only variable that remains there after A6. It is not on the settings page, not imported into SQLite, and not committed. `.env.example` may name the key; the real value stays on the host. Sunny Portal fields are optional on save. `SUNNYPORTAL_*` is copied when that settings key is still absent (a leftover `ENNEXOS_*` name for the same value still counts). A saved empty Sunny Portal row is not overwritten.
 - Expected generation: **12 monthly kWh values** only. No kWp, azimuth, or tilt field in this phase. Storage stays `expected_monthly` (existing `inclination = 30` key so current readers keep working).
@@ -164,35 +163,22 @@ Best/worst yield rankings (20 days, 10 months, 10 years) in `top_periods` via `-
   - **Set:** the field shows stars and is not editable. An **Edit** control beside the field opens a modal that asks for the admin password. If it matches, that field becomes editable and empty (the stored secret is not shown). Stars left untouched keep the stored password. **Edit, leave empty, Save: do not change the password.** The following Save still asks for the admin password once for the whole form.
 - **Change admin password** is a separate control on the configuration page. It opens its own modal: current password, new password, new password again, then Enter submits. The two new values must match. A wrong current password rejects the change. This modal does not go through the settings Save gate.
 
-### Store
+`settings.php` configures devices, titles, 12 monthly expected kWh, max inverter AC (spike cap × 1.05), and the night/shoulder gates. Values live in `app_settings`. The admin password is created on first open (entered twice) and required on every save. Device passwords stay masked. `DB_BACKUP_ENCRYPTION_KEY` stays in `.env`. An existing `.env` is imported once when `app_settings` is empty. Plant changes apply on `rollup.py -buildall`.
+
+
+### DoD
 
 SQLite in `meter_history.db` (web user and poller can both open it). PHP does not rewrite `.env`. After A6, `.env` on the machine holds `DB_BACKUP_ENCRYPTION_KEY` only. An existing host imports the other `.env` keys once when the settings rows are empty, and leaves that key in `.env`. Sunny Portal user, password, plant id, and timezone are the same store. They are copied when that key is still absent, including from a leftover `ENNEXOS_*` name. Admin password is stored as a **one-way hash**. Device passwords and the Sunny Portal password are stored **reversibly** so `logger.py` and `sunnyportal_pull.py` can log in. `helpers/p1-sync.config.json` stays PC-only.
+- [x] Store, page, poller, rollup, charts, one-time `.env` import
+- [x] Product docs
+- [x] Operator close
 
-`index.php` today fatals when `.env` is missing. That fatal becomes: no admin yet → create admin password; no device settings yet → configuration page.
 
-Branding applies on the next page load. Plant limits and monthly kWh apply when the operator runs `rollup.py -buildall` (no rebuild button). The page says so.
+### Out of scope (A6)
 
-### Locked 2026-10-25 (implement)
-
-1. Spike cap = max inverter AC × **1.05**. Confirmed.
-2. This host: `.env` already has the site, so after the admin password is created the **normal dashboard** opens. The configuration page is not forced.
-3. Import the existing `.env` into SQLite **once** when `app_settings` is empty. Confirmed. Leave `DB_BACKUP_ENCRYPTION_KEY` in `.env`.
-4. SQLite `meter_history.db` is the site-config store. PHP does not rewrite `.env`. Confirmed.
-5. Rebuild path is `rollup.py -buildall`. Confirmed. No button that runs it.
-6. First admin password is entered **twice**. Confirmed.
-7. The page edits 12 monthly **kWh** values only. `expected_irr` stays at the seed. Confirmed.
-
-`importer.py` must not replace `expected_monthly` on every import. Seed a month only when that month is missing.
-
-### Verbatim — open items closed
-
-> 1: yes
-> 2: all info is in .env so show normal dashboard: confirm
-> 3: yes
-> 4: yes
-> 5: rebuild is done with rollup -buildall   - confirm
-> 6: twice
-> 7: ok
+- Database download and restore (**A9**)
+- kWp, azimuth, tilt, and editing `expected_irr`
+- A rebuild button
 
 ---
 

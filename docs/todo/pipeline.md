@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-26 (**P3** backfill locked in the phase file — stitch empty quarters, fall-out uses Fluvius; no code; **A11** / **A12** not kicked off; **A10** coding; **P1** row wording is Sunny Portal and stays open)
+**Last updated:** 2026-10-26 (**A6 Done**; **P3** backfill locked in the phase file — stitch empty quarters, fall-out uses Fluvius; no code; **A11** / **A12** not kicked off; **A10** coding)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -30,12 +30,13 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **Ops1** | Synology path + Task Scheduler jobs confirmed SoT after migrate — **2026-10-22** |
 | **Ops2** | Runtime `.env` in encrypted storage; placed on host by hand (never via sync) — **2026-10-22** |
 | **Ops3** | Local `helpers/p1-sync.config.json` filled with real sync targets — **2026-10-22** |
-| **A0** | `sql_importer` staging gap-fill (not master) — **2026-10-22** — [`phaseA-aggregation.md`](phaseA-aggregation.md) |
+| **A0** | `sql_importer` staging gap-fill (not master) — **2026-10-22** — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md) |
 | **Ops4** | Purge master + re-import `.sql` + consolidate/daily/buildall — **2026-10-22** |
 | **A1** | Q4: `-purge_derived` keeps wiping `history_5min` (rebuildable) — leave as-is — **2026-10-22** |
 | **A2** | Smoke analytics / Hall of Fame — **2026-10-22** |
 | **A3 / Q3** | `analytics.php` + `summary.php` UI split; operator smoke Done — **2026-10-22** — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md) |
 | **A4** | Top-N yield rankings (`topn.php` / `top_periods`) — **2026-10-25** — [`phaseA-analytics.md`](phaseA-analytics.md) |
+| **A6** | Settings page (`settings.php`, `app_settings`) — **2026-10-26** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 
 ---
 

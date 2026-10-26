@@ -54,4 +54,4 @@ Never put real LAN IPs or site nicknames in committed files.
 | [`docs/roadmap.md`](docs/roadmap.md) | Feature / archive roadmap |
 | [`docs/todo/pipeline.md`](docs/todo/pipeline.md) | Delivery pipeline |
 | [`docs/todo/_archive/phaseM-migration.md`](docs/todo/_archive/phaseM-migration.md) | Migrate DoD (Done) |
-| [`docs/todo/phaseA-aggregation.md`](docs/todo/phaseA-aggregation.md) | Aggregation + A3 UI (Done — move offline when convenient) |
+| [`docs/todo/_archive/phaseA-aggregation.md`](docs/todo/_archive/phaseA-aggregation.md) | Aggregation + A3 UI (Done — move offline when convenient) |

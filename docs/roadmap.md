@@ -87,6 +87,7 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 - [x] Hall of Fame / Top 10:
       - Old live Top 10 removed in A3. **A4 Done:** `topn.php` + `top_periods` (best/worst days 20, months/years 10); rebuilt by `-buildall`/`-daily`. Worst days skip zero yield and today.
       - Legacy `top_records` singles still built; fate = **A7**.
+- [x] Settings (`settings.php`): admin password on first open; devices, titles, monthly expected kWh, spike cap, and night gates in `meter_history.db`. See [`architecture.md`](architecture.md).
 - [x] Verify analytics / summary with populated rollups (A2/A3 + operator smoke).
 
 ---
@@ -102,7 +103,7 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 ---
 
 ## PHASE 4: SYSTEM MAINTENANCE & AUTOMATION
-- [x] Implement live hardware diagnostic utility (`powertests.py` & `powertests.php`) to test P1, SMA, and WebBox connectivity via HTTP/JSON-RPC without touching the database.
+- [x] Implement live hardware diagnostic utility (`powertests.py` & `powertests.php`). It reads site settings from `meter_history.db` and probes P1, SMA, and WebBox. It does not write telemetry.
 - [ ] Implement `readings` hot-buffer retention strategy:
       - Once 1-minute data is downsampled and aggregated, prune `readings` to 30–90 rolling days to keep hot queries lightweight while preserving permanent history in `history_5min`.
 - [ ] Integrate `meter_history.db` into Synology Hyper Backup for offsite snapshot protection.
