@@ -148,7 +148,7 @@ Best/worst yield rankings (20 days, 10 months, 10 years) in `top_periods` via `-
 
 ### Operator answers (2026-10-25)
 
-- The page configures the current `.env` keys, including `SMA_PASSWORD` and `SUNNYWEBBOX_PASSWORD`, plus plant settings. **Exception (2026-10-25, A9):** `DB_BACKUP_ENCRYPTION_KEY` stays in `.env`. It is the only variable that remains there after A6. It is not on the settings page, not imported into SQLite, and not committed. `.env.example` may name the key; the real value stays on the host.
+- The page configures the current `.env` keys, including `SMA_PASSWORD`, `SUNNYWEBBOX_PASSWORD`, and the Sunny Portal user, password, plant id, and timezone, plus plant settings. **Exception (2026-10-25, A9):** `DB_BACKUP_ENCRYPTION_KEY` stays in `.env`. It is the only variable that remains there after A6. It is not on the settings page, not imported into SQLite, and not committed. `.env.example` may name the key; the real value stays on the host. Sunny Portal fields are optional on save. `SUNNYPORTAL_*` is copied when that settings key is still absent (a leftover `ENNEXOS_*` name for the same value still counts). A saved empty Sunny Portal row is not overwritten.
 - Expected generation: **12 monthly kWh values** only. No kWp, azimuth, or tilt field in this phase. Storage stays `expected_monthly` (existing `inclination = 30` key so current readers keep working).
 - Spike cap = **max inverter AC × 1.05**. Reading of “105M” as 105%. Operator enters max inverter AC watts; the page shows the computed cap. Replaces hardcoded `MAX_PLAUSIBLE_PAC_W` (12 kW) in `rollup.py` and `analytics.php`.
 - Night / shoulder gates are on the same page. Defaults match the code today (`rollup.py` `sql_pac_plausible`, `analytics.php` `sanitize_pac_w`):
@@ -166,7 +166,7 @@ Best/worst yield rankings (20 days, 10 months, 10 years) in `top_periods` via `-
 
 ### Store
 
-SQLite in `meter_history.db` (web user and poller can both open it). PHP does not rewrite `.env`. After A6, `.env` on the machine holds `DB_BACKUP_ENCRYPTION_KEY` only. An existing host imports the other `.env` keys once when the settings rows are empty, and leaves that key in `.env`. Admin password is stored as a **one-way hash**. Device passwords are stored **reversibly** so `logger.py` can log in. `helpers/p1-sync.config.json` stays PC-only.
+SQLite in `meter_history.db` (web user and poller can both open it). PHP does not rewrite `.env`. After A6, `.env` on the machine holds `DB_BACKUP_ENCRYPTION_KEY` only. An existing host imports the other `.env` keys once when the settings rows are empty, and leaves that key in `.env`. Sunny Portal user, password, plant id, and timezone are the same store. They are copied when that key is still absent, including from a leftover `ENNEXOS_*` name. Admin password is stored as a **one-way hash**. Device passwords and the Sunny Portal password are stored **reversibly** so `logger.py` and `sunnyportal_pull.py` can log in. `helpers/p1-sync.config.json` stays PC-only.
 
 `index.php` today fatals when `.env` is missing. That fatal becomes: no admin yet → create admin password; no device settings yet → configuration page.
 

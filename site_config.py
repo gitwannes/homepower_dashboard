@@ -34,6 +34,15 @@ ENV_TO_SETTING = {
     'SITE_PAGE_TITLE': 'site_page_title',
 }
 
+# Settings-page keys filled from .env when that key is still absent.
+# SUNNYPORTAL_* wins. ENNEXOS_* is the previous name of the same four values.
+SUNNYPORTAL_ENV = (
+    (('SUNNYPORTAL_USER', 'ENNEXOS_USER'), 'sunnyportal_user'),
+    (('SUNNYPORTAL_PASSWORD', 'ENNEXOS_PASSWORD'), 'sunnyportal_password'),
+    (('SUNNYPORTAL_PLANT_ID', 'ENNEXOS_PLANT_ID'), 'sunnyportal_plant_id'),
+    (('SUNNYPORTAL_TIMEZONE', 'ENNEXOS_TIMEZONE'), 'sunnyportal_timezone'),
+)
+
 SETTING_DEFAULTS = {
     'p1_ip': '',
     'sma_ip': '',
@@ -44,6 +53,10 @@ SETTING_DEFAULTS = {
     'site_title': 'Energy Dashboard',
     'site_tagline': 'Home Energy Hub',
     'site_page_title': 'Energy Dashboard',
+    'sunnyportal_user': '',
+    'sunnyportal_password': '',
+    'sunnyportal_plant_id': '',
+    'sunnyportal_timezone': '',
     'max_inverter_ac_w': str(int(DEFAULT_MAX_INVERTER_AC_W)),
     'pac_night_start': str(DEFAULT_NIGHT_START),
     'pac_night_end': str(DEFAULT_NIGHT_END),
@@ -118,6 +131,80 @@ def _settings_count(conn: sqlite3.Connection) -> int:
     return int(row[0]) if row else 0
 
 
+def import_sunnyportal_if_missing(
+    conn: sqlite3.Connection,
+    env: Optional[Mapping[str, str]] = None,
+) -> bool:
+    """Copy Sunny Portal keys when that settings row is still absent.
+
+    SUNNYPORTAL_* wins over the previous ENNEXOS_* name. A saved row, including
+    an empty one, is left alone. DB_BACKUP_ENCRYPTION_KEY is never copied.
+    """
+    ensure_schema(conn)
+    source = dict(read_env() if env is None else env)
+    stored = load_stored(conn)
+    inserted = False
+    conn.execute('BEGIN IMMEDIATE')
+    try:
+        for env_keys, setting_key in SUNNYPORTAL_ENV:
+            if setting_key in stored:
+                continue
+            value = ''
+            for env_key in env_keys:
+                if source.get(env_key, '').strip() != '':
+                    value = source[env_key]
+                    break
+            if value == '':
+                continue
+            conn.execute(
+                'INSERT INTO app_settings (key, value) VALUES (?, ?)',
+                (setting_key, value),
+            )
+            inserted = True
+        conn.commit()
+        return inserted
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def sunnyportal_login() -> Dict[str, str]:
+    """User, password, plant id, and timezone from the Settings page.
+
+    Raises SystemExit when user, password, or plant id is empty.
+    Timezone defaults to Europe/Paris.
+    """
+    conn = sqlite3.connect(resolve_db_path(), timeout=30.0)
+    try:
+        import_env_if_empty(conn)
+        settings = load_settings(conn)
+    finally:
+        conn.close()
+    user = settings.get('sunnyportal_user', '').strip()
+    password = settings.get('sunnyportal_password', '').strip()
+    plant_id = settings.get('sunnyportal_plant_id', '').strip()
+    timezone_name = settings.get('sunnyportal_timezone', '').strip() or 'Europe/Paris'
+    missing = [
+        label
+        for label, value in (
+            ('user', user),
+            ('password', password),
+            ('plant id', plant_id),
+        )
+        if value == ''
+    ]
+    if missing:
+        raise SystemExit(
+            'Sunny Portal ' + ', '.join(missing) + ' is empty. Set it on the Settings page.'
+        )
+    return {
+        'user': user,
+        'password': password,
+        'plant_id': plant_id,
+        'timezone': timezone_name,
+    }
+
+
 def import_env_if_empty(
     conn: sqlite3.Connection,
     env: Optional[Mapping[str, str]] = None,
@@ -125,34 +212,37 @@ def import_env_if_empty(
     """Copy device and title keys from .env once, when app_settings has no rows.
 
     Returns True when this call inserted rows. Leaves the .env file unchanged.
-    DB_BACKUP_ENCRYPTION_KEY is never copied.
+    DB_BACKUP_ENCRYPTION_KEY is never copied. Sunny Portal keys are filled
+    afterwards when those rows are still absent.
     """
     ensure_schema(conn)
+    source = dict(read_env() if env is None else env)
     conn.execute('BEGIN IMMEDIATE')
     try:
         if _settings_count(conn) > 0:
             conn.commit()
-            return False
-        source = dict(read_env() if env is None else env)
-        inserted = False
-        for env_key, setting_key in ENV_TO_SETTING.items():
-            if env_key not in source:
-                continue
-            conn.execute(
-                'INSERT INTO app_settings (key, value) VALUES (?, ?)',
-                (setting_key, source[env_key]),
-            )
-            inserted = True
-        if inserted:
-            conn.execute(
-                'INSERT INTO app_settings (key, value) VALUES (?, ?)',
-                ('env_imported', '1'),
-            )
-        conn.commit()
-        return inserted
+            inserted = False
+        else:
+            inserted = False
+            for env_key, setting_key in ENV_TO_SETTING.items():
+                if env_key not in source:
+                    continue
+                conn.execute(
+                    'INSERT INTO app_settings (key, value) VALUES (?, ?)',
+                    (setting_key, source[env_key]),
+                )
+                inserted = True
+            if inserted:
+                conn.execute(
+                    'INSERT INTO app_settings (key, value) VALUES (?, ?)',
+                    ('env_imported', '1'),
+                )
+            conn.commit()
     except Exception:
         conn.rollback()
         raise
+    import_sunnyportal_if_missing(conn, source)
+    return inserted
 
 
 def load_stored(conn: sqlite3.Connection) -> Dict[str, str]:

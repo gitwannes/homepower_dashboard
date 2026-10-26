@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# --- file: ennexos_csv_test.py ---
-"""Pull one day of ennexOS PV power the way the chart page does.
+# --- file: sunnyportal_csv_test.py ---
+"""Pull one day of Sunny Portal PV power the way the chart page does.
 
 This is a probe, not the warehouse importer. It logs in with the portal
 password over HTTP (no browser package) and POSTs
@@ -9,12 +9,12 @@ https://uiapi.sunnyportal.com/api/v1/measurements/search.
 Needs Python 3.9+ and nothing from pip. Playwright does not publish a
 build for the Pi, which is why `pip install playwright` fails there.
 
-Credentials come from .env (ENNEXOS_USER, ENNEXOS_PASSWORD, ENNEXOS_PLANT_ID).
+User, password, plant id, and timezone come from the Settings page.
 The password is never printed.
 
 Usage:
-  python3 ennexos_csv_test.py --date 2026-10-06
-  python3 ennexos_csv_test.py --date 2026-10-06 --compare /path/to/day.csv
+  python3 sunnyportal_csv_test.py --date 2026-10-06
+  python3 sunnyportal_csv_test.py --date 2026-10-06 --compare /path/to/day.csv
 """
 from __future__ import annotations
 
@@ -34,6 +34,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
+import site_config
+
 SEARCH_URL = "https://uiapi.sunnyportal.com/api/v1/measurements/search"
 AUTH_URL = "https://login.sma.energy/auth/realms/SMA/protocol/openid-connect/auth"
 TOKEN_URL = "https://login.sma.energy/auth/realms/SMA/protocol/openid-connect/token"
@@ -42,7 +44,7 @@ CLIENT_ID = "SPpbeOS"
 PV_CHANNEL = "Measurement.GridMs.TotW.Pv"
 USER_AGENT = "Mozilla/5.0"
 ROOT = Path(__file__).resolve().parent
-OUT_DIR = ROOT / "helpers" / "ennexos_out"
+OUT_DIR = ROOT / "helpers" / "sunnyportal_out"
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -77,32 +79,6 @@ class _FormParser(HTMLParser):
         if not name or kind in ("submit", "button", "checkbox", "image"):
             return
         self.fields[name] = data.get("value") or ""
-
-
-def load_env() -> Dict[str, str]:
-    """Read the first .env that exists. Same shape as logger.load_env."""
-    candidates = [ROOT / ".env", Path.cwd() / ".env"]
-    env_path = next((path for path in candidates if path.is_file()), None)
-    if env_path is None:
-        raise SystemExit(
-            "No .env next to this script or in the current directory. "
-            "Set ENNEXOS_USER, ENNEXOS_PASSWORD, ENNEXOS_PLANT_ID."
-        )
-    config: Dict[str, str] = {}
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        config[key.strip()] = value.strip().strip("'\"")
-    return config
-
-
-def require(config: Dict[str, str], key: str) -> str:
-    value = config.get(key, "").strip()
-    if not value:
-        raise SystemExit(f"{key} is empty in .env.")
-    return value
 
 
 def utc_bounds(day: str, zone_name: str) -> Tuple[str, str]:
@@ -240,7 +216,7 @@ def login_and_token(plant_id: str, user: str, password: str) -> str:
     return str(token)
 
 
-class EnnexosHttpError(RuntimeError):
+class SunnyportalHttpError(RuntimeError):
     """measurements/search failed. code is the HTTP status."""
 
     def __init__(self, code: int, detail: str) -> None:
@@ -283,7 +259,7 @@ def fetch_day(token: str, plant_id: str, day: str, zone_name: str, quiet: bool =
             status = response.status
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:800]
-        raise EnnexosHttpError(exc.code, detail) from exc
+        raise SunnyportalHttpError(exc.code, detail) from exc
     if not quiet:
         print(f"search HTTP {status} window {begin} -> {end}")
     return json.loads(payload)
@@ -373,23 +349,23 @@ def compare(payload: object, csv_path: Path, zone_name: str) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Probe one ennexOS day of PV power.")
+    parser = argparse.ArgumentParser(description="Probe one Sunny Portal day of PV power.")
     parser.add_argument("--date", required=True, help="Local day YYYY-MM-DD")
     parser.add_argument("--compare", help="Optional path to a Day CSV from the chart button")
     args = parser.parse_args()
     datetime.strptime(args.date, "%Y-%m-%d")
 
-    config = load_env()
-    user = require(config, "ENNEXOS_USER")
-    password = require(config, "ENNEXOS_PASSWORD")
-    plant_id = require(config, "ENNEXOS_PLANT_ID")
-    zone_name = config.get("ENNEXOS_TIMEZONE", "Europe/Paris").strip() or "Europe/Paris"
+    login = site_config.sunnyportal_login()
+    user = login["user"]
+    password = login["password"]
+    plant_id = login["plant_id"]
+    zone_name = login["timezone"]
 
     print(f"login plant {plant_id} day {args.date} zone {zone_name}")
     token = login_and_token(plant_id, user, password)
     try:
         payload = fetch_day(token, plant_id, args.date, zone_name)
-    except EnnexosHttpError as exc:
+    except SunnyportalHttpError as exc:
         raise SystemExit(str(exc)) from exc
     points = _points(payload)
     print(f"points {len(points)}")
