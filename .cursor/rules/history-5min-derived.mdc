@@ -1,0 +1,26 @@
+---
+description: history_5min is purgeable and must rebuild from never-purged sources
+alwaysApply: true
+---
+
+# history_5min is derived
+
+`rollup.py -purge_derived` deletes `history_5min`, `daily_history`, `monthly_history`, `clear_sky_envelopes`, `top_records`, and `top_periods`, then runs `VACUUM`. Those six tables are rebuildable. They are not sources for each other.
+
+Never purged, and the only legal sources for a rebuild:
+
+- `readings` (1-minute logger)
+- `sensorbox_history_5min` and `inverter_history_5min` (WebBox staging; every WebBox year lives here)
+- Fluvius interval storage, once it exists (15-minute electricity, hourly gas, day totals, peak)
+
+`app_settings` and `expected_monthly` stay too. They are not timeseries sources.
+
+`rollup.py -buildall` deletes `history_5min`, `daily_history`, and `monthly_history` (no `VACUUM`), then reconstructs `history_5min` from all `readings` rows except the open 5-minute slice, then from staging (`data_source` `webbox_archive`), then rebuilds daily, monthly, envelopes, `top_records`, and `top_periods`. It does not read Fluvius yet. It does not rescan `import_queue/processed/`. The day chart is empty until that command finishes. The command is rare.
+
+`rollup.py -daily` downsamples only the last 2 local days of `readings`, refreshes the last 3 local days of `daily_history`, then rewrites `monthly_history` and `top_periods`. That is not a rebuild.
+
+`importer.py` writes staging only. `importer.py -aggregate5min` and `rollup.py -today` are removed. Do not insert a series into `history_5min` unless a never-purged copy remains.
+
+Fluvius 15-minute electricity, when placed in `history_5min` for the day graph, is one row at the quarter start (`:00`, `:15`, `:30`, `:45`). Leave the other two slots of that quarter absent. Do not copy the value into them. Gas hours do not go into `history_5min`.
+
+Day-graph rule for a 5-minute axis: up to 2 missing slots between known points is valid data and must be drawn (the 1-in-3 quarter pattern). More than 2 consecutive missing slots is no-info and must render as a gap, not as zero.

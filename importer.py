@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# --- file: importer.py ---
 import os
 import sys
 import glob
@@ -26,7 +27,6 @@ SEVEN_ZIP_BIN = shutil.which('7z') or '/bin/7z'
 # Parse command line flags
 CLI_ARGS = [a.lower() for a in sys.argv[1:]]
 HANDLE_OUTER = ('-outerzip' in CLI_ARGS) or ('--outerzip' in CLI_ARGS)
-AGGREGATE_5MIN = ('-aggregate5min' in CLI_ARGS) or ('--aggregate5min' in CLI_ARGS)
 
 # Strict Sunny WebBox Daily Archive Regex: wb<serial>.<YYYYMMDD-HHMMSS>.(zip|7z)
 DAILY_ARCHIVE_REGEX = re.compile(r'^wb\d+\.\d{8}-\d{6}\.(zip|7z)$', re.IGNORECASE)
@@ -60,25 +60,10 @@ EXPECTED_MONTHLY = [
 ]
 
 
-def snap_to_5min(ts_str):
-    """Snaps any timestamp to its 5-minute floor boundary (:00, :05, :10...)."""
-    ts = ts_str.replace('T', ' ').strip()
-    parts = ts.split(' ')
-    if len(parts) == 2:
-        d, t = parts
-        t_parts = t.split(':')
-        if len(t_parts) >= 2:
-            h = t_parts[0]
-            m = int(t_parts[1])
-            m_snap = (m // 5) * 5
-            return f"{d} {h}:{m_snap:02d}:00"
-    return ts
-
-
 def log_event(event_type, **kwargs):
     """Outputs progress formatted for SSH terminal or as JSON for web dashboard."""
     ts = datetime.now().strftime('%H:%M:%S')
-    if HANDLE_OUTER or AGGREGATE_5MIN:
+    if HANDLE_OUTER:
         if event_type == "start":
             print(f"[{ts}] {kwargs.get('message')}")
         elif event_type == "progress":
@@ -89,10 +74,7 @@ def log_event(event_type, **kwargs):
             s_ins = kwargs.get('s_ins', 0)
             i_ins = kwargs.get('i_ins', 0)
             dups = kwargs.get('s_dup', 0) + kwargs.get('i_dup', 0)
-            if AGGREGATE_5MIN:
-                print(f"[{ts}] {parent}[{idx}/{tot}] {file_name} -> +{s_ins} 5-min consolidated rows ({dups} updated)", flush=True)
-            else:
-                print(f"[{ts}] {parent}[{idx}/{tot}] {file_name} -> +{s_ins} sensor, +{i_ins} inv ({dups} dupes)", flush=True)
+            print(f"[{ts}] {parent}[{idx}/{tot}] {file_name} -> +{s_ins} sensor, +{i_ins} inv ({dups} dupes)", flush=True)
         elif event_type == "error":
             print(f"[{ts}] [ERROR] {kwargs.get('file')}: {kwargs.get('error')}", file=sys.stderr, flush=True)
         elif event_type == "info":
@@ -100,14 +82,10 @@ def log_event(event_type, **kwargs):
         elif event_type == "complete":
             print("\n" + "=" * 60)
             print(f"[{ts}] ALL IMPORTS COMPLETED in {kwargs.get('duration')}s")
-            if AGGREGATE_5MIN:
-                print(f"  history_5min Rows Added:    {kwargs.get('tot_sensor_inserted', 0):,}")
-                print(f"  history_5min Rows Updated:  {kwargs.get('tot_sensor_duplicates', 0):,}")
-            else:
-                print(f"  SensorBox Rows Added:       {kwargs.get('tot_sensor_inserted', 0):,}")
-                print(f"  SensorBox Duplicates:       {kwargs.get('tot_sensor_duplicates', 0):,}")
-                print(f"  Inverter Rows Added:        {kwargs.get('tot_inverter_inserted', 0):,}")
-                print(f"  Inverter Duplicates:        {kwargs.get('tot_inverter_duplicates', 0):,}")
+            print(f"  SensorBox Rows Added:       {kwargs.get('tot_sensor_inserted', 0):,}")
+            print(f"  SensorBox Duplicates:       {kwargs.get('tot_sensor_duplicates', 0):,}")
+            print(f"  Inverter Rows Added:        {kwargs.get('tot_inverter_inserted', 0):,}")
+            print(f"  Inverter Duplicates:        {kwargs.get('tot_inverter_duplicates', 0):,}")
             print(f"  Errors Encountered:         {kwargs.get('tot_errors', 0)}")
             print(f"  Processed Directory:        {PROCESSED_DIR}")
             print("=" * 60)
@@ -379,89 +357,8 @@ def insert_batches_staging(conn, sensor_batch, inverter_batch):
     return s_ins, s_dup, i_ins, i_dup
 
 
-def insert_batches_aggregate(conn, sensor_batch, inverter_batch):
-    """Direct insertion: snaps to 5-min floor boundaries and UPSERTs into history_5min."""
-    if not sensor_batch and not inverter_batch:
-        return 0, 0, 0, 0
-
-    hist_dict = {}
-
-    # 1. Process and snap SensorBox telemetry
-    for (ts, rad, t_mod, t_amb, wnd, wnd_gust) in sensor_batch:
-        snapped = snap_to_5min(ts)
-        if snapped not in hist_dict:
-            hist_dict[snapped] = {
-                'ts': snapped, 'p_w': None, 'p_max': None, 'etot': None,
-                'rad': rad, 'rad_max': rad, 't_mod': t_mod, 't_amb': t_amb,
-                'wnd': wnd, 'wnd_gust': wnd_gust
-            }
-        else:
-            h = hist_dict[snapped]
-            h['rad'] = rad if rad is not None else h['rad']
-            h['rad_max'] = rad if rad is not None else h['rad_max']
-            h['t_mod'] = t_mod if t_mod is not None else h['t_mod']
-            h['t_amb'] = t_amb if t_amb is not None else h['t_amb']
-            h['wnd'] = wnd if wnd is not None else h['wnd']
-            h['wnd_gust'] = wnd_gust if wnd_gust is not None else h['wnd_gust']
-
-    # 2. Process, snap, and sum multi-inverter telemetry
-    for (ts, dev_serial, pac_w, pac_max_w, etotal_kwh, *_) in inverter_batch:
-        snapped = snap_to_5min(ts)
-        if snapped not in hist_dict:
-            hist_dict[snapped] = {
-                'ts': snapped,
-                'p_w': pac_w, 'p_max': pac_max_w, 'etot': etotal_kwh,
-                'rad': None, 'rad_max': None, 't_mod': None, 't_amb': None,
-                'wnd': None, 'wnd_gust': None
-            }
-        else:
-            h = hist_dict[snapped]
-            if pac_w is not None:
-                h['p_w'] = (h['p_w'] or 0.0) + pac_w
-            if pac_max_w is not None:
-                h['p_max'] = (h['p_max'] or 0.0) + pac_max_w
-            if etotal_kwh is not None:
-                h['etot'] = (h['etot'] or 0.0) + etotal_kwh
-
-    hist_rows = [
-        (h['ts'], h['p_w'], h['p_max'], h['etot'],
-         h['rad'], h['rad_max'], h['t_mod'], h['t_amb'],
-         h['wnd'], h['wnd_gust'])
-        for h in hist_dict.values()
-    ]
-
-    with conn:
-        before = conn.execute("SELECT COUNT(*) FROM history_5min").fetchone()[0]
-        conn.executemany("""
-            INSERT INTO history_5min (
-                timestamp, solar_power_w, solar_power_max_w, solar_total_kwh,
-                solar_radiation, solar_radiation_max, temp_module, temp_ambient,
-                wind_speed, wind_gust, data_source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'webbox')
-            ON CONFLICT(timestamp) DO UPDATE SET
-                solar_power_w       = COALESCE(excluded.solar_power_w, history_5min.solar_power_w),
-                solar_power_max_w   = COALESCE(excluded.solar_power_max_w, history_5min.solar_power_max_w),
-                solar_total_kwh     = COALESCE(excluded.solar_total_kwh, history_5min.solar_total_kwh),
-                solar_radiation     = COALESCE(excluded.solar_radiation, history_5min.solar_radiation),
-                solar_radiation_max = COALESCE(excluded.solar_radiation_max, history_5min.solar_radiation_max),
-                temp_module         = COALESCE(excluded.temp_module, history_5min.temp_module),
-                temp_ambient        = COALESCE(excluded.temp_ambient, history_5min.temp_ambient),
-                wind_speed          = COALESCE(excluded.wind_speed, history_5min.wind_speed),
-                wind_gust           = COALESCE(excluded.wind_gust, history_5min.wind_gust),
-                data_source         = CASE WHEN history_5min.data_source = 'live_p1' THEN 'merged' ELSE 'webbox' END
-        """, hist_rows)
-        after = conn.execute("SELECT COUNT(*) FROM history_5min").fetchone()[0]
-        h_ins = after - before
-        h_dup = len(hist_rows) - h_ins
-
-    # Return in 4-tuple format for uniform logging
-    return h_ins, h_dup, 0, 0
-
-
 def commit_parsed_batches(conn, s_batch, i_batch):
-    """Routes batch execution to either staging or direct consolidation."""
-    if AGGREGATE_5MIN:
-        return insert_batches_aggregate(conn, s_batch, i_batch)
+    """Writes parsed Mean rows into the staging tables."""
     return insert_batches_staging(conn, s_batch, i_batch)
 
 
@@ -595,7 +492,7 @@ def process_outer_master_archive(master_path, conn):
         inner_items.sort()
 
         total_inner = len(inner_items)
-        target_dest = "history_5min" if AGGREGATE_5MIN else "staging tables"
+        target_dest = "staging tables"
         log_event("info", message=f"Unpacking complete! Ingesting {total_inner:,} file(s) into {target_dest}...")
 
         for idx, item in enumerate(inner_items, 1):
@@ -638,6 +535,12 @@ def process_outer_master_archive(master_path, conn):
 
 
 def run_queue_import():
+    if '-aggregate5min' in CLI_ARGS or '--aggregate5min' in CLI_ARGS:
+        sys.stderr.write(
+            "importer.py -aggregate5min was removed. "
+            "Import writes the staging tables. Then run: python3 rollup.py -consolidate\n"
+        )
+        sys.exit(2)
     os.makedirs(QUEUE_DIR, exist_ok=True)
     os.makedirs(PROCESSED_DIR, exist_ok=True)
 
@@ -652,8 +555,8 @@ def run_queue_import():
     all_files = sorted(os.listdir(QUEUE_DIR))
 
     # Log operational mode
-    mode_desc = "DIRECT CONSOLIDATION (history_5min)" if AGGREGATE_5MIN else "RAW STAGING (sensorbox & inverter)"
-    if HANDLE_OUTER or AGGREGATE_5MIN:
+    mode_desc = "RAW STAGING (sensorbox & inverter)"
+    if HANDLE_OUTER:
         print(f"=== WebBox Ingestion Pipeline | Mode: {mode_desc} ===")
 
     # 1. SSH OUTER ARCHIVE MODE (-outerzip)

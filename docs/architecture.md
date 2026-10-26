@@ -2,7 +2,7 @@
 # Architecture
 
 **Status:** Migrated into this repo (2026-10-22). Phase A warehouse + UI Done.  
-**Last updated:** 2026-10-25  
+**Last updated:** 2026-10-26 (A10 warehouse commands)  
 **Delivery archives:** [`docs/todo/_archive/phaseM-migration.md`](todo/_archive/phaseM-migration.md) · Phase A detail ready for offline archive (`docs/todo/phaseA-aggregation.md`)
 
 ## What this is
@@ -23,9 +23,9 @@ A **standalone** home energy hub: poll P1 + optional SMA / Sunny WebBox, store t
 .env  (DB_BACKUP_ENCRYPTION_KEY only; encrypted storage -> host by hand)
     -> settings page writes meter_history.db app_settings (devices, titles, plant)
     -> logger.py (poll P1 / SMA / WebBox)  -> readings (1 min)
-    -> importer / sql_importer              -> staging (5 min)
-    -> rollup.py -consolidate / -daily / -today / -buildall
-    -> history_5min + daily/monthly/envelopes/top_records
+    -> importer.py (+ -outerzip for a master container) -> staging (5 min)
+    -> rollup.py -consolidate / -daily / -buildall
+    -> history_5min + daily/monthly/envelopes/top_records/top_periods
     -> index.php / analytics.php / summary.php / topn.php / settings.php
 
 helpers/  (gitignored entire directory; PC-only sync tool)
@@ -39,9 +39,9 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 | Store | Role |
 |---|---|
 | `readings` | Live 1-min SoT (logger). Not purged by `-purge_derived`. |
-| `sensorbox_history_5min` / `inverter_history_5min` | Staging SoT (ZIP / SQL import). |
-| `history_5min` | Derived master (5-min). From `-consolidate` (staging) + `-daily`/`-today` (`readings`). Rebuildable. |
-| `daily_history` / `monthly_history` / `clear_sky_envelopes` / `top_records` / `top_periods` | Derived analytics. `-buildall` or incremental `-daily` (Top-N yield lists in `top_periods`). |
+| `sensorbox_history_5min` / `inverter_history_5min` | Staging SoT (WebBox import). Never purged. Holds every WebBox year. |
+| `history_5min` | Derived master (5-min). Rebuilt by `-buildall` from all `readings` plus staging, and refreshed by nightly `-daily` (last 2 local days of `readings`). |
+| `daily_history` / `monthly_history` / `clear_sky_envelopes` / `top_records` / `top_periods` | Derived analytics. `-buildall` rebuilds them after `history_5min`. `-daily` refreshes recent `daily_history`, then rewrites `monthly_history` and `top_periods`. |
 
 **PAC quality gates** (rollup + analytics charts): spike cap is max inverter AC × 1.05 (default nameplate 12 kW, cap 12.6 kW) from Settings. Deep night and shoulder hours are editable; defaults drop PAC from 22:00 through 05:00, and on the shoulder (from 20:00 and before 06:00) when solar radiation is at or under 5 W/m². Night WebBox junk with rad≈0 must not define envelopes or inflate integrals. Saved plant limits apply on `rollup.py -buildall`.
 
@@ -61,11 +61,12 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 
 | Flag | Effect |
 |---|---|
-| `-consolidate` | Staging → `history_5min` |
-| `-daily` | Last 2 local days `readings` → `history_5min`; refresh recent daily/monthly |
-| `-today` | Today only (same path as analytics **Generate table**) |
-| `-buildall` | Rebuild daily, monthly, envelopes, top_records, **top_periods** from `history_5min` (does **not** ingest `readings`) |
-| `-purge_derived` | Wipes `history_5min` + analytical tables; staging + `readings` stay |
+| `-consolidate` | Staging → solar and weather on `history_5min` (`data_source` `webbox_archive`) |
+| `-daily` | Last 2 local days of `readings` → `history_5min`; last 3 local days of `history_5min` → `daily_history`; full rewrite of `monthly_history` and `top_periods` |
+| `-buildall` | Delete `history_5min`, `daily_history`, `monthly_history` (no `VACUUM`). Refill `history_5min` from every `readings` row except the open 5-minute slice, then from staging. Then daily, monthly, envelopes, `top_records`, `top_periods`. Rare. The day chart is empty until the command finishes. |
+| `-purge_derived` | Wipes the six derived tables and `VACUUM`. `readings` and staging stay. Separate from `-buildall`. |
+
+`importer.py -aggregate5min` and `rollup.py -today` are removed. **Generate table** in `analytics.php` is the today-only downsample into `history_5min`. It does not write `daily_history` or `top_periods`. WebBox import writes staging only.
 
 ## Config split
 

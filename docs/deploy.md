@@ -58,7 +58,7 @@ Example config shape (placeholders only — put real values only in the local JS
 ## Synology
 
 - Web Station: PHP with `curl`, `pdo_sqlite`, `sqlite3`.
-- Task Scheduler: run `logger.py` on the poll interval; optional `rollup.py` daily/weekly as needed.
+- Task Scheduler: run `logger.py` on the poll interval; nightly `rollup.py -daily`. `rollup.py -buildall` is a rare full rebuild, not a weekly job.
 - DB file lives beside the app on Synology (`meter_history.db`).
 
 ## Pi / log2ram (optional)

@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4 Done**; A5–A9 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-25 (A9 gate + DB pull locked)  
+**Status:** **A4 Done**; A10 coding; A5–A9 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-26 (A10 coding — warehouse rebuild locked, not closed)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py`
 
 ---
@@ -17,8 +17,9 @@
 | **A7** | open | `top_records`: drop or change (assess at kickoff) |
 | **A8** | open | Live Solar & Consumption chart: scaled X-axis, gaps, zoom to 1 week, title |
 | **A9** | open | Full DB download + restore on the A6 page (admin password); `p1-sync` pulls the DB |
+| **A10** | coding | Warehouse rebuild: drop `-aggregate5min` and `-today`; `-buildall` refills `history_5min` then aggregates. Locked, not closed |
 
-**Parallel:** A5, A7, A8 independent of **P1–P3**. **A9** depends on **A6** (control sits on that page). A8 is not part of **A5**.
+**Parallel:** A5, A7, A8, A10 independent of **P1–P3**. **A9** depends on **A6** (control sits on that page). A8 is not part of **A5**. A10 has no code dependency on A5–A9.
 
 **Related:** A3 removed Hall of Fame UI. A4 is new Top-N. A7 decides fate of leftover `top_records` singles table.
 
@@ -116,7 +117,7 @@
 
 ### Done summary
 
-Best/worst yield rankings (20 days, 10 months, 10 years) in `top_periods` via `-buildall`/`-daily`/`-today`; UI `topn.php` with click-through. Worst days exclude yield ≤ 0 and today. `top_records` unchanged → **A7**.
+Best/worst yield rankings (20 days, 10 months, 10 years) in `top_periods` via `-buildall` and `-daily`; UI `topn.php` with click-through. Worst days exclude yield ≤ 0 and today. `top_records` unchanged → **A7**. `rollup.py -today` was removed in **A10**.
 
 ### DoD
 
@@ -248,6 +249,82 @@ Operator request, not locked:
 ### Still open
 
 None for placement. Kickoff still has to say how the pull takes a consistent snapshot while `logger.py` is writing.
+
+---
+
+## A10 — Warehouse rebuild
+
+**Status:** coding (locked 2026-10-26, not closed)  
+**Size:** **M**  
+**Depends on:** none. Sequenced after A9. No code dependency.
+
+### Locked scope
+
+WebBox archives stay a one-time ingest. `importer.py` writes `sensorbox_history_5min` and `inverter_history_5min` from loose `Mean` XML and from daily `wb<serial>.<YYYYMMDD-HHMMSS>.zip|.7z`. `importer.py -outerzip` is only the extra pass for a master container that is not a daily archive. Both move consumed files to `import_queue/processed/`.
+
+`rollup.py -buildall` becomes the full derived rebuild:
+
+1. Delete `history_5min`, `daily_history`, `monthly_history`. No `VACUUM`. `readings` and both staging tables stay. `clear_sky_envelopes`, `top_records`, and `top_periods` already delete their own rows later in the run.
+2. Every row in `readings` → `history_5min`, using the existing downsample. Skip the open 5-minute slice (the bucket that contains now, local time).
+3. `consolidate_historical_webbox`: staging → solar and weather columns on `history_5min`, `data_source` `webbox_archive`.
+4. `history_5min` → `daily_history`, all days.
+5. `daily_history` → `monthly_history`, all months.
+6. `history_5min` → `clear_sky_envelopes`.
+7. `history_5min` and `daily_history` → `top_records`.
+8. `daily_history` and `monthly_history` → `top_periods`.
+
+`-purge_derived` stays a separate operator wipe. It still deletes the same six derived tables and runs `VACUUM`.
+
+Also in this phase:
+
+- Remove `importer.py -aggregate5min` (flag, direct insert into `history_5min`, branch).
+- Remove the `rollup.py -today` branch and its usage line. `downsample_live_readings` stays.
+- `build_daily_history` day window uses `datetime('now', 'localtime', …)`. `-daily` keeps last 2 local days of `readings` and last 3 local days of `daily_history`, then a full `monthly_history` and `top_periods`.
+- **Generate table** stays today-only into `history_5min`. Update the comment that calls it the same path as `-today`. Keep that PHP SQL in step with `downsample_live_readings`.
+- Update `docs/architecture.md`, `README.md`, `docs/roadmap.md`, and `.cursor/rules/history-5min-derived.mdc` to this command set.
+
+### Verified
+
+- `-aggregate5min` reads the same archives as plain import and writes solar and weather on `history_5min` with `data_source` `webbox`. `-consolidate` reads staging and writes `webbox_archive`. The live downsample only preserves an existing solar value when the source is `webbox_archive`.
+- Nothing calls `rollup.py -today`. **Generate table** does not write `daily_history` or `top_periods`.
+- `-buildall` today does not read `readings` or staging. It starts at `daily_history`.
+- `-daily`’s 3-day filter is `datetime('now', '-3 days')` (UTC). The 2-day readings filter already uses local time.
+- `sql_importer.py` is not in the repo. A0 records that the gap-fill into staging already ran.
+- No year table. Years are summed from `monthly_history`.
+
+### Out of this phase
+
+- Fluvius CSV / portal (**P3**) and SMA / ennexOS (**P1**, **P2**).
+- Restoring `sql_importer.py`.
+- Running `top_records` from `-daily` (**A7**).
+- A second historical import on every rebuild. `processed/` is not scanned again.
+
+### Locked 2026-10-26
+
+1. Both staging tables hold every WebBox year. `history_5min` has no WebBox rows those tables lack. Dropping `-aggregate5min` does not drop a span.
+2. `-buildall` is rare (ideally never). An empty day chart while that one command runs is acceptable.
+
+### Still open
+
+None for the lock. Live NAS smoke is not done. Do not mark Done from this branch.
+
+### Verbatim — 2026-10-26 (lock + implement)
+
+> 1: yes, all webbox data is in those 2 staging tables, the history_5min table does not contain data that is not in those 2 tables
+> 2: very good - rebuild will not be done regularly - ideally, never
+> if all ok: implement and push to seperate branch
+
+### Verbatim — 2026-10-26 (placement)
+
+> 1/ importer: gets data from Mean archives from import_queue and writes sensorbox_history_5min, inverter_history_5min
+> importer.py -aggregate5min: gets data from those same Mean archives from import_queue and puts them into solar and weather columns in history_5min
+> rollup.py -consolidate: gets data from sensorbox_history_5min, inverter_history_5min and puts that info solar and weather columns in history_5min
+> so that seems a step in-between, so dumping importer.py -aggregate5min seems ok
+> is this reasoning sound? if yes: put this in the todo list
+
+### Verbatim — 2026-10-26 (fold + kickoff)
+
+> fold all in A10, then kickoff
 
 ---
 

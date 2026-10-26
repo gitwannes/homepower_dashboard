@@ -5,7 +5,7 @@
 - [x] Standardize 5-minute schema (`sensorbox_history_5min`, `inverter_history_5min`, `expected_monthly`).
 - [x] Configure CLI-only master archive mode (`importer.py -outerzip`) with live extraction progress.
 - [x] Implement strict regex isolation (`wb<serial>.<timestamp>.(zip|7z)`) so web importer never touches master archives.
-- [x] Develop Direct Consolidation Mode (`importer.py -aggregate5min`) for 1-step ingestion into `history_5min`.
+- [x] Direct consolidation mode (`importer.py -aggregate5min`) — removed in A10. Import writes staging only. `rollup.py -consolidate` is the path into `history_5min`.
 - [ ] **[IN PROGRESS]** Run full historical ingestion of 17-year archive into SQLite tables.
 
 ---
@@ -29,9 +29,8 @@ conn.close()
 "
 ```
 
-**Step 2: Consolidate ZIP Data into `history_5min` (If Needed)**
-- *If imported with `-aggregate5min`:* Skip this step (already in `history_5min`).
-- *If imported in Staging mode:* Run consolidation to merge staging tables into `history_5min`:
+**Step 2: Consolidate staging into `history_5min`**
+Plain `importer.py` writes `sensorbox_history_5min` and `inverter_history_5min` only. Then:
 ```bash
 python3 rollup.py -consolidate
 ```
@@ -49,7 +48,7 @@ sqlite3 meter_history.db "VACUUM; PRAGMA optimize;"
 ```
 
 **Step 5: Run the Rollup Engine (`rollup.py`)**
-Now that `history_5min` holds the complete gap-filled timeline, populate the analytical tables (`daily_history`, `monthly_history`, `clear_sky_envelopes`, `top_records`):
+`-buildall` deletes `history_5min`, `daily_history`, and `monthly_history`, refills `history_5min` from all `readings` (open 5-minute slice skipped) and from staging, then builds `daily_history`, `monthly_history`, `clear_sky_envelopes`, `top_records`, and `top_periods`. Rare. The day chart is empty until the command finishes.
 ```bash
 python3 rollup.py -buildall
 ```

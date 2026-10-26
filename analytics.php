@@ -156,7 +156,9 @@ if (isset($_GET['ajax'])) {
             exit;
         }
 
-        // On-demand: downsample today's readings -> history_5min (same SQL as rollup -today).
+        // On-demand: downsample today's readings -> history_5min.
+        // Same INSERT as rollup.downsample_live_readings for one local day
+        // (open 5-minute slice excluded). Does not write daily_history or top_periods.
         // Server-side locked to Europe/Brussels "today" only.
         if ($action === 'generate_today') {
             $todayLocal = date('Y-m-d');
