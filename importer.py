@@ -14,8 +14,10 @@ import tempfile
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
+import site_config
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_FILE = os.path.join(BASE_DIR, 'meter_history.db')
+DB_FILE = site_config.resolve_db_path()
 QUEUE_DIR = os.path.join(BASE_DIR, 'import_queue')
 PROCESSED_DIR = os.path.join(QUEUE_DIR, 'processed')
 
@@ -193,9 +195,14 @@ def init_db(conn):
             )
         """)
         conn.executemany("""
-            INSERT OR REPLACE INTO expected_monthly (id, month, inclination, expected_kwh, expected_irr)
-            VALUES (?, ?, ?, ?, ?)
-        """, EXPECTED_MONTHLY)
+            INSERT INTO expected_monthly (id, month, inclination, expected_kwh, expected_irr)
+            SELECT ?, ?, ?, ?, ?
+            WHERE NOT EXISTS (
+                SELECT 1 FROM expected_monthly WHERE month = ? AND inclination = ?
+            )
+        """, [
+            (row[0], row[1], row[2], row[3], row[4], row[1], row[2]) for row in EXPECTED_MONTHLY
+        ])
 
 
 def count_files_in_archive(archive_path):

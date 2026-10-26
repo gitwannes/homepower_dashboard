@@ -1,50 +1,12 @@
 <?php
 # --- file: index.php ---
 date_default_timezone_set('Europe/Brussels');
+require_once __DIR__ . '/site_settings.php';
 
-$isSynology = file_exists('/etc/synoinfo.conf') || file_exists('/etc.defaults/synoinfo.conf');
-
-function getDbFilePath($isSynology) {
-    if (!$isSynology) {
-        if (file_exists('/var/log/p1/meter_history.db') || (is_dir('/var/log/p1') && is_readable('/var/log/p1'))) {
-            return '/var/log/p1/meter_history.db';
-        }
-        if (file_exists('/dev/shm/meter_history.db') || (is_dir('/dev/shm') && is_readable('/dev/shm'))) {
-            return '/dev/shm/meter_history.db';
-        }
-    }
-    return __DIR__ . '/meter_history.db';
-}
-
-function loadEnv() {
-    // Runtime .env only (never synced from git; place from encrypted storage).
-    $candidates = [
-        __DIR__ . '/.env',
-        dirname(__DIR__) . '/.env'
-    ];
-    $envPath = null;
-    foreach ($candidates as $c) {
-        if (file_exists($c) && is_readable($c)) {
-            $envPath = $c;
-            break;
-        }
-    }
-    if (!$envPath) return null;
-
-    $config = [];
-    $lines = file($envPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-    foreach ($lines as $line) {
-        $line = trim($line);
-        if ($line === '' || $line[0] === '#') continue;
-        if (strpos($line, '=') !== false) {
-            list($k, $v) = explode('=', $line, 2);
-            $config[trim($k)] = trim(trim($v), "'\"");
-        }
-    }
-    return $config;
-}
-
-$dbFile = getDbFilePath($isSynology);
+$hp = hp_boot();
+hp_require_ready($hp);
+$dbFile = $hp['db'];
+$hpSettings = $hp['settings'];
 $refreshRate = 60;
 $openRawModal = isset($_GET['rawreadings']);
 
@@ -169,15 +131,8 @@ if (isset($_GET['download'])) {
     exit;
 }
 
-// 3. Foundation Checks (.env and P1_IP)
+// Poller and database problems. Missing site config is handled by settings.php.
 $fatalError = null;
-$env = loadEnv();
-
-if ($env === null) {
-    $fatalError = "Configuration error: Environment file (.env) not found next to the app (or parent folder).";
-} elseif (empty($env['P1_IP'])) {
-    $fatalError = "Configuration error: P1_IP is not defined in .env.";
-}
 
 // 4. Load Data from SQLite
 $state = null;
@@ -236,7 +191,12 @@ if (!$fatalError) {
             }
 
         } catch (Exception $e) {
-            $fatalError = "Database error: " . $e->getMessage();
+            $msg = $e->getMessage();
+            if (stripos($msg, 'no such table') !== false) {
+                $fatalError = "Waiting for initial poll from logger.py...";
+            } else {
+                $fatalError = "Database error: " . $msg;
+            }
         }
     } else {
         $fatalError = "Database file not found at " . htmlspecialchars($dbFile) . ". Run logger.py -poll to initialize.";
@@ -301,10 +261,10 @@ $badgeClass = ($p1Status === 'Online') ? "bg-emerald-50 text-emerald-700 border-
 $badgeDot = ($p1Status === 'Online') ? "bg-emerald-500" : "bg-rose-500";
 $badgeText = ($state && isset($state['updated_at'])) ? "Last poll: " . date('H:i:s', strtotime($state['updated_at'])) : "Last poll: N/A";
 
-// Presentation strings from .env (generic defaults for public / missing keys).
-$siteTitle = (is_array($env) && !empty($env['SITE_TITLE'])) ? $env['SITE_TITLE'] : 'Energy Dashboard';
-$siteTagline = (is_array($env) && !empty($env['SITE_TAGLINE'])) ? $env['SITE_TAGLINE'] : 'Home Energy Hub';
-$pageTitle = (is_array($env) && !empty($env['SITE_PAGE_TITLE'])) ? $env['SITE_PAGE_TITLE'] : $siteTitle;
+// Presentation strings from settings (generic defaults when a title was left blank).
+$siteTitle = trim($hpSettings['site_title']) !== '' ? $hpSettings['site_title'] : 'Energy Dashboard';
+$siteTagline = trim($hpSettings['site_tagline']) !== '' ? $hpSettings['site_tagline'] : 'Home Energy Hub';
+$pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_page_title'] : $siteTitle;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -379,6 +339,7 @@ $pageTitle = (is_array($env) && !empty($env['SITE_PAGE_TITLE'])) ? $env['SITE_PA
             <a href="topn.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                 <i data-lucide="trophy" class="w-3.5 h-3.5 text-amber-500"></i> Top-N
             </a>
+            <?= hp_nav_settings() ?>
             <button type="button" onclick="openRawModal()" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all cursor-pointer">
                 <i data-lucide="table-properties" class="w-3.5 h-3.5 text-blue-600"></i> Raw readings
             </button>

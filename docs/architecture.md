@@ -2,7 +2,7 @@
 # Architecture
 
 **Status:** Migrated into this repo (2026-10-22). Phase A warehouse + UI Done.  
-**Last updated:** 2026-10-22  
+**Last updated:** 2026-10-25  
 **Delivery archives:** [`docs/todo/_archive/phaseM-migration.md`](todo/_archive/phaseM-migration.md) · Phase A detail ready for offline archive (`docs/todo/phaseA-aggregation.md`)
 
 ## What this is
@@ -20,12 +20,13 @@ A **standalone** home energy hub: poll P1 + optional SMA / Sunny WebBox, store t
 ## Data flow
 
 ```
-.env  (devices + UI branding; encrypted storage -> host by hand)
-    -> logger.py  (poll P1 / SMA / WebBox)  -> readings (1 min)
+.env  (DB_BACKUP_ENCRYPTION_KEY only; encrypted storage -> host by hand)
+    -> settings page writes meter_history.db app_settings (devices, titles, plant)
+    -> logger.py (poll P1 / SMA / WebBox)  -> readings (1 min)
     -> importer / sql_importer              -> staging (5 min)
     -> rollup.py -consolidate / -daily / -today / -buildall
     -> history_5min + daily/monthly/envelopes/top_records
-    -> index.php / analytics.php / summary.php (read-only UI)
+    -> index.php / analytics.php / summary.php / topn.php / settings.php
 
 helpers/  (gitignored entire directory; PC-only sync tool)
     p1-sync.config.json  -> per-target path / excludes / optional source_subdir
@@ -42,7 +43,7 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 | `history_5min` | Derived master (5-min). From `-consolidate` (staging) + `-daily`/`-today` (`readings`). Rebuildable. |
 | `daily_history` / `monthly_history` / `clear_sky_envelopes` / `top_records` / `top_periods` | Derived analytics. `-buildall` or incremental `-daily` (Top-N yield lists in `top_periods`). |
 
-**PAC quality gates** (rollup + analytics charts): hard cap `MAX_PLAUSIBLE_PAC_W` (12 kW); ignore deep-night PAC (22–04); shoulder hours (20–21, 05) require `solar_radiation > 5`. Night WebBox junk with rad≈0 must not define envelopes or inflate integrals.
+**PAC quality gates** (rollup + analytics charts): spike cap is max inverter AC × 1.05 (default nameplate 12 kW, cap 12.6 kW) from Settings. Deep night and shoulder hours are editable; defaults drop PAC from 22:00 through 05:00, and on the shoulder (from 20:00 and before 06:00) when solar radiation is at or under 5 W/m². Night WebBox junk with rad≈0 must not define envelopes or inflate integrals. Saved plant limits apply on `rollup.py -buildall`.
 
 **Timestamps:** logger uses host local time (CET). Downsample cutoffs use SQLite `datetime('now', 'localtime')` (UTC `now` drops afternoon slots).
 
@@ -54,6 +55,7 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 | `analytics.php` | Exploration: daily 5-min curve (`history_5min`), two-day overlay, clear-sky envelope. **Generate table** (today only) downsamples today’s `readings` → `history_5min`. Deep link: `?date=YYYY-MM-DD`. |
 | `summary.php` | Period bars: **All years**, week, month, year (from `daily_history` / `monthly_history` + PVGIS). Deep link: `?month=YYYY-MM`, `?year=YYYY`. |
 | `topn.php` | Best/worst yield rankings (20 days, 10 months, 10 years) from `top_periods`; click bar → analytics/summary. Worst **days** exclude yield ≤ 0 and the current calendar day. |
+| `settings.php` | Admin password (first open) and site configuration. Device passwords are masked. |
 
 ## Rollup CLI (operator)
 
@@ -69,8 +71,9 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 
 | Concern | File | Public git | Sync to NAS |
 |---|---|---|---|
-| Device IPs + passwords | `.env` | `.env.example` only | **never** |
-| UI title / subtitle / labels | `.env` (`SITE_*`) | placeholders in example | **never** |
+| Backup encryption key | `.env` (`DB_BACKUP_ENCRYPTION_KEY` only) | name in `.env.example` | **never** |
+| Device IPs, device passwords, titles, plant limits | `meter_history.db` `app_settings` (Settings page). Existing `.env` device keys are imported once when that table is empty. | no | DB is not in git; sync excludes `.env*` and `*.db` |
+| Admin password | `meter_history.db` `app_admin` (one-way hash) | no | same as the DB |
 | Sync source + SMB targets | `helpers/p1-sync.config.json` | no | Synology: **no** / OneDrive helpers-backup: **yes** |
 | Sync scripts + local helpers README | `helpers/` | no (whole dir gitignored) | Synology: **no** / OneDrive helpers-backup: **yes** |
 

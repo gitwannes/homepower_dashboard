@@ -1,7 +1,12 @@
 <?php
+# --- file: import_dashboard.php ---
 date_default_timezone_set('Europe/Brussels');
+require_once __DIR__ . '/site_settings.php';
 
-$dbFile = __DIR__ . '/meter_history.db';$queueDir = __DIR__ . '/import_queue';
+$hp = hp_boot();
+hp_require_ready($hp);
+$dbFile = $hp['db'];
+$queueDir = __DIR__ . '/import_queue';
 $processedDir =$queueDir . '/processed';
 
 if (!file_exists($queueDir)) {
@@ -108,6 +113,7 @@ $queueSizeMb = round($queueBytes / (1024 * 1024), 1);
             </div>
         </div>
         <div class="flex items-center gap-3">
+            <?= hp_nav_settings() ?>
             <span class="text-xs font-mono bg-slate-100 text-slate-700 px-3 py-1.5 rounded-full border border-slate-200">
                 DB Size: <strong class="text-slate-900"><?= $stats['db_size'] ?></strong>
             </span>

@@ -5,13 +5,12 @@
  * Period rollups live on summary.php.
  */
 date_default_timezone_set('Europe/Brussels');
+require_once __DIR__ . '/site_settings.php';
 
-$dbFile = __DIR__ . '/meter_history.db';
-
-// Reject corrupt PAC spikes in charts (same idea as rollup.py MAX_PLAUSIBLE_PAC_W).
-define('MAX_PLAUSIBLE_PAC_W', 12000.0);
-// Match rollup.py PAC_RAD_FLOOR - WebBox night / no-sun shoulder junk.
-define('PAC_RAD_FLOOR', 5.0);
+$hp = hp_boot();
+hp_require_ready($hp);
+hp_publish_pac($hp['settings']);
+$dbFile = $hp['db'];
 
 /**
  * @param mixed $w PAC watts
@@ -25,18 +24,24 @@ function sanitize_pac_w($w, $hour = null, $rad = null)
         return null;
     }
     $v = (float)$w;
-    if ($v <= 0 || $v > MAX_PLAUSIBLE_PAC_W) {
+    $cap = isset($GLOBALS['HP_PAC_CAP']) ? (float)$GLOBALS['HP_PAC_CAP'] : (12000.0 * 1.05);
+    if ($v <= 0 || $v > $cap) {
         return null;
     }
     if ($hour !== null) {
         $h = (int)$hour;
-        // Deep night: never trust PAC
-        if ($h >= 22 || $h < 5) {
+        $nightStart = isset($GLOBALS['HP_PAC_NIGHT_START']) ? (int)$GLOBALS['HP_PAC_NIGHT_START'] : 22;
+        $nightEnd = isset($GLOBALS['HP_PAC_NIGHT_END']) ? (int)$GLOBALS['HP_PAC_NIGHT_END'] : 5;
+        $shoulderStart = isset($GLOBALS['HP_PAC_SHOULDER_START']) ? (int)$GLOBALS['HP_PAC_SHOULDER_START'] : 20;
+        $shoulderEnd = isset($GLOBALS['HP_PAC_SHOULDER_END']) ? (int)$GLOBALS['HP_PAC_SHOULDER_END'] : 6;
+        $radFloor = isset($GLOBALS['HP_PAC_RAD']) ? (float)$GLOBALS['HP_PAC_RAD'] : 5.0;
+        // Deep night: never trust PAC (hour >= start OR hour < end).
+        if ($h >= $nightStart || $h < $nightEnd) {
             return null;
         }
         $r = ($rad === null || $rad === '') ? 0.0 : (float)$rad;
-        // Shoulder evening/morning: PAC without light
-        if ($r <= PAC_RAD_FLOOR && ($h >= 20 || $h < 6)) {
+        // Shoulder evening/morning: PAC without light.
+        if ($r <= $radFloor && ($h >= $shoulderStart || $h < $shoulderEnd)) {
             return null;
         }
     }
@@ -462,6 +467,7 @@ $defaultCompare2 = $yesterday;
             <a href="topn.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                 <i data-lucide="trophy" class="w-3.5 h-3.5 text-amber-500"></i> Top-N
             </a>
+            <?= hp_nav_settings() ?>
         </div>
     </header>
 

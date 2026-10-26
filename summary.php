@@ -6,8 +6,11 @@
  * (Day mode removed: a single daily_history bar is not useful; use analytics intraday for one day.)
  */
 date_default_timezone_set('Europe/Brussels');
+require_once __DIR__ . '/site_settings.php';
 
-$dbFile = __DIR__ . '/meter_history.db';
+$hp = hp_boot();
+hp_require_ready($hp);
+$dbFile = $hp['db'];
 
 /**
  * @param PDO $pdo
@@ -365,6 +368,7 @@ if (isset($_GET['ajax'])) {
             <a href="topn.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                 <i data-lucide="trophy" class="w-3.5 h-3.5 text-amber-500"></i> Top-N
             </a>
+            <?= hp_nav_settings() ?>
         </div>
     </header>
 

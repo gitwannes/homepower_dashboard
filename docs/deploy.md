@@ -2,7 +2,7 @@
 # Deploy notes
 
 **Status:** as-is for Synology-first host.  
-**Last updated:** 2026-10-22
+**Last updated:** 2026-10-25
 
 ## Runtime `.env`
 
@@ -10,7 +10,11 @@
 2. Place a copy next to the app on the host (same folder as `logger.py` / `index.php`).
 3. **Never** commit `.env`. **Never** include `.env*` in robocopy MIR.
 
-Use [`.env.example`](../.env.example) as the key list (`P1_IP`, optional SMA/WebBox, optional `SITE_*`).
+After A6 the file holds **`DB_BACKUP_ENCRYPTION_KEY` only**. Device addresses, device passwords, titles, and plant limits are on the **Settings** page (`settings.php`) and stored in `meter_history.db`. An existing `.env` that still has `P1_IP` / SMA / WebBox / `SITE_*` is imported once when `app_settings` is empty. The file is not rewritten. PHP does not need those keys after the import.
+
+The first browser open asks for an admin password (enter it twice) when none is stored. A new install with no imported P1 address then shows Settings and stays there until that page is saved.
+
+Use [`.env.example`](../.env.example) as the key list.
 
 ## Local sync (`helpers/` — not in git)
 

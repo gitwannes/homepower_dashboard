@@ -8,8 +8,10 @@ import time
 from datetime import datetime
 from typing import Optional, Tuple
 
+import site_config
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_FILE = os.path.join(BASE_DIR, 'meter_history.db')
+DB_FILE = site_config.resolve_db_path()
 
 # Daily yield from lifetime E-total: reject implausible meter math, fall back to PAC integral.
 # Residential ceiling ~100 kWh/day; single 5-min step above ~3 kWh is not physical generation.
@@ -17,7 +19,13 @@ MAX_DAY_YIELD_KWH = 100.0
 MAX_ETOTAL_STEP_KWH = 3.0
 # Instantaneous PAC spikes (bad WebBox/P1 samples). Home array peaks are a few kW, not 30+ kW.
 # Used by clear_sky_envelopes, daily peak, and top_records peak_surge.
-MAX_PLAUSIBLE_PAC_W = 12000.0
+MAX_PLAUSIBLE_PAC_W = 12000.0 * 1.05
+# Deep night: hour >= start OR hour < end. Shoulder uses the same wrap,
+# and only when solar_radiation is at or under PAC_RAD_FLOOR.
+PAC_NIGHT_START = 22
+PAC_NIGHT_END = 5
+PAC_SHOULDER_START = 20
+PAC_SHOULDER_END = 6
 
 # Only annotate status lines when a step took longer than this (seconds).
 STATUS_TIME_MIN_S = 10.0
@@ -45,14 +53,14 @@ def sql_pac_plausible(pac_expr: str = "COALESCE(solar_power_w, 0)") -> str:
         ({pac_expr}) > 0
         AND ({pac_expr}) <= {MAX_PLAUSIBLE_PAC_W}
         AND NOT (
-            CAST(strftime('%H', timestamp) AS INTEGER) >= 22
-            OR CAST(strftime('%H', timestamp) AS INTEGER) < 5
+            CAST(strftime('%H', timestamp) AS INTEGER) >= {int(PAC_NIGHT_START)}
+            OR CAST(strftime('%H', timestamp) AS INTEGER) < {int(PAC_NIGHT_END)}
         )
         AND NOT (
-            COALESCE(solar_radiation, 0) <= {PAC_RAD_FLOOR}
+            COALESCE(solar_radiation, 0) <= {float(PAC_RAD_FLOOR)}
             AND (
-                CAST(strftime('%H', timestamp) AS INTEGER) >= 20
-                OR CAST(strftime('%H', timestamp) AS INTEGER) < 6
+                CAST(strftime('%H', timestamp) AS INTEGER) >= {int(PAC_SHOULDER_START)}
+                OR CAST(strftime('%H', timestamp) AS INTEGER) < {int(PAC_SHOULDER_END)}
             )
         )
     )"""
@@ -660,12 +668,29 @@ def downsample_live_readings(
     )
     return int(changed) if changed is not None else -1
 
+
+def _apply_saved_pac(conn: sqlite3.Connection) -> None:
+    """Load spike cap and night gates from app_settings before any rebuild SQL."""
+    global MAX_PLAUSIBLE_PAC_W, PAC_RAD_FLOOR
+    global PAC_NIGHT_START, PAC_NIGHT_END, PAC_SHOULDER_START, PAC_SHOULDER_END
+    pac = site_config.pac_runtime(conn)
+    MAX_PLAUSIBLE_PAC_W = pac['cap_w']
+    PAC_RAD_FLOOR = pac['rad_floor']
+    PAC_NIGHT_START = int(pac['night_start'])
+    PAC_NIGHT_END = int(pac['night_end'])
+    PAC_SHOULDER_START = int(pac['shoulder_start'])
+    PAC_SHOULDER_END = int(pac['shoulder_end'])
+
+
 if __name__ == '__main__':
     conn = None
     try:
         args = [a.lower() for a in sys.argv]
         conn = sqlite3.connect(DB_FILE, timeout=30.0)
         init_analytical_db(conn)
+        site_config.ensure_schema(conn)
+        site_config.import_env_if_empty(conn)
+        _apply_saved_pac(conn)
         
         if '-consolidate' in args:
             # Step 2: Bridge raw staging into consolidated master

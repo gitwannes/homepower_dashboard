@@ -1,8 +1,14 @@
 <?php
+# --- file: powertests.php ---
 /**
  * Power Hardware Diagnostics Runner
  * Executes powertests.py and streams live hardware tests to the browser.
  */
+date_default_timezone_set('Europe/Brussels');
+require_once __DIR__ . '/site_settings.php';
+$hp = hp_boot();
+hp_require_ready($hp);
+
 $scriptPath = __DIR__ . '/powertests.py';
 
 // Prioritize Package Center Python 3.14 before DSM system Python
@@ -91,6 +97,7 @@ $isSuccess = ($returnCode === 0);
             <a href="index.php" class="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-all">
                 &larr; Dashboard
             </a>
+            <?= hp_nav_settings() ?>
         </div>
     </div>
 

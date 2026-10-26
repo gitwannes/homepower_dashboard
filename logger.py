@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# --- file: logger.py ---
 import urllib.request
 import urllib.error
 import ssl
@@ -11,48 +12,13 @@ import sys
 import fcntl
 from datetime import datetime
 
+import site_config
+
 # Allow both cron (www-data) and personal user to access created database
 os.umask(0)
 
-# 1. Platform Detection & Storage Path Resolution
-IS_SYNOLOGY = os.path.exists('/etc/synoinfo.conf') or os.path.exists('/etc.defaults/synoinfo.conf')
-# MAX_ROWS = 14400  # 10 days @ 1 poll/min  # nothing gets deleted
-
-if not IS_SYNOLOGY:
-    if os.path.exists('/var/log/p1') and os.access('/var/log/p1', os.W_OK):
-        DB_FILE = '/var/log/p1/meter_history.db'
-    elif os.path.exists('/dev/shm') and os.access('/dev/shm', os.W_OK):
-        DB_FILE = '/dev/shm/meter_history.db'
-    else:
-        DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'meter_history.db')
-else:
-    DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'meter_history.db')
-
-
-def load_env():
-    """Load .env from app directory or parent (never from git; place from encrypted storage)."""
-    candidates = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'),
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'),
-        '.env'
-    ]
-    env_path = None
-    for c in candidates:
-        if os.path.exists(c) and os.access(c, os.R_OK):
-            env_path = c
-            break
-
-    if not env_path:
-        return None
-
-    config = {}
-    with open(env_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith('#') and '=' in line:
-                k, v = line.split('=', 1)
-                config[k.strip()] = v.strip().strip("'\"")
-    return config
+# Database path matches site_config (Synology: beside the app; else /var/log/p1 or /dev/shm).
+DB_FILE = site_config.resolve_db_path()
 
 
 def init_db():
@@ -564,21 +530,18 @@ def run_poll():
         sys.exit(0)
 
     try:
-        # 1. Check .env
-        config = load_env()
-        if config is None:
-            err_msg = "Configuration error: .env file not found."
-            log_event("ERROR", err_msg)
-            store_fatal_error(err_msg)
-            print(err_msg)
-            sys.exit(0)
+        conn = init_db()
+        site_config.ensure_schema(conn)
+        site_config.import_env_if_empty(conn)
+        settings = site_config.load_settings(conn)
 
-        # 2. Check P1_IP
-        p1_ip = config.get('P1_IP', '').strip()
+        # P1 address comes from the settings page (imported once from .env).
+        p1_ip = settings.get('p1_ip', '').strip()
         if not p1_ip:
-            err_msg = "Configuration error: P1_IP is not defined in .env."
+            err_msg = "Configuration error: P1 address is not set. Open Settings in the dashboard."
             log_event("ERROR", err_msg)
             store_fatal_error(err_msg)
+            conn.close()
             print(err_msg)
             sys.exit(0)
 
@@ -588,7 +551,6 @@ def run_poll():
         now = datetime.now()
         timestamp = now.strftime('%Y-%m-%d %H:%M:%S')
 
-        conn = init_db()
         cur = conn.cursor()
 
         last_state_data = {}
@@ -629,23 +591,21 @@ def run_poll():
         # 4. Check Solar Addons (SMA & WebBox)
         alerts = []
 
-        # SMA Inverter
-        has_sma_conf = 'SMA_IP' in config and config['SMA_IP'].strip() != ''
+        # SMA Inverter (optional). Empty address means not configured.
+        sma_ip = settings.get('sma_ip', '').strip()
         sma_data = None
-        if has_sma_conf:
-            sma_ip = config['SMA_IP'].strip()
-            sma_user = config.get('SMA_USER', 'usr').strip()
-            sma_pwd = config.get('SMA_PASSWORD', '').strip()
+        if sma_ip:
+            sma_user = settings.get('sma_user', '').strip() or 'usr'
+            sma_pwd = settings.get('sma_password', '')
             sma_data, sma_alert = fetch_sma(sma_ip, sma_user, sma_pwd, last_state_data)
             if sma_alert:
                 alerts.append(sma_alert)
 
-        # Sunny WebBox
-        has_webbox_conf = 'SUNNYWEBBOX_IP' in config and config['SUNNYWEBBOX_IP'].strip() != ''
+        # Sunny WebBox (optional).
+        wb_ip = settings.get('sunnywebbox_ip', '').strip()
         webbox_data = None
-        if has_webbox_conf:
-            wb_ip = config['SUNNYWEBBOX_IP'].strip()
-            wb_pwd = config.get('SUNNYWEBBOX_PASSWORD', '').strip()
+        if wb_ip:
+            wb_pwd = settings.get('sunnywebbox_password', '')
             webbox_data, wb_alert = fetch_webbox(wb_ip, wb_pwd, last_state_data)
             if wb_alert:
                 alerts.append(wb_alert)

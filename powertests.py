@@ -14,30 +14,13 @@ import socket
 import json
 import hashlib
 import os
+import sqlite3
 import sys
+
+import site_config
 
 # Allow both root/user and www-data to execute
 os.umask(0)
-
-def load_env():
-    """Load .env from script directory or parent (place from encrypted storage)."""
-    candidates = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'),
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'),
-        '.env'
-    ]
-    for c in candidates:
-        if os.path.exists(c) and os.access(c, os.R_OK):
-            config = {}
-            with open(c, 'r', encoding='utf-8') as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#') and '=' in line:
-                        k, v = line.split('=', 1)
-                        config[k.strip()] = v.strip().strip("'\"")
-            return config, c
-    return {}, None
-
 
 # -------------------------------------------------------------------
 # 1. P1 SMART METER PROBE
@@ -47,7 +30,7 @@ def test_p1(ip):
     print(" 1. P1 DIGITAL SMART METER")
     print("=" * 65)
     if not ip:
-        print("[ WARN ] P1_IP not defined in .env. Skipping test.")
+        print("[ WARN ] P1 address is not set in Settings. Skipping test.")
         return
 
     url = f"http://{ip}/api/v1/data"
@@ -103,12 +86,12 @@ def test_sma(ip, user, password):
     print(" 2. SMA SOLAR INVERTER (WebConnect)")
     print("=" * 65)
     if not ip:
-        print("[ INFO ] SMA_IP not defined in .env. (Not configured for this site)")
+        print("[ INFO ] SMA address is not set in Settings. (Not configured for this site)")
         return
 
     print(f"Target IP : {ip}")
     if not password:
-        print("[FAIL] Missing SMA_PASSWORD in .env.")
+        print("[FAIL] Missing SMA password in Settings.")
         return
 
     ctx = ssl._create_unverified_context()
@@ -200,12 +183,12 @@ def test_webbox(ip, password):
     print(" 3. SUNNY WEBBOX GATEWAY & SENSORS")
     print("=" * 65)
     if not ip:
-        print("[ INFO ] SUNNYWEBBOX_IP not defined in .env. (Not configured for this site)")
+        print("[ INFO ] Sunny WebBox address is not set in Settings. (Not configured for this site)")
         return
 
     print(f"Target Gateway IP : {ip}")
     if not password:
-        print("[FAIL] Missing SUNNYWEBBOX_PASSWORD in .env.")
+        print("[FAIL] Missing Sunny WebBox password in Settings.")
         return
 
     md5_pass = hashlib.md5(password.encode('utf-8')).hexdigest()
@@ -312,18 +295,27 @@ def main():
     print("=" * 65)
     print(f"Python Runtime      : Python {sys.version.split()[0]} ({sys.executable})")
 
-    config, env_path = load_env()
-    if env_path:
-        print(f"Loaded Configuration: {env_path}")
-    else:
-        print("[ WARN ] No .env configuration file found!")
+    db_path = site_config.resolve_db_path()
+    conn = sqlite3.connect(db_path, timeout=10)
+    try:
+        site_config.ensure_schema(conn)
+        site_config.import_env_if_empty(conn)
+        settings = site_config.load_settings(conn)
+        configured = site_config.is_configured(conn)
+    finally:
+        conn.close()
 
-    p1_ip = config.get("P1_IP")
-    sma_ip = config.get("SMA_IP")
-    sma_user = config.get("SMA_USER", "usr")
-    sma_pwd = config.get("SMA_PASSWORD", "")
-    wb_ip = config.get("SUNNYWEBBOX_IP")
-    wb_pwd = config.get("SUNNYWEBBOX_PASSWORD", "")
+    if configured:
+        print(f"Loaded configuration: {db_path}")
+    else:
+        print("[ WARN ] P1 address is not set. Open Settings in the dashboard.")
+
+    p1_ip = settings.get("p1_ip", "").strip() or None
+    sma_ip = settings.get("sma_ip", "").strip() or None
+    sma_user = settings.get("sma_user", "").strip() or "usr"
+    sma_pwd = settings.get("sma_password", "")
+    wb_ip = settings.get("sunnywebbox_ip", "").strip() or None
+    wb_pwd = settings.get("sunnywebbox_password", "")
 
     test_p1(p1_ip)
     test_sma(sma_ip, sma_user, sma_pwd)

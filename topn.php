@@ -6,8 +6,11 @@
  * Click a bar -> analytics day or summary month/year.
  */
 date_default_timezone_set('Europe/Brussels');
+require_once __DIR__ . '/site_settings.php';
 
-$dbFile = __DIR__ . '/meter_history.db';
+$hp = hp_boot();
+hp_require_ready($hp);
+$dbFile = $hp['db'];
 
 if (isset($_GET['ajax'])) {
     header('Content-Type: application/json');
@@ -106,6 +109,7 @@ if (isset($_GET['ajax'])) {
             <a href="summary.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                 <i data-lucide="calendar-range" class="w-3.5 h-3.5 text-emerald-600"></i> Summary
             </a>
+            <?= hp_nav_settings() ?>
         </div>
     </header>
 
