@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseP-portals.md ---
 # Phase P — Cloud / utility portal ingest
 
-**Status:** P3 kickoff (not locked, no code). P1 kickoff in progress. P2 queued.  
-**Last updated:** 2026-10-26 (P3 kickoff — manual CSV only)  
+**Status:** P3 kickoff locked, no code. P1 kickoff in progress. P2 queued.  
+**Last updated:** 2026-10-26 (P3 locks — EANs in settings, display phases A11 and A12)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) · `logger.py` (local SMA/WebBox already — **not** this track)
 
 ---
@@ -19,7 +19,7 @@ Pull historical / periodic data from **cloud or utility portals** into the wareh
 |---|---|---|
 | **P1** | kickoff | Sunny Portal / ennexOS cloud ingest |
 | **P2** | open | SMA portal ingest |
-| **P3** | kickoff | Fluvius manual CSV history. No portal script |
+| **P3** | kickoff, locked, no code | Fluvius manual CSV into `fluvius_interval`. No portal script |
 
 **Source / API / auth / target tables:** TBD at each kickoff (operator lock). Do not assume APIs or credentials.
 
@@ -159,13 +159,19 @@ Night zeros that the API returns are real zeros. Missing stamps stay missing. Th
 
 ## P3 — Fluvius Energy Portal
 
-**Status:** kickoff, not locked, no code  
+**Status:** kickoff, locked 2026-10-26, no code  
 **Size:** **L**  
-**Depends on:** none. Parallel with A5–A10 and P1–P2.
+**Depends on:** none. Parallel with A5–A10 and P1–P2. Display of gas, wind, and monthly peak is **A11** / **A12**. The multi-series chart stays **A5**.
 
-### Locked at kickoff
+### Locked
 
 Manual CSV only. Step 2 (a script that logs into the portal and pulls the last x days) is out. The P1 logger is already the finer source for every day it ran. A portal session has no stable consumer API in what we have seen, and recent gas kWh is often still `Voorlopig`.
+
+Settings holds the electricity EAN and the gas EAN. `fluvius_import` imports a row only when its EAN matches one of those two. Any other EAN in a file is skipped and is not an error. A file that contains none of the configured EANs is still moved to `processed/` after that skip. If both settings are empty, the import stops before reading files and says so. No EAN is hardcoded and none go into git.
+
+A local electricity day is logger-owned when `readings` has a sample at or before 00:15 and at or after 23:45, no hole longer than 30 minutes, and no counter step down bigger than 0.01 kWh. That day stays on the counter delta. A partial day stays a hole. Fluvius is not stitched into it.
+
+P3 does not draw the day chart. **A5** does. P3 does not add historical gas, wind, or the monthly peak to any page. **A11** and **A12** do. Gas and peak rows for the configured EANs are still stored here.
 
 ### One additional table
 
@@ -204,24 +210,28 @@ Cross-check on import, log only: electricity quarter sum vs day file within 0.00
 - New `fluvius_import.py`. It reads Fluvius CSVs and writes `fluvius_interval`. It does not parse WebBox archives. `importer.py` ignores `.csv`, so the files can sit in `import_queue/fluvius/` and move to `import_queue/fluvius/processed/`.
 - `rollup.py -purge_derived` keeps `fluvius_interval`.
 - `rollup.py -buildall` and `-daily`, after `history_5min` is rebuilt: for an electricity day the logger does not own, write one `history_5min` row at each quarter start (`:00`, `:15`, `:30`, `:45`), `data_source` `fluvius`, counters null. Do not fill the other two slots of that quarter. Gas hours do not go into `history_5min`.
-- Derived day and month grid import/export for those logger-absent electricity days come from the Fluvius kWh sum. Solar on those days is untouched.
-- Gas day totals, if the UI question below is yes, need `gas_m3` and `gas_kwh` on `daily_history` and the month sums on `monthly_history`, filled from `fluvius_interval` and rebuilt by `-buildall` / `-daily`. The gas day is the 06:00 window, labelled by its start date.
-- Settings: electricity EAN and gas EAN in `app_settings`, once the operator names them. The loader stores every EAN in a file. The dashboard publishes only the configured pair.
+- Derived day and month grid import/export for those logger-absent electricity days come from the Fluvius kWh sum. Solar on those days is untouched. No `gas_m3` / `gas_kwh` columns in this phase.
+- Settings page: two `app_settings` keys, electricity EAN and gas EAN. The loader reads those keys and ignores every other EAN.
 - `docs/architecture.md`, `README.md`, and `.cursor/rules/history-5min-derived.mdc` when the code lands. The cursor rule already forbids purging this source and already states the 1-of-3 chart rule.
 
-`analytics.php` still fills 288 solar slots with 0 and does not plot grid. That change is not required to store the CSV. See the open questions.
+`analytics.php` still fills 288 solar slots with 0 and does not plot grid. That drawing is **A5**, not P3. P3 only writes the empty quarter slots so A5 has something to read.
 
 ### Still open
 
-1. Which electricity EAN and which gas EAN does this dashboard publish?
-2. A local day counts as logger-owned when `readings` has a sample at or before 00:15 and at or after 23:45, no hole longer than 30 minutes, and no counter step down bigger than 0.01 kWh. A partial day is left as a hole. Fluvius is not stitched into it. Confirm or change those three tolerances.
-3. Historical gas on `summary.php` in this phase, or store it and show it later?
-4. Historical monthly peak on the live peak card in this phase, or store it and show it later?
-5. The day chart does not draw grid. A5 is the multi-series graph. P3 stores the quarters and can fill empty `history_5min` slots. Drawing them is A5, plus the existing gap rule (1 or 2 missing 5-minute slots stay a line, more than 2 stay a gap). Confirm P3 does not take over A5.
+None. No code until the operator says implement.
 
 ### Verbatim — 2026-10-26 (kickoff)
 
 > kickoff this P3, don't implement step 2 (automatic importer) - which table is needed additionaly, give what needs to be added/changed - any open items or questions?
+
+### Verbatim — 2026-10-26 (locks)
+
+> Q1: EANs to be entered in the settings page - fluvius_import will import only CSVs for those EANs so no errors occur
+> Q2: confirm
+> Q3: hitorical gas, wind speed, etc is not for this phase - tirage that into another phase
+> Q4: also another phase: triage
+> Q5: Q5 is seperate
+> write docs, no code
 
 ---
 
@@ -229,3 +239,6 @@ Cross-check on import, log only: electricity quarter sum vs day file within 0.00
 
 - Changing local `logger.py` SMA / WebBox poll behaviour
 - Replacing WebBox ZIP / `sql_importer` archive path without an explicit kickoff lock
+- Fluvius portal script (P3 step 2)
+- Drawing Fluvius quarters on the day chart (**A5**)
+- Pages for historical gas, wind, and the monthly peak (**A11**, **A12**)

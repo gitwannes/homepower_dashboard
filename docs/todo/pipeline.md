@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-26 (**P3** kickoff, not locked — Fluvius manual CSV, no portal script; **A10** coding; **A4 Done**; **A6** coding; **A5**, **A7–A9**, **P1–P2** queued)
+**Last updated:** 2026-10-26 (**P3** kickoff locked, no code — Fluvius CSV, configured EANs only; **A11** / **A12** triaged, not kicked off; **A10** coding; **A4 Done**; **A6** coding)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -43,7 +43,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| 1 | kickoff | L | **P3** | Fluvius manual CSV into `fluvius_interval`. No portal script. Not locked | [`phaseP-portals.md`](phaseP-portals.md) |
+| 1 | kickoff | L | **P3** | Fluvius manual CSV into `fluvius_interval` for the settings EANs only. No portal script. Locked, no code | [`phaseP-portals.md`](phaseP-portals.md) |
 | 2 | open | M | **A5** | Multi-series power graph (PV + grid import + home usage); ref `docs/todo/HomeWizard-graph.jpg` | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 3 | coding | L | **A6** | Settings page implemented; operator smoke not done; `DB_BACKUP_ENCRYPTION_KEY` stays in `.env` | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 4 | open | S | **A7** | `top_records`: drop or change (assess at kickoff) | [`phaseA-analytics.md`](phaseA-analytics.md) |
@@ -52,6 +52,8 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | 7 | open | M | **A8** | Live Solar & Consumption chart: scaled X-axis (no line across gaps), zoom to 1 week of 1-minute data, drop "(Last 2 Hours)" | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 8 | open | L | **A9** | Full DB download + restore on the A6 page (admin password); no wipe; `p1-sync` pulls `meter_history.db` to the PC | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 9 | coding | M | **A10** | Warehouse rebuild — drop `-aggregate5min` and `-today`; `-buildall` refills `history_5min` then aggregates. Locked, not closed | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 10 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 11 | open | S | **A12** | Historical monthly Fluvius peak on a page. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
 
 ---
 
