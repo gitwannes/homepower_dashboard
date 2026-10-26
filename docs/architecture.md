@@ -73,7 +73,7 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 | Concern | File | Public git | Sync to NAS |
 |---|---|---|---|
 | Backup encryption key | `.env` (`DB_BACKUP_ENCRYPTION_KEY` only) | name in `.env.example` | **never** |
-| Device IPs, device passwords, titles, plant limits | `meter_history.db` `app_settings` (Settings page). Existing `.env` device keys are imported once when that table is empty. | no | DB is not in git; sync excludes `.env*` and `*.db` |
+| Device IPs, device passwords, titles, plant limits, Sunny Portal user / password / plant id / timezone | `meter_history.db` `app_settings` (Settings page). Existing `.env` device keys are imported once when that table is empty. Sunny Portal keys are copied when that settings row is still absent. | no | DB is not in git; sync excludes `.env*` and `*.db` |
 | Admin password | `meter_history.db` `app_admin` (one-way hash) | no | same as the DB |
 | Sync source + SMB targets | `helpers/p1-sync.config.json` | no | Synology: **no** / OneDrive helpers-backup: **yes** |
 | Sync scripts + local helpers README | `helpers/` | no (whole dir gitignored) | Synology: **no** / OneDrive helpers-backup: **yes** |

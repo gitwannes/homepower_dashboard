@@ -17,7 +17,7 @@ Pull historical / periodic data from **cloud or utility portals** into the wareh
 
 | Id | Status | What |
 |---|---|---|
-| **P1** | kickoff | Sunny Portal / ennexOS cloud ingest |
+| **P1** | kickoff | Sunny Portal cloud ingest |
 | **P2** | open | SMA portal ingest |
 | **P3** | kickoff, locked, no code | Fluvius manual CSV into `fluvius_interval`. No portal script |
 
@@ -63,7 +63,7 @@ Pull historical / periodic data from **cloud or utility portals** into the wareh
 
 > cool; then it works - i will run this one-time-import on a different machine then where the DB sits - so create a script that pulls ALL data and puts it in a DB table, then this DB table must be transferreed to the real DB somehow, give insight
 
-`ennexos_pull.py` writes a standalone `ennexos_pv.sqlite` (PV channel only, every component that returns samples). It does not open `meter_history.db`. Copy that closed file to the dashboard host and `ATTACH` it. Do not merge into `history_5min` on the pull machine.
+`sunnyportal_pull.py` writes a standalone `sunnyportal_pv.sqlite` (PV channel only, every component that returns samples). It opens `meter_history.db` only to read the Settings page (user, password, plant id, timezone). Copy the closed sample file to the dashboard host and `ATTACH` it. Do not merge into `history_5min` on the pull machine.
 
 ### 2026-10-26 — kickoff P3
 
@@ -71,7 +71,7 @@ Pull historical / periodic data from **cloud or utility portals** into the wareh
 
 ---
 
-## P1 — Sunny Portal / ennexOS
+## P1 — Sunny Portal
 
 **Status:** kickoff (pull script written; not locked into `history_5min`)  
 **Scope (placement only):** ingest from Sunny Portal cloud. Operator URL for this kickoff: `https://ennexos.sunnyportal.com`. `https://portal.sma.energy/login` forwards there.  
@@ -135,7 +135,7 @@ Do **not** write `readings`. Do **not** overwrite a `history_5min` slot that alr
 
 Keep a small SoT staging table (survives `-purge_derived`): interval start and PV watts. Then one consolidate copies into `history_5min.solar_power_w` only where that slot is still empty. No `solar_total_kwh` on this channel, so daily yield for those days uses the existing PAC integral (`SUM(solar_power_w) * 5/60/1000`), not an E-total delta. Missing stamps stay missing.
 
-The probe logs in over HTTP with the same SMA ID form the website uses (no Playwright; that package has no build on the Pi), takes an access token, then calls `measurements/search` for the day. A later one-shot walk repeats that call per day (or a wider window if the response allows it). It will break when SMA changes the login form. That is the cost of staying off the paid API. Do not store the password anywhere except `.env`.
+The probe (`sunnyportal_csv_test.py`) logs in over HTTP with the same SMA ID form the website uses (no Playwright; that package has no build on the Pi), takes an access token, then calls `measurements/search` for the day. `sunnyportal_pull.py` repeats that call per day. It will break when SMA changes the login form. That is the cost of staying off the paid API. User, password, plant id, and timezone live on the Settings page (`sunnyportal_user`, `sunnyportal_password`, `sunnyportal_plant_id`, `sunnyportal_timezone`). The password is not in git. An empty timezone means `Europe/Paris` in the scripts. Samples stay in `sunnyportal_pv.sqlite` until a later lock says how they enter `history_5min`.
 
 Night zeros that the API returns are real zeros. Missing stamps stay missing. There is no lifetime energy counter on this channel, so those days get their yield from the power integral already in the rollup.
 

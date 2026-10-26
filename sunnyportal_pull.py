@@ -1,40 +1,41 @@
 #!/usr/bin/env python3
-# --- file: ennexos_pull.py ---
-"""One-shot pull of ennexOS PV power into a portable SQLite file.
+# --- file: sunnyportal_pull.py ---
+"""One-shot pull of Sunny Portal PV power into a portable SQLite file.
 
-Run this on a machine that is not the dashboard host. It never opens
-meter_history.db. Copy the finished file to the host and ATTACH it there.
-See the docstring at the bottom of this header.
+Reads the Sunny Portal user, password, plant id, and timezone from the
+Settings page (app_settings in meter_history.db; HP_DB_FILE when that file
+is elsewhere). Writes samples only to sunnyportal_pv.sqlite. Does not merge
+those rows into history_5min.
 
 Pulls Measurement.GridMs.TotW.Pv, the channel that matched the Day CSV.
 Every component that returns samples is stored. On 2026-10-06 the system
 curve was component 13941800; the system-id row itself was empty.
 
-Stamp rule: API time is UTC, the CSV clock is Europe/Paris (or
-ENNEXOS_TIMEZONE), and that clock is the bucket end. interval_start is
-five minutes earlier, which lines up with history_5min.
+Stamp rule: API time is UTC, the CSV clock is the Settings timezone
+(default Europe/Paris), and that clock is the bucket end. interval_start
+is five minutes earlier, which lines up with history_5min.
 
 Today is skipped. Live PV stays on the P1 logger.
 
-Needs Python 3.9+ and ennexos_csv_test.py beside this file. No pip packages.
-Resume is safe: a day recorded in ennexos_pull_day is not requested again
+Needs Python 3.9+ and sunnyportal_csv_test.py beside this file. No pip packages.
+Resume is safe: a day recorded in sunnyportal_pull_day is not requested again
 unless --force is set.
 
 Transfer, on the dashboard host, after the file has been copied next to
 meter_history.db and this process has exited (one file, no -wal):
 
   sqlite3 meter_history.db
-  ATTACH 'ennexos_pv.sqlite' AS src;
-  CREATE TABLE IF NOT EXISTS ennexos_pv_5min (
+  ATTACH 'sunnyportal_pv.sqlite' AS src;
+  CREATE TABLE IF NOT EXISTS sunnyportal_pv_5min (
       component_id TEXT NOT NULL,
       interval_start TEXT NOT NULL,
       interval_end TEXT NOT NULL,
       power_w REAL,
       PRIMARY KEY (component_id, interval_start)
   );
-  INSERT OR REPLACE INTO ennexos_pv_5min
+  INSERT OR REPLACE INTO sunnyportal_pv_5min
       SELECT component_id, interval_start, interval_end, power_w
-      FROM src.ennexos_pv_5min;
+      FROM src.sunnyportal_pv_5min;
   DETACH src;
 
 Do not merge into history_5min from the pull machine. That merge has to
@@ -50,7 +51,8 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-from ennexos_csv_test import EnnexosHttpError, fetch_day, load_env, login_and_token, require
+import site_config
+from sunnyportal_csv_test import SunnyportalHttpError, fetch_day, login_and_token
 
 BUCKET = timedelta(minutes=5)
 
@@ -62,7 +64,7 @@ def init_db(path: str) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous = FULL")
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS ennexos_pv_5min (
+        CREATE TABLE IF NOT EXISTS sunnyportal_pv_5min (
             component_id TEXT NOT NULL,
             interval_start TEXT NOT NULL,
             interval_end TEXT NOT NULL,
@@ -73,7 +75,7 @@ def init_db(path: str) -> sqlite3.Connection:
     )
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS ennexos_pull_day (
+        CREATE TABLE IF NOT EXISTS sunnyportal_pull_day (
             day TEXT PRIMARY KEY,
             fetched_at TEXT NOT NULL,
             points INTEGER NOT NULL
@@ -110,7 +112,7 @@ def store_day(
         placeholders = ",".join("?" for _ in allowed)
         conn.execute(
             f"""
-            DELETE FROM ennexos_pv_5min
+            DELETE FROM sunnyportal_pv_5min
             WHERE interval_start >= ? AND interval_start < ?
               AND component_id IN ({placeholders})
             """,
@@ -118,7 +120,7 @@ def store_day(
         )
     else:
         conn.execute(
-            "DELETE FROM ennexos_pv_5min WHERE interval_start >= ? AND interval_start < ?",
+            "DELETE FROM sunnyportal_pv_5min WHERE interval_start >= ? AND interval_start < ?",
             (start_key, end_key),
         )
     counts: Dict[str, int] = {}
@@ -151,7 +153,7 @@ def store_day(
             counts[component] = counts.get(component, 0) + 1
     conn.executemany(
         """
-        INSERT OR REPLACE INTO ennexos_pv_5min
+        INSERT OR REPLACE INTO sunnyportal_pv_5min
             (component_id, interval_start, interval_end, power_w)
         VALUES (?, ?, ?, ?)
         """,
@@ -159,7 +161,7 @@ def store_day(
     )
     conn.execute(
         """
-        INSERT OR REPLACE INTO ennexos_pull_day (day, fetched_at, points)
+        INSERT OR REPLACE INTO sunnyportal_pull_day (day, fetched_at, points)
         VALUES (?, ?, ?)
         """,
         (
@@ -185,7 +187,7 @@ def fetch_stored(
     """Fetch one day, re-login once on HTTP 401, then commit it."""
     try:
         payload = fetch_day(token_box["token"], plant_id, day.isoformat(), zone_name, quiet=True)
-    except EnnexosHttpError as exc:
+    except SunnyportalHttpError as exc:
         if exc.code != 401:
             raise
         print("token expired, logging in again")
@@ -241,7 +243,7 @@ def summarize(conn: sqlite3.Connection, db_path: str) -> None:
     rows = conn.execute(
         """
         SELECT component_id, COUNT(*), MIN(interval_start), MAX(interval_start)
-        FROM ennexos_pv_5min
+        FROM sunnyportal_pv_5min
         GROUP BY component_id
         ORDER BY component_id
         """
@@ -251,13 +253,13 @@ def summarize(conn: sqlite3.Connection, db_path: str) -> None:
         return
     for component_id, count, first, last in rows:
         print(f"component {component_id}  {count} rows  {first} -> {last}")
-    days = conn.execute("SELECT COUNT(*) FROM ennexos_pull_day").fetchone()
+    days = conn.execute("SELECT COUNT(*) FROM sunnyportal_pull_day").fetchone()
     print(f"days recorded {days[0]}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Pull all ennexOS PV power into a portable SQLite file.")
-    parser.add_argument("--db", default="ennexos_pv.sqlite", help="Output SQLite file (default ennexos_pv.sqlite)")
+    parser = argparse.ArgumentParser(description="Pull all Sunny Portal PV power into a portable SQLite file.")
+    parser.add_argument("--db", default="sunnyportal_pv.sqlite", help="Output SQLite file (default sunnyportal_pv.sqlite)")
     parser.add_argument("--from", dest="day_from", help="First local day YYYY-MM-DD (default: search)")
     parser.add_argument("--to", dest="day_to", help="Last local day YYYY-MM-DD (default: yesterday)")
     parser.add_argument("--component", action="append", help="Keep only this component id. Repeatable.")
@@ -265,11 +267,11 @@ def main() -> None:
     parser.add_argument("--force", action="store_true", help="Request days again even if already recorded")
     args = parser.parse_args()
 
-    config = load_env()
-    user = require(config, "ENNEXOS_USER")
-    password = require(config, "ENNEXOS_PASSWORD")
-    plant_id = require(config, "ENNEXOS_PLANT_ID")
-    zone_name = config.get("ENNEXOS_TIMEZONE", "Europe/Paris").strip() or "Europe/Paris"
+    login = site_config.sunnyportal_login()
+    user = login["user"]
+    password = login["password"]
+    plant_id = login["plant_id"]
+    zone_name = login["timezone"]
     zone = ZoneInfo(zone_name)
     yesterday = (datetime.now(zone) - timedelta(days=1)).date()
     day_to = datetime.strptime(args.day_to, "%Y-%m-%d").date() if args.day_to else yesterday
@@ -291,7 +293,7 @@ def main() -> None:
 
         done = set()
         if not args.force:
-            done = {row[0] for row in conn.execute("SELECT day FROM ennexos_pull_day")}
+            done = {row[0] for row in conn.execute("SELECT day FROM sunnyportal_pull_day")}
         print(f"pull {day_from.isoformat()} -> {day_to.isoformat()}")
         day = day_from
         while day <= day_to:
@@ -302,7 +304,7 @@ def main() -> None:
                 fetch_stored(
                     conn, token_box, user, password, plant_id, zone_name, day, args.component
                 )
-            except EnnexosHttpError as exc:
+            except SunnyportalHttpError as exc:
                 raise SystemExit(str(exc)) from exc
             time.sleep(args.sleep)
             day += timedelta(days=1)

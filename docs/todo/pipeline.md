@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-26 (**P3** backfill locked in the phase file — stitch empty quarters, fall-out uses Fluvius; no code; **A11** / **A12** not kicked off; **A10** coding)
+**Last updated:** 2026-10-26 (**P3** backfill locked in the phase file — stitch empty quarters, fall-out uses Fluvius; no code; **A11** / **A12** not kicked off; **A10** coding; **P1** row wording is Sunny Portal and stays open)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -47,7 +47,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | 2 | open | M | **A5** | Multi-series power graph (PV + grid import + home usage); ref `docs/todo/HomeWizard-graph.jpg` | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 3 | coding | L | **A6** | Settings page implemented; operator smoke not done; `DB_BACKUP_ENCRYPTION_KEY` stays in `.env` | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 4 | open | S | **A7** | `top_records`: drop or change (assess at kickoff) | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 5 | open | L | **P1** | ennexOS one-time CSV history — kickoff, paid API out, not locked | [`phaseP-portals.md`](phaseP-portals.md) |
+| 5 | open | L | **P1** | Sunny Portal one-time history — kickoff, paid API out, not locked | [`phaseP-portals.md`](phaseP-portals.md) |
 | 6 | open | L | **P2** | SMA portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
 | 7 | open | M | **A8** | Live Solar & Consumption chart: scaled X-axis (no line across gaps), zoom to 1 week of 1-minute data, drop "(Last 2 Hours)" | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 8 | open | L | **A9** | Full DB download + restore on the A6 page (admin password); no wipe; `p1-sync` pulls `meter_history.db` to the PC | [`phaseA-analytics.md`](phaseA-analytics.md) |

@@ -48,6 +48,22 @@ function hp_env_map(): array
 }
 
 /**
+ * Sunny Portal .env names => app_settings key.
+ * SUNNYPORTAL_* wins. ENNEXOS_* is the previous name of the same four values.
+ *
+ * @return array<int, array{0: array<int, string>, 1: string}>
+ */
+function hp_sunnyportal_env(): array
+{
+    return [
+        [['SUNNYPORTAL_USER', 'ENNEXOS_USER'], 'sunnyportal_user'],
+        [['SUNNYPORTAL_PASSWORD', 'ENNEXOS_PASSWORD'], 'sunnyportal_password'],
+        [['SUNNYPORTAL_PLANT_ID', 'ENNEXOS_PLANT_ID'], 'sunnyportal_plant_id'],
+        [['SUNNYPORTAL_TIMEZONE', 'ENNEXOS_TIMEZONE'], 'sunnyportal_timezone'],
+    ];
+}
+
+/**
  * Display defaults. Stored rows override these.
  *
  * @return array<string, string>
@@ -64,6 +80,10 @@ function hp_setting_defaults(): array
         'site_title' => 'Energy Dashboard',
         'site_tagline' => 'Home Energy Hub',
         'site_page_title' => 'Energy Dashboard',
+        'sunnyportal_user' => '',
+        'sunnyportal_password' => '',
+        'sunnyportal_plant_id' => '',
+        'sunnyportal_timezone' => '',
         'max_inverter_ac_w' => '12000',
         'pac_night_start' => '22',
         'pac_night_end' => '5',
@@ -175,42 +195,92 @@ function hp_read_env(): array
 }
 
 /**
+ * Copy Sunny Portal keys when that settings row is still absent.
+ * SUNNYPORTAL_* wins over the previous ENNEXOS_* name. A saved row, including
+ * an empty one, is left alone. Does not copy DB_BACKUP_ENCRYPTION_KEY.
+ *
+ * @param array<string, string>|null $env
+ */
+function hp_import_sunnyportal_if_missing(PDO $pdo, ?array $env = null): bool
+{
+    hp_ensure_schema($pdo);
+    $source = $env === null ? hp_read_env() : $env;
+    $stored = hp_load_stored($pdo);
+    $pdo->exec('BEGIN IMMEDIATE');
+    try {
+        $inserted = false;
+        $stmt = $pdo->prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)');
+        foreach (hp_sunnyportal_env() as $pair) {
+            $envKeys = $pair[0];
+            $settingKey = $pair[1];
+            if (array_key_exists($settingKey, $stored)) {
+                continue;
+            }
+            $value = '';
+            foreach ($envKeys as $envKey) {
+                if (isset($source[$envKey]) && trim((string)$source[$envKey]) !== '') {
+                    $value = (string)$source[$envKey];
+                    break;
+                }
+            }
+            if ($value === '') {
+                continue;
+            }
+            $stmt->execute([$settingKey, $value]);
+            $inserted = true;
+        }
+        $pdo->exec('COMMIT');
+        return $inserted;
+    } catch (Exception $e) {
+        try {
+            $pdo->exec('ROLLBACK');
+        } catch (Exception $ignored) {
+        }
+        throw $e;
+    }
+}
+
+/**
  * Copy device and title keys once when app_settings is empty.
  * Does not rewrite .env. Does not copy DB_BACKUP_ENCRYPTION_KEY.
+ * Sunny Portal keys are filled afterwards when those rows are still absent.
  *
  * @param array<string, string>|null $env
  */
 function hp_import_env_if_empty(PDO $pdo, ?array $env = null): bool
 {
     hp_ensure_schema($pdo);
+    $source = $env === null ? hp_read_env() : $env;
     $pdo->exec('BEGIN IMMEDIATE');
     try {
         $count = (int)$pdo->query('SELECT COUNT(*) FROM app_settings')->fetchColumn();
         if ($count > 0) {
-            $pdo->commit();
-            return false;
-        }
-        $source = $env === null ? hp_read_env() : $env;
-        $inserted = false;
-        $stmt = $pdo->prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)');
-        foreach (hp_env_map() as $envKey => $settingKey) {
-            if (!array_key_exists($envKey, $source)) {
-                continue;
+            $pdo->exec('COMMIT');
+            $inserted = false;
+        } else {
+            $inserted = false;
+            $stmt = $pdo->prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)');
+            foreach (hp_env_map() as $envKey => $settingKey) {
+                if (!array_key_exists($envKey, $source)) {
+                    continue;
+                }
+                $stmt->execute([$settingKey, (string)$source[$envKey]]);
+                $inserted = true;
             }
-            $stmt->execute([$settingKey, (string)$source[$envKey]]);
-            $inserted = true;
+            if ($inserted) {
+                $stmt->execute(['env_imported', '1']);
+            }
+            $pdo->exec('COMMIT');
         }
-        if ($inserted) {
-            $stmt->execute(['env_imported', '1']);
-        }
-        $pdo->commit();
-        return $inserted;
     } catch (Exception $e) {
-        if ($pdo->inTransaction()) {
-            $pdo->rollBack();
+        try {
+            $pdo->exec('ROLLBACK');
+        } catch (Exception $ignored) {
         }
         throw $e;
     }
+    hp_import_sunnyportal_if_missing($pdo, $source);
+    return $inserted;
 }
 
 /**

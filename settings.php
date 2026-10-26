@@ -105,6 +105,7 @@ if ($posted !== null && isset($posted['monthly']) && is_array($posted['monthly']
 }
 $smaSet = isset($stored['sma_password']) && $stored['sma_password'] !== '';
 $webboxSet = isset($stored['sunnywebbox_password']) && $stored['sunnywebbox_password'] !== '';
+$portalSet = isset($stored['sunnyportal_password']) && $stored['sunnyportal_password'] !== '';
 $nameplate = hp_positive_float(isset($settings['max_inverter_ac_w']) ? (string)$settings['max_inverter_ac_w'] : '', 12000.0);
 $capW = $nameplate * 1.05;
 $monthNames = [
@@ -163,6 +164,11 @@ function hp_settings_from_post(array $stored): array
         $radRaw = '5';
     }
 
+    $portalZone = $text('sunnyportal_timezone');
+    if ($portalZone !== '' && !in_array($portalZone, timezone_identifiers_list(), true)) {
+        $errors[] = 'Sunny Portal timezone must be a timezone name such as Europe/Paris, or left empty.';
+    }
+
     $monthly = [];
     for ($month = 1; $month <= 12; $month++) {
         $rawKwh = $text('exp_kwh_' . $month);
@@ -176,6 +182,7 @@ function hp_settings_from_post(array $stored): array
 
     $smaExisting = isset($stored['sma_password']) ? $stored['sma_password'] : '';
     $wbExisting = isset($stored['sunnywebbox_password']) ? $stored['sunnywebbox_password'] : '';
+    $portalExisting = isset($stored['sunnyportal_password']) ? $stored['sunnyportal_password'] : '';
     $smaPassword = hp_resolve_password(
         $smaExisting,
         $raw('sma_password'),
@@ -188,6 +195,12 @@ function hp_settings_from_post(array $stored): array
         isset($_POST['sunnywebbox_password_touched']) && $_POST['sunnywebbox_password_touched'] === '1',
         $wbExisting !== ''
     );
+    $portalPassword = hp_resolve_password(
+        $portalExisting,
+        $raw('sunnyportal_password'),
+        isset($_POST['sunnyportal_password_touched']) && $_POST['sunnyportal_password_touched'] === '1',
+        $portalExisting !== ''
+    );
 
     $settings = [
         'p1_ip' => $p1,
@@ -196,6 +209,10 @@ function hp_settings_from_post(array $stored): array
         'sma_password' => $smaPassword,
         'sunnywebbox_ip' => $text('sunnywebbox_ip'),
         'sunnywebbox_password' => $wbPassword,
+        'sunnyportal_user' => $text('sunnyportal_user'),
+        'sunnyportal_password' => $portalPassword,
+        'sunnyportal_plant_id' => $text('sunnyportal_plant_id'),
+        'sunnyportal_timezone' => $portalZone,
         'site_title' => $text('site_title'),
         'site_tagline' => $text('site_tagline'),
         'site_page_title' => $text('site_page_title'),
@@ -317,6 +334,29 @@ function hp_field(array $settings, string $key): string
                     <?php endif; ?>
                 </div>
             </div>
+        </section>
+
+        <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
+            <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Sunny Portal</h2>
+            <p class="text-xs text-slate-500">Optional. The one-time pull reads these. An empty timezone uses Europe/Paris. The password is never shown.</p>
+            <label class="block text-sm font-semibold">Sunny Portal user
+                <input name="sunnyportal_user" value="<?= hp_h(hp_field($settings, 'sunnyportal_user')) ?>" autocomplete="off" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+            </label>
+            <div class="block text-sm font-semibold">Sunny Portal password
+                <div class="mt-1 flex gap-2">
+                    <input type="password" name="sunnyportal_password" id="sunnyportal_password" autocomplete="new-password" <?= $portalSet ? 'disabled' : '' ?> placeholder="<?= $portalSet ? '********' : '' ?>" class="flex-1 border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                    <input type="hidden" name="sunnyportal_password_touched" id="sunnyportal_password_touched" value="0">
+                    <?php if ($portalSet): ?>
+                        <button type="button" class="js-edit-pw px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold" data-target="sunnyportal_password">Edit</button>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <label class="block text-sm font-semibold">Sunny Portal plant id
+                <input name="sunnyportal_plant_id" value="<?= hp_h(hp_field($settings, 'sunnyportal_plant_id')) ?>" autocomplete="off" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+            </label>
+            <label class="block text-sm font-semibold">Sunny Portal timezone
+                <input name="sunnyportal_timezone" value="<?= hp_h(hp_field($settings, 'sunnyportal_timezone')) ?>" placeholder="Europe/Paris" autocomplete="off" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+            </label>
         </section>
 
         <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
