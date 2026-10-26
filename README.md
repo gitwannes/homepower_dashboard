@@ -41,8 +41,8 @@ Never put real LAN IPs or site nicknames in committed files.
 | `analytics.php` | Exploration: intraday, two-day compare, clear-sky envelope; **Generate table** for today |
 | `summary.php` | All years / week / month / year (`daily_history` / `monthly_history`) |
 | `topn.php` | Best/worst yield Top-N (days/months/years); click-through to period views |
-| `importer.py` / `import_dashboard.php` | WebBox archive ingest |
-| `rollup.py` / `sql_importer.py` | Warehouse: consolidate, `-daily`/`-today`, `-buildall`, gap-fill |
+| `importer.py` / `import_dashboard.php` | WebBox Mean XML and daily archives → staging tables |
+| `rollup.py` | Warehouse: `-consolidate`, nightly `-daily`, rare `-buildall` |
 | `powertests.py` / `powertests.php` | Live hardware probes |
 
 ## Docs

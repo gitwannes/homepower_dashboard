@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-25 (**A4 Done**; **A6** coding; **A8** and **A9** triaged; **P1** kickoff, not locked; **A5**, **A7**, **P2–P3** queued)
+**Last updated:** 2026-10-26 (**A10** coding, locked, not closed — warehouse rebuild; **A4 Done**; **A6** coding; **A5**, **A7–A9**, **P1–P3** queued)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -51,6 +51,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | 6 | open | L | **P3** | Fluvius Energy Portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
 | 7 | open | M | **A8** | Live Solar & Consumption chart: scaled X-axis (no line across gaps), zoom to 1 week of 1-minute data, drop "(Last 2 Hours)" | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 8 | open | L | **A9** | Full DB download + restore on the A6 page (admin password); no wipe; `p1-sync` pulls `meter_history.db` to the PC | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 9 | coding | M | **A10** | Warehouse rebuild — drop `-aggregate5min` and `-today`; `-buildall` refills `history_5min` then aggregates. Locked, not closed | [`phaseA-analytics.md`](phaseA-analytics.md) |
 
 ---
 

@@ -172,12 +172,42 @@ def init_analytical_db(conn: sqlite3.Connection) -> None:
         )
 
 
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    """True when sqlite_master has a table with this name."""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (name,),
+    ).fetchone()
+    return row is not None
+
+
+def _ensure_consolidate_columns(conn: sqlite3.Connection) -> None:
+    """Add columns consolidate reads. Same ALTER as importer.py on older logger schemas."""
+    if _table_exists(conn, 'inverter_history_5min'):
+        try:
+            conn.execute("ALTER TABLE inverter_history_5min ADD COLUMN pac_max_w REAL")
+        except sqlite3.OperationalError:
+            pass
+    if _table_exists(conn, 'sensorbox_history_5min'):
+        try:
+            conn.execute("ALTER TABLE sensorbox_history_5min ADD COLUMN wind_gust_ms REAL")
+        except sqlite3.OperationalError:
+            pass
+
+
 def consolidate_historical_webbox(conn: sqlite3.Connection, step: int = 1) -> None:
-    """Snaps and merges raw sensorbox and inverter tables into history_5min."""
+    """Snaps and merges raw sensorbox and inverter tables into history_5min.
+
+    A missing staging table is skipped. WebBox data lives only in those tables;
+    an absent table means that source was never created, not that rows were lost.
+    """
     start_time = time.time()
-    
+    _ensure_consolidate_columns(conn)
+    missing = []
+
     with conn:
-        conn.execute("""
+        if _table_exists(conn, 'inverter_history_5min'):
+            conn.execute("""
             INSERT INTO history_5min (
                 timestamp, solar_power_w, solar_power_max_w, solar_total_kwh, data_source
             )
@@ -196,8 +226,11 @@ def consolidate_historical_webbox(conn: sqlite3.Connection, step: int = 1) -> No
                 solar_total_kwh = COALESCE(excluded.solar_total_kwh, history_5min.solar_total_kwh),
                 data_source = CASE WHEN history_5min.data_source = 'live_p1' THEN 'merged' ELSE 'webbox_archive' END;
         """)
+        else:
+            missing.append('inverter_history_5min')
 
-        conn.execute("""
+        if _table_exists(conn, 'sensorbox_history_5min'):
+            conn.execute("""
             INSERT INTO history_5min (
                 timestamp, solar_radiation, solar_radiation_max, 
                 temp_module, temp_ambient, wind_speed, wind_gust, data_source
@@ -220,12 +253,15 @@ def consolidate_historical_webbox(conn: sqlite3.Connection, step: int = 1) -> No
                 wind_gust = COALESCE(excluded.wind_gust, history_5min.wind_gust),
                 data_source = CASE WHEN history_5min.data_source = 'live_p1' THEN 'merged' ELSE 'webbox_archive' END;
         """)
-        
+        else:
+            missing.append('sensorbox_history_5min')
+
     duration = time.time() - start_time
     count = conn.execute("SELECT COUNT(*) FROM history_5min").fetchone()[0]
+    missing_txt = f"; missing {', '.join(missing)}" if missing else ""
     _status_line(
         step,
-        f"history_5min: consolidate staging; table total {count:,} rows",
+        f"history_5min: consolidate staging; table total {count:,} rows{missing_txt}",
         duration,
     )
 
@@ -244,8 +280,12 @@ def build_daily_history(
       2) Else PAC integral: SUM(solar_power_w) * (5/60) / 1000.
     """
     where_clause = ""
-    if days_back:
-        where_clause = f"WHERE timestamp >= datetime('now', '-{days_back} days')"
+    if days_back is not None:
+        # Local calendar window. datetime('now') is UTC and drops the Brussels evening.
+        days = int(days_back)
+        if days < 1:
+            raise ValueError(f"days_back must be >= 1, got {days_back}")
+        where_clause = f"WHERE timestamp >= datetime('now', 'localtime', '-{days} days')"
 
     start_time = time.time()
     with conn:
@@ -585,21 +625,33 @@ def downsample_live_readings(
     conn: sqlite3.Connection,
     day_iso: Optional[str] = None,
     step: int = 1,
+    all_rows: bool = False,
 ) -> int:
     """Downsample 1-minute readings into history_5min.
 
-    day_iso: optional YYYY-MM-DD (local calendar day). None = last 2 local days.
+    day_iso: optional YYYY-MM-DD (local calendar day).
+    all_rows: every readings row. Mutually exclusive with day_iso.
+    Default (both unset): last 2 local days.
+
+    The open 5-minute slice (the bucket that contains local now) is always
+    excluded. Its average would stand in for a full five minutes.
 
     logger.py stores timestamps with datetime.now() (host local / CET).
     SQLite datetime('now') is UTC - always use datetime('now', 'localtime') for cutoffs.
     """
     where_params: Tuple[str, ...]
+    if day_iso is not None and all_rows:
+        raise ValueError("day_iso and all_rows are mutually exclusive")
     if day_iso is not None:
         if not re.match(r'^\d{4}-\d{2}-\d{2}$', day_iso):
             raise ValueError(f"Invalid day_iso: {day_iso}")
         where_sql = "timestamp LIKE ?"
         where_params = (day_iso + '%',)
         scope_label = day_iso
+    elif all_rows:
+        where_sql = "1 = 1"
+        where_params = ()
+        scope_label = "all readings"
     else:
         where_sql = "timestamp >= datetime('now', 'localtime', '-2 days')"
         where_params = ()
@@ -684,6 +736,7 @@ def _apply_saved_pac(conn: sqlite3.Connection) -> None:
 
 if __name__ == '__main__':
     conn = None
+    exit_code = 0
     try:
         args = [a.lower() for a in sys.argv]
         conn = sqlite3.connect(DB_FILE, timeout=30.0)
@@ -697,28 +750,44 @@ if __name__ == '__main__':
             consolidate_historical_webbox(conn, step=1)
 
         elif '-buildall' in args:
-            # Step 5: Full 17-Year Analytics Rebuild
-            print("=== FULL WAREHOUSE BUILD INITIATED ===")
-            build_daily_history(conn, step=1)
-            build_monthly_history(conn, step=2)
-            build_clear_sky_envelopes(conn, step=3)
-            build_top_records(conn, step=4)
-            build_top_periods(conn, step=5)
-            print("=== SUCCESS: Open analytics.php / topn.php in browser ===")
+            # Refuse before DELETE. A missing readings table would empty the chart
+            # and then have nothing to refill it from.
+            if not _table_exists(conn, 'readings'):
+                sys.stderr.write(
+                    "rollup.py -buildall: readings table is missing. Nothing was deleted.\n"
+                )
+                exit_code = 1
+            else:
+                # Full rebuild. history_5min is empty until this command finishes.
+                print("=== FULL WAREHOUSE BUILD INITIATED ===")
+                print("history_5min is cleared first. The day chart is empty until this command finishes.")
+                with conn:
+                    conn.execute('DELETE FROM history_5min;')
+                    conn.execute('DELETE FROM daily_history;')
+                    conn.execute('DELETE FROM monthly_history;')
+                downsample_live_readings(conn, all_rows=True, step=1)
+                consolidate_historical_webbox(conn, step=2)
+                build_daily_history(conn, step=3)
+                build_monthly_history(conn, step=4)
+                build_clear_sky_envelopes(conn, step=5)
+                build_top_records(conn, step=6)
+                build_top_periods(conn, step=7)
+                print("=== SUCCESS: Open analytics.php / topn.php in browser ===")
 
         elif '-daily' in args:
-            # Step 6: Routine automated midnight downsampler
+            # Nightly: last 2 local days of readings, last 3 local days of daily_history.
             downsample_live_readings(conn, step=1)
             build_daily_history(conn, days_back=3, step=2)
             build_monthly_history(conn, step=3)
             build_top_periods(conn, step=4)
 
         elif '-today' in args:
-            # On-demand: downsample today's readings only (same as analytics Generate table)
-            today = datetime.now().strftime('%Y-%m-%d')
-            downsample_live_readings(conn, day_iso=today, step=1)
-            build_daily_history(conn, days_back=1, step=2)
-            build_top_periods(conn, step=3)
+            sys.stderr.write(
+                "rollup.py -today was removed. "
+                "Generate table in analytics downsamples today into history_5min. "
+                "Nightly -daily refreshes daily_history and top_periods.\n"
+            )
+            exit_code = 2
 
         elif '-purge_derived' in args:
             # Dev utility: safely wipes all derived analytical tables for fresh testing
@@ -736,17 +805,17 @@ if __name__ == '__main__':
             print("P1 & Solar Data Warehouse Manager")
             print("Usage:")
             print("  python3 rollup.py -consolidate  (Snaps and merges raw staging into history_5min)")
-            print("  python3 rollup.py -buildall     (Populates all daily, monthly, envelope, top_records, top_periods)")
-            print("  python3 rollup.py -daily        (Automated nightly cron: downsamples live P1 readings)")
-            print("  python3 rollup.py -today        (On-demand: downsample today's readings into history_5min)")
+            print("  python3 rollup.py -buildall     (Rebuild history_5min from readings + staging, then all analytical tables)")
+            print("  python3 rollup.py -daily        (Nightly: last 2 local days of readings, last 3 local days of daily_history)")
             print("  python3 rollup.py -purge_derived (Dev tool: deletes all analytical data safely to restart tests)")
 
     except Exception as e:
         sys.stderr.write(f"Rollup execution error: {e}\n")
+        exit_code = 1
     finally:
         if conn:
             try:
                 conn.close()
             except Exception:
                 pass
-        sys.exit(0)
+        sys.exit(exit_code)
