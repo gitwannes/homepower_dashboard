@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-26 (**P3** kickoff locked, no code — Fluvius CSV, configured EANs only; **A11** / **A12** triaged, not kicked off; **A10** coding; **A4 Done**; **A6** coding)
+**Last updated:** 2026-10-26 (**P3** backfill locked in the phase file — stitch empty quarters, fall-out uses Fluvius; no code; **A11** / **A12** not kicked off; **A10** coding)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 

@@ -21,6 +21,8 @@ Never purged, and the only legal sources for a rebuild:
 
 `importer.py` writes staging only. `importer.py -aggregate5min` and `rollup.py -today` are removed. Do not insert a series into `history_5min` unless a never-purged copy remains.
 
-Fluvius 15-minute electricity, when placed in `history_5min` for the day graph, is one row at the quarter start (`:00`, `:15`, `:30`, `:45`). Leave the other two slots of that quarter absent. Do not copy the value into them. Gas hours do not go into `history_5min`.
+Fluvius 15-minute electricity is placed in `history_5min` only when all three 5-minute slots of that quarter are missing from P1. One row at the quarter start (`:00`, `:15`, `:30`, `:45`), grid import and grid injection only. Leave the other two slots absent. Do not copy the value into them. Do not write the quarter kWh into the lifetime counters. A WebBox row at that timestamp does not block the grid fields. Three missing slots that cross a quarter boundary stay a gap. Gas hours do not go into `history_5min`.
+
+A passing electricity day keeps the P1 counter delta as its kWh. Stitched quarters are curve points only and are not added to that delta. A day with no readings, or a day that falls out (no sample at or before 00:15, no sample at or after 23:45, or a counter step down over 0.01 kWh), uses the Fluvius quarters when that set is complete, otherwise the Fluvius day total and no invented curve. The spring DST gap (02:00–03:00) is not a hole.
 
 Day-graph rule for a 5-minute axis: up to 2 missing slots between known points is valid data and must be drawn (the 1-in-3 quarter pattern). More than 2 consecutive missing slots is no-info and must render as a gap, not as zero.
