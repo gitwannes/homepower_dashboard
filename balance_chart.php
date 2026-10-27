@@ -1,28 +1,31 @@
 <?php
 # --- file: balance_chart.php ---
 /**
- * Energy-balance chart helpers (A5).
- * Modes: balance (default) | classic. No vendor product names in UI strings.
+ * Energy-balance chart helpers (A5 / A5b).
+ * Modes: exchange (default) | balance | classic. No vendor product names in UI strings.
  */
 
 /**
- * Chart view from query. Default balance.
+ * Chart view from query. Default exchange.
  */
 function hp_chart_view(): string
 {
-    $raw = isset($_GET['view']) ? strtolower(trim((string)$_GET['view'])) : 'balance';
-    return $raw === 'classic' ? 'classic' : 'balance';
+    $raw = isset($_GET['view']) ? strtolower(trim((string)$_GET['view'])) : 'exchange';
+    if ($raw === 'classic' || $raw === 'balance' || $raw === 'exchange') {
+        return $raw;
+    }
+    return 'exchange';
 }
 
 /**
- * Append view=classic when needed (balance is default and may be omitted).
+ * Append view= when not the exchange default.
  *
  * @param array<string, scalar> $params
  */
 function hp_chart_view_query(array $params, string $view): string
 {
-    if ($view === 'classic') {
-        $params['view'] = 'classic';
+    if ($view === 'classic' || $view === 'balance') {
+        $params['view'] = $view;
     } else {
         unset($params['view']);
     }

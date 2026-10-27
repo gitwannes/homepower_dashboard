@@ -694,7 +694,15 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
             <div>
                 <h2 id="liveChartTitle" class="card-title !mb-0">
                     <i data-lucide="trending-up" class="w-4 h-4 text-slate-700"></i>
-                    <span id="liveChartTitleText"><?= $chartView === 'balance' ? 'Energy Balance' : ($hasSolar ? 'Solar & Consumption Profile' : 'Power History') ?></span>
+                    <span id="liveChartTitleText"><?php
+                        if ($chartView === 'exchange') {
+                            echo 'Grid exchange';
+                        } elseif ($chartView === 'classic') {
+                            echo $hasSolar ? 'Solar & Consumption Profile' : 'Power History';
+                        } else {
+                            echo 'Energy Balance';
+                        }
+                    ?></span>
                 </h2>
                 <p id="liveChartBlurb" class="text-xs text-slate-400 mt-0.5">
                     Last 2 hours. Open Analytics for longer windows, pan, and mixed 1-min / 5-min history.
@@ -702,10 +710,11 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
             </div>
             <div class="flex flex-wrap items-center gap-3">
                 <div class="metric-switch" role="group" aria-label="Chart view">
+                    <button type="button" id="view-exchange" class="<?= $chartView === 'exchange' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'exchange' ? 'true' : 'false' ?>" onclick="setLiveChartView('exchange')">Exchange</button>
                     <button type="button" id="view-balance" class="<?= $chartView === 'balance' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'balance' ? 'true' : 'false' ?>" onclick="setLiveChartView('balance')">Balance</button>
                     <button type="button" id="view-classic" class="<?= $chartView === 'classic' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'classic' ? 'true' : 'false' ?>" onclick="setLiveChartView('classic')">Classic</button>
                 </div>
-                <a href="analytics.php<?= $chartView === 'classic' ? '?view=classic' : '' ?>" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
+                <a href="analytics.php<?= htmlspecialchars(hp_chart_view_query([], $chartView), ENT_QUOTES, 'UTF-8') ?>" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                     <i data-lucide="line-chart" class="w-3.5 h-3.5 text-indigo-600"></i> Analytics
                 </a>
                 <div id="liveChartLegendClassic" class="flex items-center gap-3 text-xs <?= $chartView === 'classic' ? '' : 'is-hidden' ?>">
@@ -727,6 +736,10 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                     <span class="inline-flex items-center gap-1.5 text-slate-600 font-medium" title="Self-sufficient + Surplus (tooltip)">
                         <span class="w-2.5 h-2.5 rounded-full inline-block" style="background:linear-gradient(90deg,#3b82f6 50%,#10b981 50%)"></span> Production
                     </span>
+                </div>
+                <div id="liveChartLegendExchange" class="flex items-center gap-3 text-xs <?= $chartView === 'exchange' ? '' : 'is-hidden' ?>">
+                    <span class="inline-flex items-center gap-1.5 text-violet-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-violet-600"></span> Grid</span>
+                    <span class="inline-flex items-center gap-1.5 text-emerald-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Surplus</span>
                 </div>
             </div>
         </div>
@@ -1214,26 +1227,35 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
     };
 
     function classicChartConfig() {
+        // Area + gradient: line + opacity 0 stayed blank after Balance stacked area.
         if (hasSolar) {
             return {
                 series: [
-                    { name: 'Home Consumption', type: 'line', data: classicHome },
-                    { name: 'Solar Output', type: 'line', data: classicSolar }
+                    { name: 'Home Consumption', data: classicHome },
+                    { name: 'Solar Output', data: classicSolar }
                 ],
                 colors: ['#4f46e5', '#f59e0b'],
                 stroke: { curve: 'straight', width: 2 },
-                fill: { type: 'solid', opacity: 0 },
+                fill: {
+                    type: 'gradient',
+                    gradient: { shadeIntensity: 1, opacityFrom: 0.45, opacityTo: 0.05, stops: [0, 90, 100] }
+                },
                 annotations: {},
-                stacked: false
+                stacked: false,
+                chartType: 'area',
+                yMin: 0
             };
         }
         return {
             series: [
-                { name: 'Net Grid Power', type: 'line', data: classicGrid }
+                { name: 'Net Grid Power', data: classicGrid }
             ],
             colors: ['#2563eb'],
             stroke: { curve: 'straight', width: 2 },
-            fill: { type: 'solid', opacity: 0 },
+            fill: {
+                type: 'gradient',
+                gradient: { shadeIntensity: 1, opacityFrom: 0.45, opacityTo: 0.05, stops: [0, 90, 100] }
+            },
             annotations: {
                 yaxis: [{
                     y: 0,
@@ -1246,7 +1268,9 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                     }
                 }]
             },
-            stacked: false
+            stacked: false,
+            chartType: 'area',
+            yMin: undefined
         };
     }
 
@@ -1282,8 +1306,37 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
             fill: { type: 'solid', opacity: 0.75 },
             annotations: {},
             stacked: true,
+            chartType: 'area',
+            yMin: 0,
             tipBands: { self: self, grid: grid, surplus: surplus }
         };
+    }
+
+    /**
+     * Split signed net into Grid (>=0) and Surplus (<=0) for bipolar area fill.
+     * Gap nulls stay null on both series.
+     */
+    function splitSignedNet(points) {
+        const grid = [];
+        const surplus = [];
+        if (!Array.isArray(points)) {
+            return { grid: grid, surplus: surplus };
+        }
+        for (let i = 0; i < points.length; i++) {
+            const p = points[i];
+            if (!p || p.x === null || p.x === undefined) {
+                continue;
+            }
+            if (p.y === null || p.y === undefined || !Number.isFinite(Number(p.y))) {
+                grid.push({ x: p.x, y: null });
+                surplus.push({ x: p.x, y: null });
+                continue;
+            }
+            const y = Number(p.y);
+            grid.push({ x: p.x, y: y > 0 ? y : 0 });
+            surplus.push({ x: p.x, y: y < 0 ? y : 0 });
+        }
+        return { grid: grid, surplus: surplus };
     }
 
     function chartQueryTime(ms) {
@@ -1298,48 +1351,98 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         url.searchParams.delete('range');
         url.searchParams.delete('from');
         url.searchParams.delete('to');
-        if (liveChartView === 'classic') {
-            url.searchParams.set('view', 'classic');
+        if (liveChartView === 'classic' || liveChartView === 'balance') {
+            url.searchParams.set('view', liveChartView);
         } else {
             url.searchParams.delete('view');
         }
         window.history.replaceState({}, '', url.pathname + url.search);
     }
 
+    function exchangeChartConfig() {
+        const split = splitSignedNet(classicGrid);
+        return {
+            series: [
+                { name: 'Grid', data: split.grid },
+                { name: 'Surplus', data: split.surplus }
+            ],
+            colors: ['#7c3aed', '#10b981'],
+            stroke: { curve: 'smooth', width: 0 },
+            fill: { type: 'solid', opacity: 0.55 },
+            annotations: {
+                yaxis: [{ y: 0, borderColor: '#94a3b8', borderWidth: 1 }]
+            },
+            stacked: false,
+            chartType: 'area',
+            yMin: undefined,
+            autoScaleYaxis: true
+        };
+    }
+
+    function liveChartConfigForView() {
+        if (liveChartView === 'exchange') {
+            return exchangeChartConfig();
+        }
+        if (liveChartView === 'classic') {
+            return classicChartConfig();
+        }
+        return balanceChartConfig();
+    }
+
     function updateLiveViewChrome() {
         const balBtn = document.getElementById('view-balance');
         const clsBtn = document.getElementById('view-classic');
-        if (balBtn && clsBtn) {
+        const exBtn = document.getElementById('view-exchange');
+        if (balBtn && clsBtn && exBtn) {
             balBtn.classList.toggle('metric-on', liveChartView === 'balance');
             clsBtn.classList.toggle('metric-on', liveChartView === 'classic');
+            exBtn.classList.toggle('metric-on', liveChartView === 'exchange');
             balBtn.setAttribute('aria-pressed', liveChartView === 'balance' ? 'true' : 'false');
             clsBtn.setAttribute('aria-pressed', liveChartView === 'classic' ? 'true' : 'false');
+            exBtn.setAttribute('aria-pressed', liveChartView === 'exchange' ? 'true' : 'false');
         }
         const legB = document.getElementById('liveChartLegendBalance');
         const legC = document.getElementById('liveChartLegendClassic');
+        const legE = document.getElementById('liveChartLegendExchange');
         if (legB) legB.classList.toggle('is-hidden', liveChartView !== 'balance');
         if (legC) legC.classList.toggle('is-hidden', liveChartView !== 'classic');
+        if (legE) legE.classList.toggle('is-hidden', liveChartView !== 'exchange');
         const title = document.getElementById('liveChartTitleText');
         const blurb = document.getElementById('liveChartBlurb');
         if (title) {
-            title.textContent = liveChartView === 'balance'
-                ? 'Energy Balance'
-                : (hasSolar ? 'Solar & Consumption Profile' : 'Power History');
+            if (liveChartView === 'exchange') {
+                title.textContent = 'Grid exchange';
+            } else if (liveChartView === 'classic') {
+                title.textContent = hasSolar ? 'Solar & Consumption Profile' : 'Power History';
+            } else {
+                title.textContent = 'Energy Balance';
+            }
         }
         if (blurb) {
-            blurb.textContent = 'Last 2 hours. Open Analytics for longer windows, pan, and mixed 1-min / 5-min history.';
+            blurb.textContent = liveChartView === 'exchange'
+                ? 'Last 2 hours. Above 0 = from grid, below 0 = surplus to grid.'
+                : 'Last 2 hours. Open Analytics for longer windows, pan, and mixed 1-min / 5-min history.';
         }
     }
 
     let historyChart = null;
 
     function renderLiveHistoryChart() {
-        const cfg = liveChartView === 'balance' ? balanceChartConfig() : classicChartConfig();
+        const cfg = liveChartConfigForView();
         const tipBands = cfg.tipBands || null;
+        const yaxisOpt = {
+            labels: {
+                formatter: (val) => (val === null || val === undefined || !Number.isFinite(Number(val))) ? '' : `${Number(val).toFixed(0)} W`,
+                style: { fontSize: '10px', colors: '#94a3b8' }
+            }
+        };
+        if (cfg.yMin !== undefined) {
+            yaxisOpt.min = cfg.yMin;
+        }
         const options = {
             series: cfg.series,
             chart: {
-                type: liveChartView === 'balance' ? 'area' : 'line',
+                type: cfg.chartType || 'area',
                 height: 280,
                 stacked: !!cfg.stacked,
                 animations: { enabled: false },
@@ -1348,7 +1451,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                     show: true,
                     tools: { download: false, selection: true, zoom: true, zoomin: false, zoomout: false, pan: false, reset: true }
                 },
-                zoom: { enabled: true, type: 'x', autoScaleYaxis: false },
+                zoom: { enabled: true, type: 'x', autoScaleYaxis: !!cfg.autoScaleYaxis },
                 events: {
                     beforeZoom: function (_ctx, range) {
                         if (!range || !range.xaxis) {
@@ -1385,13 +1488,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                 },
                 tickAmount: 8
             },
-            yaxis: {
-                min: 0,
-                labels: {
-                    formatter: (val) => (val === null || val === undefined || !Number.isFinite(Number(val))) ? '' : `${Number(val).toFixed(0)} W`,
-                    style: { fontSize: '10px', colors: '#94a3b8' }
-                }
-            },
+            yaxis: yaxisOpt,
             grid: { borderColor: '#f1f5f9', padding: { left: 8, right: 12, bottom: 8 } },
             tooltip: tipBands ? {
                 shared: true,
@@ -1448,7 +1545,10 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
     }
 
     function setLiveChartView(view) {
-        const next = view === 'classic' ? 'classic' : 'balance';
+        let next = 'exchange';
+        if (view === 'classic') next = 'classic';
+        else if (view === 'balance') next = 'balance';
+        else if (view === 'exchange') next = 'exchange';
         if (next === liveChartView) {
             return;
         }

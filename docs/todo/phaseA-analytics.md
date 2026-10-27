@@ -1,9 +1,9 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4**, **A5**, **A6**, **A7**, **A8**, **A9**, **A10**, and **A13 Done**; **A5b** coding on `main`; A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-27 (**A7** closed)  
-**Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py` · `settings.php`
+**Status:** **A4**, **A5**, **A5b**, **A6**, **A7**, **A8**, **A9**, **A10**, and **A13 Done**; A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-27 (**A5b** closed)  
+**Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py` · `settings.php` · `explorer_chart.php` · `balance_chart.php`
 
 ---
 
@@ -13,7 +13,7 @@
 |---|---|---|
 | **A4** | Done | Top-N tables (days / months / years) + graphs |
 | **A5** | Done | Balance/Classic multi-series power (both pages). Product: [`docs/architecture.md`](../architecture.md) |
-| **A5b** | coding | Balance explorer; index 2h pulse; mixed 1/5-min; CSV→Settings; drop telemetry table |
+| **A5b** | Done | Explorer + index pulse + Exchange default. Product: [`docs/architecture.md`](../architecture.md) |
 | **A6** | Done | Settings page (`settings.php`). Product: [`docs/architecture.md`](../architecture.md) |
 | **A7** | Done | `top_records` on `topn.php`. Product: [`docs/architecture.md`](../architecture.md) |
 | **A8** | Done | Live chart clock window. Product: [`docs/architecture.md`](../architecture.md) |
@@ -23,7 +23,7 @@
 | **A12** | open | Historical monthly Fluvius peak on a page. Not P3. Not kicked off |
 | **A13** | Done | Grid import/export on summary and top-n. Product: [`docs/architecture.md`](../architecture.md) |
 
-**Parallel:** **A5b** is independent of **P1–P2**. **A11** and **A12** read Fluvius rows **P3** stored. They are not kicked off. Wind for A11 is already in the warehouse.
+**Parallel:** **A11** and **A12** read Fluvius rows **P3** stored. They are not kicked off. Wind for A11 is already in the warehouse.
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
@@ -217,52 +217,36 @@ Balance vs Classic on `index.php` and `analytics.php` (default Balance). Three p
 
 ## A5b — Balance explorer (window, pan, mixed resolution)
 
-**Status:** coding (branch `feature/a5b-balance-explorer`)  
-**Depends on:** **A5** Done  
-**Scope:** Analytics owns Balance exploration (clock window + pan). Index keeps a short live pulse with link to analytics. Mixed 1-min / 5-min by 5-minute bucket. Warehouse tables unchanged (`readings` + `history_5min` stay).
+**Status:** **Done** 2026-10-27  
+**Product:** [`docs/architecture.md`](../architecture.md) (UI map: index / analytics / Settings CSV) · `explorer_chart.php` · `balance_chart.php` · `live_chart.php`  
+**Depends on:** **A5** Done
 
-### Locks (operator 2026-10-27)
+### Done summary
+
+Analytics owns the power explorer: presets 15 m–7 d (default **6 h** ending now), **Reset view**, pan by one window step, deep links (`range`, `from`/`to`, `view`). Index is a fixed **2 h** live pulse with Analytics link. Modes on both pages: **Exchange** (default, bipolar signed net), **Balance** (smooth stacked bands), **Classic** (straight area). Mixed resolution rule **V**: per 5-minute bucket, if at least two 1-min samples fall in **bucket ∩ window**, emit those; else `history_5min` (Fluvius W derive unchanged). No interpolate across a 1-min/5-min change; tooltip shows source. Telemetry table removed from index; **Download 1-min CSV** on Settings beside backup. Analytics **Generate today table** removed (nightly `-daily` owns today downsample).
+
+### DoD
+
+- [x] Index 2 h pulse + Analytics link; no telemetry table
+- [x] Analytics window presets, pan, Reset view, deep links
+- [x] Mixed 1-min / 5-min rule V on explorer
+- [x] Exchange / Balance / Classic on both pages; Exchange default
+- [x] Settings 1-min CSV download
+- [x] Product docs (`architecture.md`, README, roadmap)
+- [x] Operator close
+
+### Locks (operator 2026-10-27) — shipped
 
 | # | Lock |
 |---|---|
-| 1 | **Index:** 2 h live pulse (Balance default). Link to analytics uses the same control pattern as the top-nav Analytics button. |
-| 2 | **Analytics Balance:** presets 15 m, 1 h, 2 h, 6 h, 24 h, 7 d; default **6 h** (ending now). Date/time anchor. **Reset view** returns to that default. Split-dot legend for Consumption / Production (plus the three bands). |
-| 3 | **Pan:** ← / → moves the current window by **one full step** (window length). |
-| 4 | **Mixed resolution (per 5-minute bucket):** if at least **two** 1-minute `readings` exist in that bucket under rule 4a, use 1-min points for that bucket; otherwise use the `history_5min` row for that bucket (Fluvius derive rules from A5 still apply on 5-min). Chart **may mix** densities in one view. |
-| 4a | **V — visible only:** count and emit only 1-min samples in **bucket ∩ chart window**. |
-| 5 | **Analytics Classic:** same window presets, pan ←/→, deep links as Balance (not calendar-day-only). Classic series stay solar / home+solar style from A5, resolution mix same as Balance. |
-| 6 | **Deep link:** `range` and `from`/`to` parity with live (plus `view=balance|classic`). |
-| 7 | **Index cleanup:** remove Detailed Telemetry Log table. Move **Download CSV** to Settings, beside DB backup, with operator info: download all 1-min samples as CSV. |
-| 8 | **Not in scope:** dropping `history_5min` or `readings`; changing overlay/envelope. |
-
-### Assess — is per-bucket mix a good idea?
-
-**Yes, with native points and resolution-aware gaps** — not as one blended average series.
-
-| | |
-|---|---|
-| **Good** | Uses detail where the logger actually sampled; falls back per bucket when thin; matches how 5-min is produced (up to five 1-min samples). |
-| **Risk** | Mid-chart density change (jagged 1-min next to stepped 5-min). Blind linear bridging across a 1-min cluster and a Fluvius 5-min point invents fake slopes. |
-| **Rule to implement** | Emit **native** samples: qualifying 1-min rows, else the single 5-min point. Gap rules: 1-min regions keep the 3-minute break; 5-min-only stretches keep ≤2 missing 5-min slots. **Do not** interpolate across a resolution change. Tooltip should show source (`1 min` / `5 min`) when mixed. |
-
-### Q1 elaborate — count/emit: **V** vs **F**
-
-For each aligned 5-minute bucket that intersects the chart window:
-
-| | **V — visible only** (matches “visible” in your wording) | **F — full bucket in DB** |
-|---|---|---|
-| **Count ≥2 using** | 1-min rows with timestamp in **bucket ∩ window** | All 1-min rows stored in that bucket (even if outside the window) |
-| **If qualified, plot** | Those same in-window 1-min points | In-window 1-min points only (still clip; do not draw outside the axis) |
-| **If not qualified** | `history_5min` for that bucket if its stamp is in the window | Same |
-| **Window edge example** | Window starts 14:03; bucket 14:00–14:05 has DB samples at 14:00,14:01,14:02,14:03,14:04. **Visible** = 14:03,14:04 → count 2 → 1-min. If only 14:03 in window → count 1 → **5-min** fallback even though the bucket is rich in the DB. | Same bucket always count 5 → 1-min; plot only 14:03–14:04 in view. |
-| **Pros** | Honest to what the user sees; no “secret” samples deciding the mode. | Stable mode for a bucket when panning by less than 5 minutes; less flicker at edges. |
-| **Cons** | Panning by 1 minute can flip a bucket 1-min ↔ 5-min at the cut. | A bucket can “qualify” as 1-min while only one point is drawn in the window (odd). Slightly disagrees with “visible”. |
-
-**Recommendation:** **V**. Your phrase was “2 minute-readings … are visible.” Edge flicker is acceptable; tooltip source makes flips understandable.
-
-### Still open
-
-None for kickoff.
+| 1 | **Index:** 2 h live pulse (**Exchange** default; Balance / Classic via switch). Analytics link matches top-nav pattern. |
+| 2 | **Analytics:** presets 15 m–7 d; default **6 h** ending now; **Reset view**; Balance split-dot legend. |
+| 3 | **Pan:** one full window step. |
+| 4 / 4a | Mixed resolution per bucket; **V — visible only**. |
+| 5 | Classic and Exchange share windows / pan / deep links. |
+| 6 | Deep link `range`, `from`/`to`; `view=balance|classic` (Exchange default omits `view`). |
+| 7 | Telemetry table off index; 1-min CSV on Settings beside backup. |
+| 8 | Not in scope: dropping `history_5min` / `readings`; overlay/envelope changes. |
 
 ### Verbatim — 2026-10-27
 

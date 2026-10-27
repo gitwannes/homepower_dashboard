@@ -547,16 +547,31 @@ $defaultCompare2 = $yesterday;
                 <div>
                     <h2 id="dayChartHeading" class="text-lg font-bold text-slate-900 flex items-center gap-2">
                         <i data-lucide="activity" class="w-5 h-5 text-amber-500"></i>
-                        <span id="dayChartTitleText"><?= $chartView === 'balance' ? 'Energy Balance' : 'Power History' ?></span>
+                        <span id="dayChartTitleText"><?php
+                            if ($chartView === 'exchange') {
+                                echo 'Grid exchange';
+                            } elseif ($chartView === 'classic') {
+                                echo 'Power History';
+                            } else {
+                                echo 'Energy Balance';
+                            }
+                        ?></span>
                     </h2>
                     <p id="dayChartBlurb" class="text-xs text-slate-400">
-                        <?= $chartView === 'balance'
-                            ? 'Mixed 1-min / 5-min. Bands: self-sufficient / grid / surplus. Production and consumption in the tooltip.'
-                            : 'Mixed 1-min / 5-min solar / home profile for the selected window.' ?>
+                        <?php
+                        if ($chartView === 'exchange') {
+                            echo 'Mixed 1-min / 5-min signed net. Above 0 = from grid, below 0 = surplus to grid.';
+                        } elseif ($chartView === 'classic') {
+                            echo 'Mixed 1-min / 5-min solar / home profile for the selected window.';
+                        } else {
+                            echo 'Mixed 1-min / 5-min. Bands: self-sufficient / grid / surplus. Production and consumption in the tooltip.';
+                        }
+                        ?>
                     </p>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
                     <div class="metric-switch" role="group" aria-label="Chart view">
+                        <button type="button" id="day-view-exchange" class="<?= $chartView === 'exchange' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'exchange' ? 'true' : 'false' ?>" onclick="setDayChartView('exchange')">Exchange</button>
                         <button type="button" id="day-view-balance" class="<?= $chartView === 'balance' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'balance' ? 'true' : 'false' ?>" onclick="setDayChartView('balance')">Balance</button>
                         <button type="button" id="day-view-classic" class="<?= $chartView === 'classic' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'classic' ? 'true' : 'false' ?>" onclick="setDayChartView('classic')">Classic</button>
                     </div>
@@ -589,6 +604,10 @@ $defaultCompare2 = $yesterday;
                 <span class="inline-flex items-center gap-1.5 text-slate-600 font-medium" title="Self-sufficient + Surplus (tooltip)">
                     <span class="w-2.5 h-2.5 rounded-full inline-block" style="background:linear-gradient(90deg,#3b82f6 50%,#10b981 50%)"></span> Production
                 </span>
+            </div>
+            <div id="explorerExchangeLegend" class="flex flex-wrap items-center gap-3 text-xs <?= $chartView === 'exchange' ? '' : 'is-hidden' ?>">
+                <span class="inline-flex items-center gap-1.5 text-violet-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-violet-600"></span> Grid</span>
+                <span class="inline-flex items-center gap-1.5 text-emerald-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Surplus</span>
             </div>
         </div>
         <div id="chart-intraday" class="w-full h-[400px]"></div>
@@ -819,8 +838,8 @@ $defaultCompare2 = $yesterday;
     function syncExplorerUrl() {
         const url = new URL(window.location.href);
         url.searchParams.delete('date');
-        if (dayChartView === 'classic') {
-            url.searchParams.set('view', 'classic');
+        if (dayChartView === 'classic' || dayChartView === 'balance') {
+            url.searchParams.set('view', dayChartView);
         } else {
             url.searchParams.delete('view');
         }
@@ -857,30 +876,42 @@ $defaultCompare2 = $yesterday;
     function updateDayViewChrome() {
         const balBtn = document.getElementById('day-view-balance');
         const clsBtn = document.getElementById('day-view-classic');
-        if (balBtn && clsBtn) {
+        const exBtn = document.getElementById('day-view-exchange');
+        if (balBtn && clsBtn && exBtn) {
             balBtn.classList.toggle('metric-on', dayChartView === 'balance');
             clsBtn.classList.toggle('metric-on', dayChartView === 'classic');
+            exBtn.classList.toggle('metric-on', dayChartView === 'exchange');
             balBtn.setAttribute('aria-pressed', dayChartView === 'balance' ? 'true' : 'false');
             clsBtn.setAttribute('aria-pressed', dayChartView === 'classic' ? 'true' : 'false');
+            exBtn.setAttribute('aria-pressed', dayChartView === 'exchange' ? 'true' : 'false');
         }
         const title = document.getElementById('dayChartTitleText');
         const blurb = document.getElementById('dayChartBlurb');
         if (title) {
-            title.textContent = dayChartView === 'balance' ? 'Energy Balance' : 'Power History';
+            if (dayChartView === 'exchange') title.textContent = 'Grid exchange';
+            else if (dayChartView === 'classic') title.textContent = 'Power History';
+            else title.textContent = 'Energy Balance';
         }
         if (blurb) {
-            blurb.textContent = dayChartView === 'balance'
-                ? 'Mixed 1-min / 5-min. Bands: self-sufficient / grid / surplus. Production and consumption in the tooltip.'
-                : 'Mixed 1-min / 5-min solar / home profile for the selected window.';
+            if (dayChartView === 'exchange') {
+                blurb.textContent = 'Mixed 1-min / 5-min signed net. Above 0 = from grid, below 0 = surplus to grid.';
+            } else if (dayChartView === 'classic') {
+                blurb.textContent = 'Mixed 1-min / 5-min solar / home profile for the selected window.';
+            } else {
+                blurb.textContent = 'Mixed 1-min / 5-min. Bands: self-sufficient / grid / surplus. Production and consumption in the tooltip.';
+            }
         }
         const balLeg = document.getElementById('explorerBalanceLegend');
-        if (balLeg) {
-            balLeg.classList.toggle('is-hidden', dayChartView !== 'balance');
-        }
+        const exLeg = document.getElementById('explorerExchangeLegend');
+        if (balLeg) balLeg.classList.toggle('is-hidden', dayChartView !== 'balance');
+        if (exLeg) exLeg.classList.toggle('is-hidden', dayChartView !== 'exchange');
     }
 
     function setDayChartView(view) {
-        const next = view === 'classic' ? 'classic' : 'balance';
+        let next = 'exchange';
+        if (view === 'classic') next = 'classic';
+        else if (view === 'balance') next = 'balance';
+        else if (view === 'exchange') next = 'exchange';
         if (next === dayChartView) {
             return;
         }
@@ -888,6 +919,28 @@ $defaultCompare2 = $yesterday;
         updateDayViewChrome();
         syncExplorerUrl();
         renderExplorerChart();
+    }
+
+    /** Split signed net into Grid (>=0) and Surplus (<=0). Gap nulls stay null. */
+    function splitSignedNet(points) {
+        const grid = [];
+        const surplus = [];
+        if (!Array.isArray(points)) {
+            return { grid: grid, surplus: surplus };
+        }
+        for (let i = 0; i < points.length; i++) {
+            const p = points[i];
+            if (!p || p.x === null || p.x === undefined) continue;
+            if (p.y === null || p.y === undefined || !Number.isFinite(Number(p.y))) {
+                grid.push({ x: p.x, y: null });
+                surplus.push({ x: p.x, y: null });
+                continue;
+            }
+            const y = Number(p.y);
+            grid.push({ x: p.x, y: y > 0 ? y : 0 });
+            surplus.push({ x: p.x, y: y < 0 ? y : 0 });
+        }
+        return { grid: grid, surplus: surplus };
     }
 
     function setExplorerPreset(rangeId) {
@@ -958,7 +1011,6 @@ $defaultCompare2 = $yesterday;
             }
         };
         const yaxisCommon = {
-            min: 0,
             labels: {
                 formatter: function (val) {
                     if (val === null || val === undefined || !Number.isFinite(Number(val))) return '';
@@ -967,6 +1019,7 @@ $defaultCompare2 = $yesterday;
                 style: { fontSize: '10px', colors: '#94a3b8' }
             }
         };
+        const yaxisNonNeg = Object.assign({ min: 0 }, yaxisCommon);
         const gridPad = { borderColor: '#f1f5f9', strokeDashArray: 4, padding: { left: 10, right: 16, bottom: 12 } };
 
         /** Apex stacked areas go blank on null y - coerce to 0. */
@@ -984,7 +1037,48 @@ $defaultCompare2 = $yesterday;
             return out;
         }
 
-        if (dayChartView === 'balance') {
+        if (dayChartView === 'exchange') {
+            const split = splitSignedNet(classic.grid || []);
+            options = {
+                series: [
+                    { name: 'Grid', data: split.grid },
+                    { name: 'Surplus', data: split.surplus }
+                ],
+                chart: {
+                    type: 'area',
+                    height: 420,
+                    stacked: false,
+                    animations: { enabled: false },
+                    toolbar: { show: true },
+                    zoom: { enabled: true },
+                    parentHeightOffset: 12
+                },
+                colors: ['#7c3aed', '#10b981'],
+                dataLabels: { enabled: false },
+                stroke: { curve: 'smooth', width: 0 },
+                fill: { type: 'solid', opacity: 0.55 },
+                xaxis: xaxisCommon,
+                yaxis: yaxisCommon,
+                annotations: {
+                    yaxis: [{ y: 0, borderColor: '#94a3b8', borderWidth: 1 }]
+                },
+                grid: gridPad,
+                legend: { show: false },
+                tooltip: {
+                    shared: true,
+                    intersect: false,
+                    x: { format: 'HH:mm' },
+                    y: {
+                        formatter: function (val) {
+                            if (val === null || val === undefined) return '';
+                            const n = Number(val);
+                            if (!Number.isFinite(n) || n === 0) return '0 W';
+                            return Math.round(n) + ' W';
+                        }
+                    }
+                }
+            };
+        } else if (dayChartView === 'balance') {
             const tip = data.tip_bands || {};
             const src = data.sources || [];
             const selfPts = stackSafeXy(bal.self_sufficient);
@@ -1016,7 +1110,7 @@ $defaultCompare2 = $yesterday;
                 stroke: { curve: 'smooth', width: 0 },
                 fill: { type: 'solid', opacity: 0.75 },
                 xaxis: xaxisCommon,
-                yaxis: yaxisCommon,
+                yaxis: yaxisNonNeg,
                 grid: gridPad,
                 legend: { show: false },
                 tooltip: {
@@ -1071,7 +1165,7 @@ $defaultCompare2 = $yesterday;
                 dataLabels: { enabled: false },
                 stroke: { curve: 'straight', width: 2 },
                 xaxis: xaxisCommon,
-                yaxis: yaxisCommon,
+                yaxis: yaxisNonNeg,
                 grid: gridPad,
                 legend: { show: true, position: 'top' },
                 tooltip: {
@@ -1103,8 +1197,8 @@ $defaultCompare2 = $yesterday;
         params.set('ajax', 'explorer');
         params.set('from', chartQueryTime(explorerStart));
         params.set('to', chartQueryTime(explorerEnd));
-        if (dayChartView === 'classic') {
-            params.set('view', 'classic');
+        if (dayChartView === 'classic' || dayChartView === 'balance') {
+            params.set('view', dayChartView);
         }
         try {
             const res = await fetch('analytics.php?' + params.toString());

@@ -36,9 +36,9 @@ Never put real LAN IPs or site nicknames in committed files.
 | File | Role |
 |---|---|
 | `logger.py` | 1-minute poll / hot DB writer |
-| `index.php` | Live dashboard. Power chart is a clock window (default last 2 hours, presets through 7 days) |
-| `settings.php` | Admin password, site configuration, encrypted database download and restore |
-| `analytics.php` | Exploration: Balance/Classic window explorer, two-day compare, clear-sky envelope |
+| `index.php` | Live dashboard. 2-hour pulse; Exchange / Balance / Classic (Exchange default) |
+| `settings.php` | Admin password, site configuration, encrypted DB backup/restore, 1-min CSV download |
+| `analytics.php` | Explorer (window+pan, mixed 1/5-min, Exchange default), two-day compare, clear-sky envelope |
 | `summary.php` | All years / week / month / year. Solar yield (default) or grid import, export, and net |
 | `topn.php` | Best/worst solar yield, or highest net import / net export. Click-through to the period view |
 | `importer.py` / `import_dashboard.php` | WebBox Mean XML and daily archives → staging tables |
