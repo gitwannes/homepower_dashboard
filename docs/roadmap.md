@@ -45,7 +45,7 @@ sqlite3 meter_history.db "VACUUM; PRAGMA optimize;"
 ```
 
 **Step 5: Run the Rollup Engine (`rollup.py`)**
-`-buildall` deletes `history_5min`, `daily_history`, and `monthly_history`, refills `history_5min` from all `readings` (open 5-minute slice skipped), from WebBox staging, and from `fluvius_interval` electricity quarters, then builds `daily_history`, `monthly_history`, `clear_sky_envelopes`, `top_records`, and `top_periods`. Rare. The day chart is empty until the command finishes. Run `fluvius_import.py` first when new Fluvius CSVs are in `import_queue/fluvius/`.
+`-buildall` deletes `history_5min`, `daily_history`, and `monthly_history`, refills `history_5min` from all `readings` (open 5-minute slice skipped), from WebBox staging, and from `fluvius_interval` electricity quarters, then builds `daily_history`, `monthly_history`, `clear_sky_envelopes`, `top_records`, and `top_periods`. Rare. The day chart is empty until the command finishes. Run `fluvius_import.py` first when new Fluvius CSVs are in `import_queue/fluvius/`. `-buildalltoprecords` rewrites `top_records` only. `-daily` also beat-updates `top_records` for the recent calendar span.
 ```bash
 python3 rollup.py -buildall
 ```
@@ -84,7 +84,7 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 - [x] Hall of Fame / Top 10:
       - Old live Top 10 removed in A3. **A4 Done:** `topn.php` + `top_periods` (best/worst days 20, months/years 10); rebuilt by `-buildall`/`-daily`. Worst days skip zero yield and today.
       - **A13 Done:** the same page ranks highest net import and highest net export from `daily_history` / `monthly_history` (20 days, 10 months, 10 years). Both day lists omit today. No second ranking table.
-      - Legacy `top_records` singles still built; fate = **A7**.
+      - **A7 (coding):** all-time singles on `topn.php` (`top_records`); `-daily` beat + `-buildalltoprecords`.
 - [x] Settings (`settings.php`): admin password on first open; devices, titles, monthly expected kWh, spike cap, and night gates in `meter_history.db`. Encrypted full-database download and restore (`db_backup.py`). See [`architecture.md`](architecture.md).
 - [x] Verify analytics / summary with populated rollups (A2/A3 + operator smoke).
 

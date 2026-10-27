@@ -17,7 +17,7 @@ Never purged, and the only legal sources for a rebuild:
 
 `rollup.py -buildall` deletes `history_5min`, `daily_history`, and `monthly_history` (no `VACUUM`), then reconstructs `history_5min` from all `readings` rows except the open 5-minute slice, then from staging (`data_source` `webbox_archive`), then stitches Fluvius electricity quarters from `fluvius_interval`, then rebuilds daily, monthly, envelopes, `top_records`, and `top_periods`. It does not rescan `import_queue/processed/` or `import_queue/fluvius/processed/`. The day chart is empty until that command finishes. The command is rare.
 
-`rollup.py -daily` downsamples only the last 2 local days of `readings`, stitches Fluvius quarters for those calendar days, refreshes the last 3 local days of `daily_history`, then rewrites `monthly_history` and `top_periods`. That is not a rebuild.
+`rollup.py -daily` downsamples only the last 2 local days of `readings`, stitches Fluvius quarters for those calendar days, refreshes the last 3 local days of `daily_history`, then rewrites `monthly_history` and `top_periods`, and beat-updates `top_records` when a day in that stitch span is a stricter extreme. That is not a rebuild. `rollup.py -buildalltoprecords` rewrites `top_records` only.
 
 `importer.py` writes staging only. `importer.py -aggregate5min` and `rollup.py -today` are removed. Do not insert a series into `history_5min` unless a never-purged copy remains.
 

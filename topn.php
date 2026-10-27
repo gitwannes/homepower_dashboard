@@ -1,12 +1,14 @@
 <?php
 # --- file: topn.php ---
 /**
- * Top-N rankings.
+ * Top-N rankings + all-time records (A7).
  * Solar (default): best/worst yield from top_periods. Click -> analytics day or summary month/year.
  * Grid (metric=grid): highest net import and highest net export from daily_history / monthly_history.
  * Net import is import minus export. Net export is export minus import.
  * The local day still in progress is left out of both day ranks.
  * A grid day click opens that month on summary, because the analytics day chart stays solar.
+ * All-time singles from top_records sit above the charts; each dated row links to analytics that day.
+ * Sensorbox / self-consumption rows are omitted when absent from the table.
  */
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
@@ -22,6 +24,58 @@ function topn_metric(): string
 {
     $metric = isset($_GET['metric']) ? (string)$_GET['metric'] : 'solar';
     return $metric === 'grid' ? 'grid' : 'solar';
+}
+
+/**
+ * Display order for all-time singles (A7). Rows missing from the DB are skipped in the UI.
+ *
+ * @return list<string>
+ */
+function topn_record_order(): array
+{
+    return [
+        'best_day_kwh',
+        'peak_surge_w',
+        'max_sun_hours',
+        'best_self_consumption_kwh',
+        'max_wind_ms',
+        'max_temp_c',
+        'min_temp_c',
+        'max_module_temp_c',
+    ];
+}
+
+/**
+ * @return list<array{record_id: string, record_value: float, record_date: string, description: string}>
+ */
+function topn_records(PDO $pdo): array
+{
+    $byId = [];
+    try {
+        $stmt = $pdo->query(
+            'SELECT record_id, record_value, record_date, description FROM top_records'
+        );
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            if ($row['record_id'] === null || $row['record_value'] === null || $row['record_date'] === null) {
+                continue;
+            }
+            $byId[(string)$row['record_id']] = [
+                'record_id' => (string)$row['record_id'],
+                'record_value' => (float)$row['record_value'],
+                'record_date' => (string)$row['record_date'],
+                'description' => (string)($row['description'] ?? ''),
+            ];
+        }
+    } catch (Exception $e) {
+        throw $e;
+    }
+    $out = [];
+    foreach (topn_record_order() as $id) {
+        if (isset($byId[$id])) {
+            $out[] = $byId[$id];
+        }
+    }
+    return $out;
 }
 
 /**
@@ -152,6 +206,20 @@ if (isset($_GET['ajax'])) {
         $pdo = new PDO('sqlite:' . $dbFile);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $action = $_GET['ajax'];
+
+        if ($action === 'records') {
+            try {
+                $records = topn_records($pdo);
+            } catch (Exception $e) {
+                echo json_encode([
+                    'error' => 'top_records missing - run: python3 rollup.py -buildalltoprecords',
+                    'detail' => $e->getMessage(),
+                ]);
+                exit;
+            }
+            echo json_encode(['ok' => true, 'count' => count($records), 'records' => $records]);
+            exit;
+        }
 
         if ($action === 'lists' && topn_metric() === 'grid') {
             try {
@@ -306,6 +374,26 @@ if (isset($_GET['ajax'])) {
         No ranking data yet. Run <code>python3 rollup.py -buildall</code> (or <code>-daily</code>).
     </div>
 
+    <div id="records-card" class="card border-t-4 border-t-amber-500">
+        <h2 class="text-lg font-bold text-slate-900 mb-1">All-time records</h2>
+        <p class="text-xs text-slate-400 mb-3">Click a row to open that day in Analytics. Wind, ambient, module, and self-consumption appear only when data exists.</p>
+        <div id="records-warning" class="hidden text-xs text-amber-600 bg-amber-50 border border-amber-200 p-3 rounded-xl mb-3">
+            No all-time records yet. Run <code>python3 rollup.py -buildalltoprecords</code> (or <code>-buildall</code> / <code>-daily</code>).
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+                        <th class="py-2 pr-3 font-semibold">Record</th>
+                        <th class="py-2 pr-3 font-semibold">Value</th>
+                        <th class="py-2 font-semibold">Date</th>
+                    </tr>
+                </thead>
+                <tbody id="records-body" class="divide-y divide-slate-100"></tbody>
+            </table>
+        </div>
+    </div>
+
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div class="card border-t-4 border-t-emerald-500">
             <h2 id="title-day-best" class="text-lg font-bold text-slate-900 mb-1">Best days</h2>
@@ -350,6 +438,76 @@ if (isset($_GET['ajax'])) {
     let metric = 'solar';
     /** @type {'all'|'registers'|'net'} */
     let bars = 'all';
+
+    /**
+     * @param {string} recordId
+     * @param {number} value
+     * @returns {string}
+     */
+    function formatRecordValue(recordId, value) {
+        const n = Number(value);
+        if (Number.isNaN(n)) return '-';
+        if (recordId === 'peak_surge_w') {
+            return `${Math.round(n).toLocaleString()} W`;
+        }
+        if (recordId === 'max_wind_ms') {
+            return `${n.toLocaleString(undefined, { maximumFractionDigits: 1 })} m/s`;
+        }
+        if (recordId === 'max_temp_c' || recordId === 'min_temp_c' || recordId === 'max_module_temp_c') {
+            return `${n.toLocaleString(undefined, { maximumFractionDigits: 1 })} C`;
+        }
+        if (recordId === 'max_sun_hours') {
+            return `${n.toLocaleString(undefined, { maximumFractionDigits: 1 })} h`;
+        }
+        return `${n.toLocaleString(undefined, { maximumFractionDigits: 2 })} kWh`;
+    }
+
+    /**
+     * @param {Array<{record_id: string, record_value: number, record_date: string, description: string}>} rows
+     */
+    function renderRecords(rows) {
+        const body = document.getElementById('records-body');
+        const warn = document.getElementById('records-warning');
+        body.innerHTML = '';
+        if (!rows || !rows.length) {
+            warn.classList.remove('hidden');
+            return;
+        }
+        warn.classList.add('hidden');
+        rows.forEach((row) => {
+            const tr = document.createElement('tr');
+            tr.className = 'cursor-pointer hover:bg-amber-50/60 transition-colors';
+            tr.title = 'Open ' + row.record_date + ' in Analytics';
+            tr.addEventListener('click', () => {
+                window.location.href = 'analytics.php?date=' + encodeURIComponent(row.record_date);
+            });
+            const label = row.description || row.record_id;
+            tr.innerHTML =
+                '<td class="py-2.5 pr-3 text-slate-800 font-medium">' + label + '</td>' +
+                '<td class="py-2.5 pr-3 font-mono text-slate-700">' + formatRecordValue(row.record_id, row.record_value) + '</td>' +
+                '<td class="py-2.5 font-mono text-indigo-600 underline-offset-2 hover:underline">' + row.record_date + '</td>';
+            body.appendChild(tr);
+        });
+    }
+
+    async function loadRecords() {
+        const warn = document.getElementById('records-warning');
+        try {
+            const res = await fetch('topn.php?ajax=records');
+            const data = await res.json();
+            if (data.error) {
+                warn.textContent = data.error;
+                warn.classList.remove('hidden');
+                document.getElementById('records-body').innerHTML = '';
+                return;
+            }
+            renderRecords(data.records || []);
+        } catch (e) {
+            warn.textContent = 'Failed to load all-time records.';
+            warn.classList.remove('hidden');
+            document.getElementById('records-body').innerHTML = '';
+        }
+    }
 
     /**
      * @param {string} grain
@@ -663,6 +821,7 @@ if (isset($_GET['ajax'])) {
         metric = params0.get('metric') === 'grid' ? 'grid' : 'solar';
         const bars0 = params0.get('bars');
         bars = bars0 === 'registers' || bars0 === 'net' ? bars0 : 'all';
+        loadRecords();
         loadRankings();
         lucide.createIcons();
     });
