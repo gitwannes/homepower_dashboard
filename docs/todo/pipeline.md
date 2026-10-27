@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-27 (**A5** closed; **A5b** kickoff locked)
+**Last updated:** 2026-10-27 (**A7** kickoff locked; **A5b** coding)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -50,8 +50,8 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| 1 | open | M | **A5b** | Balance explorer (window+pan, mixed 1/5-min V); index 2h pulse; CSV to Settings; drop telemetry table — kickoff locked | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 2 | open | S | **A7** | `top_records`: drop or change (assess at kickoff) | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 1 | coding | M | **A5b** | Balance explorer (window+pan, mixed 1/5-min V); index 2h pulse; CSV to Settings; drop telemetry table | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 2 | open | S | **A7** | `top_records` on `topn.php` + `-daily` beat + `-buildalltoprecords` (kickoff locked) | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 3 | open | L | **P1** | Sunny Portal one-time history — kickoff, paid API out, not locked | [`phaseP-portals.md`](phaseP-portals.md) |
 | 4 | open | L | **P2** | SMA portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
 | 5 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |

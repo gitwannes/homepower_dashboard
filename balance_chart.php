@@ -154,3 +154,16 @@ function hp_chart_watt(?float $v): ?int
     }
     return (int)round($v);
 }
+
+/**
+ * Round for stacked Balance bands. Never null (Apex stacked areas blank on null).
+ *
+ * @param float|null $v
+ */
+function hp_chart_watt0(?float $v): int
+{
+    if ($v === null) {
+        return 0;
+    }
+    return (int)round($v);
+}

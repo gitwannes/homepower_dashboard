@@ -133,25 +133,23 @@ function hp_live_chart_balance_series(array $rows): array
         if ($ts === false) {
             continue;
         }
-        if ($prev !== null && ($ts - $prev) > 180) {
-            $breakAt = ($prev * 1000) + 1000;
-            $production[] = ['x' => $breakAt, 'y' => null];
-            $consumption[] = ['x' => $breakAt, 'y' => null];
-            $selfSufficient[] = ['x' => $breakAt, 'y' => null];
-            $grid[] = ['x' => $breakAt, 'y' => null];
-            $surplus[] = ['x' => $breakAt, 'y' => null];
-        }
+        // No null gap markers: Apex stacked areas go blank when series contain nulls.
         $ms = $ts * 1000;
         $solarRaw = $row['solar_power'] ?? null;
         $gridRaw = $row['active_power'] ?? null;
         $solarW = ($solarRaw === null || $solarRaw === '') ? null : (float)$solarRaw;
         $gridNetW = ($gridRaw === null || $gridRaw === '') ? null : (float)$gridRaw;
         $parts = hp_balance_parts($solarW, $gridNetW);
-        $production[] = ['x' => $ms, 'y' => $parts ? hp_chart_watt($parts['production']) : null];
-        $consumption[] = ['x' => $ms, 'y' => $parts ? hp_chart_watt($parts['consumption']) : null];
-        $selfSufficient[] = ['x' => $ms, 'y' => $parts ? hp_chart_watt($parts['self_sufficient']) : null];
-        $grid[] = ['x' => $ms, 'y' => $parts ? hp_chart_watt($parts['grid']) : null];
-        $surplus[] = ['x' => $ms, 'y' => $parts ? hp_chart_watt($parts['surplus']) : null];
+        // Need grid net for balance bands; skip solar-only rows (null bands blank Apex stacks).
+        if ($parts === null || $parts['consumption'] === null) {
+            $prev = $ts;
+            continue;
+        }
+        $production[] = ['x' => $ms, 'y' => hp_chart_watt0($parts['production'])];
+        $consumption[] = ['x' => $ms, 'y' => hp_chart_watt0($parts['consumption'])];
+        $selfSufficient[] = ['x' => $ms, 'y' => hp_chart_watt0($parts['self_sufficient'])];
+        $grid[] = ['x' => $ms, 'y' => hp_chart_watt0($parts['grid'])];
+        $surplus[] = ['x' => $ms, 'y' => hp_chart_watt0($parts['surplus'])];
         $prev = $ts;
     }
     return [

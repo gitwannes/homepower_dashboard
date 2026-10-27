@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4**, **A5**, **A6**, **A8**, **A9**, **A10**, and **A13 Done**; **A5b** kickoff; A7, A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-27 (A5 closed; A5b kickoff locked)  
+**Status:** **A4**, **A5**, **A6**, **A8**, **A9**, **A10**, and **A13 Done**; **A5b** coding; **A7** kickoff locked (awaiting implement); A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-27 (A7 kickoff locks)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py` · `settings.php`
 
 ---
@@ -13,9 +13,9 @@
 |---|---|---|
 | **A4** | Done | Top-N tables (days / months / years) + graphs |
 | **A5** | Done | Balance/Classic multi-series power (both pages). Product: [`docs/architecture.md`](../architecture.md) |
-| **A5b** | kickoff locked | Balance explorer; index 2h pulse; mixed 1/5-min; CSV→Settings; drop telemetry table |
+| **A5b** | coding | Balance explorer; index 2h pulse; mixed 1/5-min; CSV→Settings; drop telemetry table |
 | **A6** | Done | Settings page (`settings.php`). Product: [`docs/architecture.md`](../architecture.md) |
-| **A7** | open | `top_records`: drop or change (assess at kickoff) |
+| **A7** | kickoff locked | `top_records` on `topn.php` + `-daily` beat + `-buildalltoprecords` |
 | **A8** | Done | Live chart clock window. Product: [`docs/architecture.md`](../architecture.md) |
 | **A9** | Done | Settings encrypted backup download + restore. Product: [`docs/architecture.md`](../architecture.md) |
 | **A10** | Done | Warehouse rebuild. Product: [`docs/architecture.md`](../architecture.md) (Rollup CLI) |
@@ -217,7 +217,7 @@ Balance vs Classic on `index.php` and `analytics.php` (default Balance). Three p
 
 ## A5b — Balance explorer (window, pan, mixed resolution)
 
-**Status:** kickoff locked (no code until `implement`)  
+**Status:** coding (branch `feature/a5b-balance-explorer`)  
 **Depends on:** **A5** Done  
 **Scope:** Analytics owns Balance exploration (clock window + pan). Index keeps a short live pulse with link to analytics. Mixed 1-min / 5-min by 5-minute bucket. Warehouse tables unchanged (`readings` + `history_5min` stay).
 
@@ -226,7 +226,7 @@ Balance vs Classic on `index.php` and `analytics.php` (default Balance). Three p
 | # | Lock |
 |---|---|
 | 1 | **Index:** 2 h live pulse (Balance default). Link to analytics uses the same control pattern as the top-nav Analytics button. |
-| 2 | **Analytics Balance:** presets 15 m, 1 h, 2 h, 6 h, 24 h, 7 d; default 2 h. Date/time anchor. |
+| 2 | **Analytics Balance:** presets 15 m, 1 h, 2 h, 6 h, 24 h, 7 d; default **6 h** (ending now). Date/time anchor. **Reset view** returns to that default. Split-dot legend for Consumption / Production (plus the three bands). |
 | 3 | **Pan:** ← / → moves the current window by **one full step** (window length). |
 | 4 | **Mixed resolution (per 5-minute bucket):** if at least **two** 1-minute `readings` exist in that bucket under rule 4a, use 1-min points for that bucket; otherwise use the `history_5min` row for that bucket (Fluvius derive rules from A5 still apply on 5-min). Chart **may mix** densities in one view. |
 | 4a | **V — visible only:** count and emit only 1-min samples in **bucket ∩ chart window**. |
@@ -330,16 +330,57 @@ SQLite in `meter_history.db` (web user and poller can both open it). PHP does no
 
 ---
 
-## A7 — `top_records`: drop or change
+## A7 — `top_records` on Top-N
 
-**Status:** open (not kicked off)  
-**Scope (placement):** Decide whether to **drop** `top_records` (+ stop `build_top_records` in rollup) or **change** it (new purpose / UI).  
-**Context:** Single-row extremes (best day, peak surge, wind, temps). Unused in UI since A3. A4 covers Top-N yield lists instead.  
-**Locks:** drop vs redesign — kickoff.
+**Status:** kickoff locked (awaiting `implement`)  
+**Scope:** Keep `top_records` as all-time singles; show them on `topn.php`; refresh extremes on `-daily`; add `-buildalltoprecords`.  
+**Context:** Hall of Fame UI removed in A3. A4 `top_periods` covers yield Top-N lists. This phase is the leftover singles table + UI.
 
-### Verbatim
+### Locks (operator 2026-10-27)
+
+| # | Lock |
+|---|---|
+| 1 | **Keep** `top_records`. UI: fold a records table into **`topn.php`**. |
+| 2 | **Record ids (eight):** `best_day_kwh`, `peak_surge_w`, `max_wind_ms`, `max_temp_c`, `min_temp_c`, `max_sun_hours`, `max_module_temp_c`, `best_self_consumption_kwh`. |
+| 3 | **Conditional rows:** wind / ambient min-max / module temp / self-consumption — show only when the warehouse has usable values for that metric (sensorbox or grid as applicable). Hide the row when absent. |
+| 4 | **Out of A7 record set:** `max_radiation_wm2`, daily `solar_peak_w` as a separate single (peak stays `peak_surge_w`). Yield month/year and grid Top-N stay A4/A13. |
+| 5 | **Links:** every row with a `record_date` links to **analytics for that day**. |
+| 6 | **`-buildall`:** still full warehouse rebuild, including a full rewrite of `top_records`. |
+| 7 | **`-buildalltoprecords`:** full rewrite of `top_records` only (no delete of `history_5min` / daily / monthly). |
+| 8 | **`-daily`:** after the usual last-2-day downsample + `daily_history` refresh, compare candidates from those days to current `top_records` rows; replace a row only on a **stricter extreme** (max → greater, min → smaller). Sources: yield / wind / temps / sun-hours / self-consumption from refreshed `daily_history`; `peak_surge_w` from `history_5min` in that window. |
+
+### DoD (when implementing)
+
+- [ ] Schema + `build_top_records` covers the eight ids; conditional insert when source null
+- [ ] `-daily` beat path; `-buildalltoprecords`; `-buildall` still builds tops
+- [ ] `topn.php` table + analytics day links; hide empty sensorbox/grid rows
+- [ ] Product docs (`architecture.md` / roadmap as needed)
+- [ ] Operator close
+
+### Still open
+
+None for kickoff. Say `implement` to code.
+
+### Verbatim — 2026-10-23 (triage origin)
 
 > 7B + add to triage to either drop or change
+
+### Verbatim — 2026-10-27 (kickoff)
+
+> -daily should refresh: check if last 2 days readings are higher than what is in the table already and if it is: replace
+> add switch -buildalltoprecords so that we don't have to rebuild all, only this
+> keep top, create table with these records + if it is power: link to analytics that day
+
+> 1: fold into topn
+> of course, only show top wind/temp if sensorbox/tables have them
+> 2: also best_day_kwh
+> 3: yes, stricter extreme
+> 4: ok
+> 5: both: buildall  does all, buildalltoprecords  only toprecords
+> 6: list all best x - and propose others if any
+
+> Current five + max_sun_hours + max_module_temp_c + (if available) + best_self_consumption_kwh
+> link all to analytics that day
 
 ---
 
@@ -384,7 +425,7 @@ Settings downloads and restores an encrypted copy of the whole database. `db_bac
 
 ### Done summary
 
-`-buildall` deletes `history_5min`, `daily_history`, and `monthly_history` (no `VACUUM`), refills `history_5min` from all `readings` except the open 5-minute slice, then from WebBox staging, then rebuilds daily, monthly, envelopes, `top_records`, and `top_periods`. Rare. The day chart is empty until it finishes. `-daily` uses local time: last 2 days of `readings`, last 3 days of `daily_history`, then a full `monthly_history` and `top_periods`. `-purge_derived` is unchanged. `importer.py -aggregate5min` and `rollup.py -today` are removed. Generate table stays today-only. Import writes staging only. `processed/` is not scanned again. Both staging tables hold every WebBox year. P3 later stitches Fluvius electricity quarters in that same `-buildall`, after WebBox consolidate. See [`docs/architecture.md`](../architecture.md).
+`-buildall` deletes `history_5min`, `daily_history`, and `monthly_history` (no `VACUUM`), refills `history_5min` from all `readings` except the open 5-minute slice, then from WebBox staging, then rebuilds daily, monthly, envelopes, `top_records`, and `top_periods`. Rare. The day chart is empty until it finishes. `-daily` uses local time: last 2 days of `readings`, last 3 days of `daily_history`, then a full `monthly_history` and `top_periods`. `-purge_derived` is unchanged. `importer.py -aggregate5min`, `rollup.py -today`, and analytics Generate today table are removed. Today’s closed buckets go through nightly `-daily`. Import writes staging only. `processed/` is not scanned again. Both staging tables hold every WebBox year. P3 later stitches Fluvius electricity quarters in that same `-buildall`, after WebBox consolidate. See [`docs/architecture.md`](../architecture.md).
 
 ### Out of scope
 

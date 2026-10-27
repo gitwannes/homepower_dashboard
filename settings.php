@@ -88,6 +88,81 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
+    } elseif ($action === 'readings_csv') {
+        try {
+            if ($boot['mode'] === 'need_admin') {
+                throw new RuntimeException('Set an admin password first.');
+            }
+            $adminPassword = isset($_POST['admin_password']) ? (string)$_POST['admin_password'] : '';
+            if (!hp_admin_ok($pdo, $adminPassword)) {
+                throw new RuntimeException('Admin password is wrong. Nothing was downloaded.');
+            }
+            @set_time_limit(0);
+            header('Content-Type: text/csv; charset=UTF-8');
+            header('Pragma: no-cache');
+            header('Expires: 0');
+            header('Content-Disposition: attachment; filename="energy_history_' . date('Ymd_His') . '.csv"');
+            $output = fopen('php://output', 'w');
+            if ($output === false) {
+                throw new RuntimeException('Could not open the download stream.');
+            }
+            fprintf($output, chr(0xEF) . chr(0xBB) . chr(0xBF));
+            fputcsv($output, [
+                'Timestamp',
+                'Net Grid (W)',
+                'Solar Power (W)',
+                'Import Peak (kWh)',
+                'Import Off peak (kWh)',
+                'Total Import (kWh)',
+                'Export Peak (kWh)',
+                'Export Off peak (kWh)',
+                'Total Export (kWh)',
+                'Capacity Peak (W)',
+                'Solar Lifetime (kWh)',
+                'Solar Radiation (W/m2)',
+                'Module Temp (C)',
+                'Wind Speed (m/s)',
+                'Gas (m3)',
+                'Water (m3)',
+            ], ';');
+            $stmt = $pdo->query(
+                'SELECT timestamp, active_power, solar_power,
+                        import_t1, import_t2, total_import,
+                        export_t1, export_t2, total_export,
+                        capacity_peak_w, solar_total_kwh,
+                        solar_radiation, temp_module, wind_speed,
+                        gas, water
+                 FROM readings
+                 ORDER BY id ASC'
+            );
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                fputcsv($output, [
+                    date('d/m/Y H:i:s', strtotime((string)$row['timestamp'])),
+                    $row['active_power'],
+                    $row['solar_power'] ?? 0,
+                    number_format((float)$row['import_t1'], 3, ',', ''),
+                    number_format((float)$row['import_t2'], 3, ',', ''),
+                    ($row['total_import'] !== null) ? number_format((float)$row['total_import'], 3, ',', '') : '',
+                    number_format((float)$row['export_t1'], 3, ',', ''),
+                    number_format((float)$row['export_t2'], 3, ',', ''),
+                    ($row['total_export'] !== null) ? number_format((float)$row['total_export'], 3, ',', '') : '',
+                    $row['capacity_peak_w'] ?? '',
+                    ($row['solar_total_kwh'] !== null) ? number_format((float)$row['solar_total_kwh'], 2, ',', '') : '',
+                    ($row['solar_radiation'] !== null) ? number_format((float)$row['solar_radiation'], 1, ',', '') : '',
+                    ($row['temp_module'] !== null) ? number_format((float)$row['temp_module'], 1, ',', '') : '',
+                    ($row['wind_speed'] !== null) ? number_format((float)$row['wind_speed'], 1, ',', '') : '',
+                    ($row['gas'] !== null) ? number_format((float)$row['gas'], 3, ',', '') : '',
+                    ($row['water'] !== null) ? number_format((float)$row['water'], 3, ',', '') : '',
+                ], ';');
+            }
+            fclose($output);
+            exit;
+        } catch (Throwable $e) {
+            if (headers_sent()) {
+                exit;
+            }
+            $error = $e->getMessage();
+        }
     } elseif ($action === 'backup_download') {
         $work = '';
         try {
@@ -519,10 +594,18 @@ function hp_field(array $settings, string $key): string
             <button type="button" id="downloadBackup" class="px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold">Download full backup</button>
             <button type="button" id="openRestore" class="px-4 py-2 rounded-xl border border-rose-200 text-rose-700 text-sm font-semibold">Restore full backup</button>
         </div>
+        <div class="border-t border-slate-100 pt-3 space-y-2">
+            <p class="text-xs text-slate-500">Download all 1-min samples in CSV (full <code>readings</code> table).</p>
+            <button type="button" id="downloadReadingsCsv" class="px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold">Download 1-min CSV</button>
+        </div>
     </section>
     <form id="backupDownloadForm" method="post" class="hidden">
         <input type="hidden" name="action" value="backup_download">
         <input type="hidden" name="admin_password" id="backupDownloadPassword" value="">
+    </form>
+    <form id="readingsCsvForm" method="post" class="hidden">
+        <input type="hidden" name="action" value="readings_csv">
+        <input type="hidden" name="admin_password" id="readingsCsvPassword" value="">
     </form>
 
     <div id="gateModal" class="fixed inset-0 bg-slate-900/40 items-center justify-center p-4" style="display:none">
@@ -627,6 +710,14 @@ function hp_field(array $settings, string $key): string
                 document.getElementById('backupDownloadPassword').value = password;
                 closeGate();
                 document.getElementById('backupDownloadForm').submit();
+            });
+        });
+
+        document.getElementById('downloadReadingsCsv').addEventListener('click', function () {
+            openGate('Enter the admin password to download the 1-min CSV', function (password) {
+                document.getElementById('readingsCsvPassword').value = password;
+                closeGate();
+                document.getElementById('readingsCsvForm').submit();
             });
         });
 

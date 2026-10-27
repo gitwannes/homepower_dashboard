@@ -802,8 +802,8 @@ if __name__ == '__main__':
         elif '-today' in args:
             sys.stderr.write(
                 "rollup.py -today was removed. "
-                "Generate table in analytics downsamples today into history_5min. "
-                "Nightly -daily refreshes daily_history and top_periods.\n"
+                "Use nightly -daily (last 2 local days of readings into history_5min). "
+                "-daily also refreshes daily_history and top_periods.\n"
             )
             exit_code = 2
 

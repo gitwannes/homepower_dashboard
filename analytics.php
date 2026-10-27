@@ -7,12 +7,14 @@
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
 require_once __DIR__ . '/balance_chart.php';
+require_once __DIR__ . '/explorer_chart.php';
 
 $hp = hp_boot();
 hp_require_ready($hp);
 hp_publish_pac($hp['settings']);
 $dbFile = $hp['db'];
 $chartView = hp_chart_view();
+$explorerWindow = hp_explorer_window();
 
 /**
  * @param mixed $w PAC watts
@@ -170,79 +172,32 @@ if (isset($_GET['ajax'])) {
             exit;
         }
 
-        // On-demand: downsample today's readings -> history_5min.
-        // Same INSERT as rollup.downsample_live_readings for one local day
-        // (open 5-minute slice excluded). Does not write daily_history or top_periods.
-        // Server-side locked to Europe/Brussels "today" only.
-        if ($action === 'generate_today') {
-            $todayLocal = date('Y-m-d');
-            $nowCutSql = "strftime('%Y-%m-%d %H:', datetime('now', 'localtime')) || "
-                . "printf('%02d:00', (CAST(strftime('%M', datetime('now', 'localtime')) AS INTEGER) / 5) * 5)";
-            try {
-                $sql = "
-                    INSERT INTO history_5min (
-                        timestamp, grid_power_w, import_t1, import_t2, export_t1, export_t2,
-                        total_import, total_export, capacity_peak_w, gas, water,
-                        solar_power_w, solar_total_kwh, solar_radiation, sample_count, data_source
-                    )
-                    SELECT
-                        strftime('%Y-%m-%d %H:', timestamp) ||
-                        printf('%02d:00', (CAST(strftime('%M', timestamp) AS INTEGER) / 5) * 5) AS snapped_ts,
-                        ROUND(AVG(active_power)),
-                        MAX(import_t1), MAX(import_t2), MAX(export_t1), MAX(export_t2),
-                        MAX(total_import), MAX(total_export), MAX(capacity_peak_w),
-                        MAX(gas), MAX(water),
-                        ROUND(AVG(solar_power)), MAX(solar_total_kwh),
-                        AVG(solar_radiation),
-                        COUNT(*), 'live_p1'
-                    FROM readings
-                    WHERE timestamp LIKE ?
-                    GROUP BY snapped_ts
-                    HAVING snapped_ts < ({$nowCutSql})
-                    ON CONFLICT(timestamp) DO UPDATE SET
-                        grid_power_w    = excluded.grid_power_w,
-                        import_t1       = excluded.import_t1,
-                        import_t2       = excluded.import_t2,
-                        export_t1       = excluded.export_t1,
-                        export_t2       = excluded.export_t2,
-                        total_import    = excluded.total_import,
-                        total_export    = excluded.total_export,
-                        capacity_peak_w = excluded.capacity_peak_w,
-                        gas             = excluded.gas,
-                        water           = excluded.water,
-                        solar_power_w   = CASE
-                            WHEN history_5min.data_source = 'webbox_archive'
-                                 AND COALESCE(excluded.solar_power_w, 0) = 0
-                                 AND COALESCE(history_5min.solar_power_w, 0) > 0
-                            THEN history_5min.solar_power_w
-                            ELSE COALESCE(excluded.solar_power_w, history_5min.solar_power_w)
-                        END,
-                        solar_total_kwh = COALESCE(excluded.solar_total_kwh, history_5min.solar_total_kwh),
-                        solar_radiation = COALESCE(excluded.solar_radiation, history_5min.solar_radiation),
-                        sample_count    = excluded.sample_count,
-                        data_source     = CASE
-                            WHEN history_5min.data_source = 'webbox_archive' THEN 'merged'
-                            ELSE 'live_p1'
-                        END
-                ";
-                $stmt = $pdo->prepare($sql);
-                $stmt->execute([$todayLocal . '%']);
-                $rowcount = $stmt->rowCount();
-                // How many 5-min slots for today now have PAC
-                $filled = (int)$pdo->query(
-                    "SELECT COUNT(*) FROM history_5min
-                     WHERE timestamp LIKE " . $pdo->quote($todayLocal . '%') . "
-                       AND COALESCE(solar_power_w, 0) > 0"
-                )->fetchColumn();
-                echo json_encode([
-                    'ok' => true,
-                    'day' => $todayLocal,
-                    'upsert_rowcount' => $rowcount,
-                    'slots_with_pac' => $filled,
-                ]);
-            } catch (Exception $e) {
-                echo json_encode(['error' => $e->getMessage()]);
+        if ($action === 'explorer') {
+            $win = hp_explorer_window();
+            if (isset($_GET['pan']) && ($_GET['pan'] === '-1' || $_GET['pan'] === '1')) {
+                $panned = hp_explorer_pan($win, (int)$_GET['pan']);
+                $win['start'] = $panned['start'];
+                $win['end'] = $panned['end'];
+                $win['custom'] = true;
+                $win['preset'] = '';
             }
+            $payload = hp_explorer_mixed_series(
+                $pdo,
+                $win['start'],
+                $win['end'],
+                'sanitize_pac_w'
+            );
+            echo json_encode([
+                'ok' => true,
+                'start' => $win['start'],
+                'end' => $win['end'],
+                'preset' => $win['preset'],
+                'custom' => $win['custom'],
+                'balance' => $payload['balance'],
+                'tip_bands' => $payload['tip_bands'],
+                'classic' => $payload['classic'],
+                'sources' => $payload['sources'],
+            ]);
             exit;
         }
 
@@ -312,7 +267,7 @@ if (isset($_GET['ajax'])) {
                     $row['grid_export_kwh']
                 );
                 $parts = hp_balance_parts($solarW, $gridNet);
-                if ($parts === null) {
+                if ($parts === null || $parts['consumption'] === null) {
                     continue;
                 }
                 $production[$slot] = $parts['production'];
@@ -322,19 +277,23 @@ if (isset($_GET['ajax'])) {
                 $surplus[$slot] = $parts['surplus'];
             }
             $categories = array_keys($production);
-            $prodVals = hp_bridge_short_nulls(array_values($production), 2);
-            $consVals = hp_bridge_short_nulls(array_values($consumption), 2);
-            $selfVals = hp_bridge_short_nulls(array_values($selfSufficient), 2);
-            $gridVals = hp_bridge_short_nulls(array_values($gridBand), 2);
-            $surpVals = hp_bridge_short_nulls(array_values($surplus), 2);
+            // Bridge short Fluvius gaps, then zero-fill leftovers for stacked Apex.
+            $zeroFill = static function (array $vals): array {
+                $bridged = hp_bridge_short_nulls($vals, 2);
+                $out = [];
+                foreach ($bridged as $v) {
+                    $out[] = hp_chart_watt0($v === null ? null : (float)$v);
+                }
+                return $out;
+            };
             echo json_encode([
                 'view' => 'balance',
                 'categories' => $categories,
-                'production' => array_map('hp_chart_watt', $prodVals),
-                'consumption' => array_map('hp_chart_watt', $consVals),
-                'self_sufficient' => array_map('hp_chart_watt', $selfVals),
-                'grid' => array_map('hp_chart_watt', $gridVals),
-                'surplus' => array_map('hp_chart_watt', $surpVals),
+                'production' => $zeroFill(array_values($production)),
+                'consumption' => $zeroFill(array_values($consumption)),
+                'self_sufficient' => $zeroFill(array_values($selfSufficient)),
+                'grid' => $zeroFill(array_values($gridBand)),
+                'surplus' => $zeroFill(array_values($surplus)),
             ]);
             exit;
         }
@@ -564,7 +523,7 @@ $defaultCompare2 = $yesterday;
                 </a>
                 <div>
                     <h1 class="text-2xl font-black text-slate-900 tracking-tight">Historical Analytics</h1>
-                    <p class="text-xs text-slate-400 mt-0.5">Intraday, day compare, clear-sky envelope</p>
+                    <p class="text-xs text-slate-400 mt-0.5">Balance explorer, day compare, clear-sky envelope</p>
                 </div>
             </div>
         </div>
@@ -583,42 +542,53 @@ $defaultCompare2 = $yesterday;
     </header>
 
     <div class="card border-t-4 border-t-amber-500">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-            <div>
-                <h2 id="dayChartHeading" class="text-lg font-bold text-slate-900 flex items-center gap-2">
-                    <i data-lucide="sun" class="w-5 h-5 text-amber-500"></i>
-                    <span id="dayChartTitleText"><?= $chartView === 'balance' ? 'Energy Balance' : 'Daily Generation Curve' ?></span>
-                </h2>
-                <p id="dayChartBlurb" class="text-xs text-slate-400">
-                    <?= $chartView === 'balance'
-                        ? 'Bands: self-sufficient / grid / surplus. Production and consumption are in the tooltip (stack outline).'
-                        : '5-minute solar profile from history_5min - type a date or open the calendar' ?>
-                </p>
-            </div>
-            <div class="flex flex-wrap items-center gap-2">
-                <div class="metric-switch" role="group" aria-label="Day chart view">
-                    <button type="button" id="day-view-balance" class="<?= $chartView === 'balance' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'balance' ? 'true' : 'false' ?>" onclick="setDayChartView('balance')">Balance</button>
-                    <button type="button" id="day-view-classic" class="<?= $chartView === 'classic' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'classic' ? 'true' : 'false' ?>" onclick="setDayChartView('classic')">Classic</button>
+        <div class="flex flex-col gap-3 mb-4">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                    <h2 id="dayChartHeading" class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                        <i data-lucide="activity" class="w-5 h-5 text-amber-500"></i>
+                        <span id="dayChartTitleText"><?= $chartView === 'balance' ? 'Energy Balance' : 'Power History' ?></span>
+                    </h2>
+                    <p id="dayChartBlurb" class="text-xs text-slate-400">
+                        <?= $chartView === 'balance'
+                            ? 'Mixed 1-min / 5-min. Bands: self-sufficient / grid / surplus. Production and consumption in the tooltip.'
+                            : 'Mixed 1-min / 5-min solar / home profile for the selected window.' ?>
+                    </p>
                 </div>
-                <button type="button" class="jump-btn" onclick="goToToday()" title="Jump to today">Today</button>
-                <button type="button" id="btnGenerateToday" class="jump-btn hidden"
-                        onclick="generateTodayTable()"
-                        title="Downsample today's 1-min readings into history_5min">Generate table</button>
-                <button type="button" class="nav-arrow" onclick="stepIntraday(-1)" title="Previous day" aria-label="Previous day">
+                <div class="flex flex-wrap items-center gap-2">
+                    <div class="metric-switch" role="group" aria-label="Chart view">
+                        <button type="button" id="day-view-balance" class="<?= $chartView === 'balance' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'balance' ? 'true' : 'false' ?>" onclick="setDayChartView('balance')">Balance</button>
+                        <button type="button" id="day-view-classic" class="<?= $chartView === 'classic' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'classic' ? 'true' : 'false' ?>" onclick="setDayChartView('classic')">Classic</button>
+                    </div>
+                </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Chart range">
+                <?php foreach (hp_live_chart_presets() as $presetId => $preset): ?>
+                    <?php $presetOn = !$explorerWindow['custom'] && $explorerWindow['preset'] === $presetId; ?>
+                    <button type="button"
+                            class="px-2.5 py-1 rounded-full text-[11px] font-semibold border explorer-preset <?= $presetOn ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200' ?>"
+                            data-range="<?= htmlspecialchars($presetId, ENT_QUOTES, 'UTF-8') ?>"
+                            onclick="setExplorerPreset('<?= htmlspecialchars($presetId, ENT_QUOTES, 'UTF-8') ?>')"><?= htmlspecialchars($preset['label'], ENT_QUOTES, 'UTF-8') ?></button>
+                <?php endforeach; ?>
+                <button type="button" class="nav-arrow" onclick="panExplorer(-1)" title="Pan back one window" aria-label="Pan back">
                     <i data-lucide="chevron-left" class="w-5 h-5"></i>
                 </button>
-                <div class="date-wrap relative">
-                    <input type="text" id="singleDateText" inputmode="numeric" placeholder="YYYY-MM-DD" maxlength="10"
-                           value="<?= htmlspecialchars($defaultDay) ?>" autocomplete="off" spellcheck="false">
-                    <input type="date" id="singleDatePicker" class="date-native" value="<?= htmlspecialchars($defaultDay) ?>" tabindex="-1" aria-hidden="true">
-                    <button type="button" class="date-icon-btn" title="Open calendar" aria-label="Open calendar"
-                            onclick="openDatePicker('singleDatePicker')">
-                        <i data-lucide="calendar" class="w-4 h-4"></i>
-                    </button>
-                </div>
-                <button type="button" class="nav-arrow" onclick="stepIntraday(1)" title="Next day" aria-label="Next day">
+                <button type="button" class="nav-arrow" onclick="panExplorer(1)" title="Pan forward one window" aria-label="Pan forward">
                     <i data-lucide="chevron-right" class="w-5 h-5"></i>
                 </button>
+                <button type="button" class="jump-btn" onclick="resetExplorerView()" title="Last 6 hours ending now">Reset view</button>
+                <span id="explorerWindowLabel" class="text-[11px] text-slate-500 font-mono ml-1"></span>
+            </div>
+            <div id="explorerBalanceLegend" class="flex flex-wrap items-center gap-3 text-xs <?= $chartView === 'balance' ? '' : 'is-hidden' ?>">
+                <span class="inline-flex items-center gap-1.5 text-blue-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Self-sufficient</span>
+                <span class="inline-flex items-center gap-1.5 text-violet-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-violet-600"></span> Grid</span>
+                <span class="inline-flex items-center gap-1.5 text-emerald-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Surplus</span>
+                <span class="inline-flex items-center gap-1.5 text-slate-600 font-medium" title="Self-sufficient + Grid (tooltip)">
+                    <span class="w-2.5 h-2.5 rounded-full inline-block" style="background:linear-gradient(90deg,#3b82f6 50%,#7c3aed 50%)"></span> Consumption
+                </span>
+                <span class="inline-flex items-center gap-1.5 text-slate-600 font-medium" title="Self-sufficient + Surplus (tooltip)">
+                    <span class="w-2.5 h-2.5 rounded-full inline-block" style="background:linear-gradient(90deg,#3b82f6 50%,#10b981 50%)"></span> Production
+                </span>
             </div>
         </div>
         <div id="chart-intraday" class="w-full h-[400px]"></div>
@@ -832,89 +802,56 @@ $defaultCompare2 = $yesterday;
         return `${y}-${m}-${d}`;
     }
 
-    function setIntradayDate(iso, reload) {
-        if (!isValidIsoDate(iso)) return;
-        document.getElementById('singleDatePicker').value = iso;
-        document.getElementById('singleDateText').value = iso;
-        updateGenerateTodayBtn();
-        if (reload) loadIntraday();
-    }
-
-    function goToToday() {
-        setIntradayDate(TODAY_ISO, true);
-        updateGenerateTodayBtn();
-    }
-
-    /** Show Generate table only when the intraday date is today (Brussels). */
-    function updateGenerateTodayBtn() {
-        const btn = document.getElementById('btnGenerateToday');
-        if (!btn) return;
-        const d = document.getElementById('singleDateText').value.trim();
-        if (d === TODAY_ISO) {
-            btn.classList.remove('hidden');
-        } else {
-            btn.classList.add('hidden');
-        }
-    }
-
-    /**
-     * Downsample today's readings into history_5min, then reload the curve.
-     */
-    async function generateTodayTable() {
-        const btn = document.getElementById('btnGenerateToday');
-        if (!btn || btn.disabled) return;
-        const cur = document.getElementById('singleDateText').value.trim();
-        if (cur !== TODAY_ISO) {
-            updateGenerateTodayBtn();
-            return;
-        }
-        const prev = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = 'Generating...';
-        try {
-            const res = await fetch('analytics.php?ajax=generate_today');
-            const data = await res.json();
-            if (data.error) {
-                alert('Generate failed: ' + data.error);
-                return;
-            }
-            await loadIntraday();
-            btn.textContent = 'Updated (' + (data.slots_with_pac || 0) + ' slots)';
-            setTimeout(() => { btn.textContent = prev; }, 2500);
-        } catch (e) {
-            alert('Generate failed: network or server error');
-            btn.textContent = prev;
-        } finally {
-            btn.disabled = false;
-            updateGenerateTodayBtn();
-        }
-    }
-
-    function stepIntraday(delta) {
-        const cur = document.getElementById('singleDateText').value.trim();
-        if (!isValidIsoDate(cur)) return;
-        let next = addDaysIso(cur, delta);
-        if (dayRange.min && dayRange.max) {
-            if (next < dayRange.min) next = dayRange.max;
-            if (next > dayRange.max) next = dayRange.min;
-        }
-        setIntradayDate(next, true);
-    }
-
     let dayChartView = <?= json_encode($chartView) ?>;
+    let explorerStart = <?= (int)$explorerWindow['start'] ?>;
+    let explorerEnd = <?= (int)$explorerWindow['end'] ?>;
+    let explorerPreset = <?= json_encode($explorerWindow['preset']) ?>;
+    let explorerCustom = <?= $explorerWindow['custom'] ? 'true' : 'false' ?>;
+    let explorerPayload = null;
 
-    function syncDayViewUrl() {
+    function chartQueryTime(sec) {
+        const d = new Date(sec * 1000);
+        const p = (n) => String(n).padStart(2, '0');
+        return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+            + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    }
+
+    function syncExplorerUrl() {
         const url = new URL(window.location.href);
-        const date = document.getElementById('singleDateText').value.trim();
-        if (isValidIsoDate(date)) {
-            url.searchParams.set('date', date);
-        }
+        url.searchParams.delete('date');
         if (dayChartView === 'classic') {
             url.searchParams.set('view', 'classic');
         } else {
             url.searchParams.delete('view');
         }
+        if (explorerCustom) {
+            url.searchParams.delete('range');
+            url.searchParams.set('from', chartQueryTime(explorerStart));
+            url.searchParams.set('to', chartQueryTime(explorerEnd));
+        } else {
+            url.searchParams.delete('from');
+            url.searchParams.delete('to');
+            if (explorerPreset && explorerPreset !== '6h') {
+                url.searchParams.set('range', explorerPreset);
+            } else {
+                url.searchParams.delete('range');
+            }
+        }
         window.history.replaceState({}, '', url.pathname + url.search);
+        document.querySelectorAll('.explorer-preset').forEach((btn) => {
+            const on = !explorerCustom && btn.getAttribute('data-range') === explorerPreset;
+            btn.classList.toggle('bg-slate-800', on);
+            btn.classList.toggle('text-white', on);
+            btn.classList.toggle('border-slate-800', on);
+            btn.classList.toggle('bg-white', !on);
+            btn.classList.toggle('text-slate-600', !on);
+            btn.classList.toggle('border-slate-200', !on);
+        });
+        const label = document.getElementById('explorerWindowLabel');
+        if (label) {
+            label.textContent = new Date(explorerStart * 1000).toLocaleString()
+                + ' -> ' + new Date(explorerEnd * 1000).toLocaleString();
+        }
     }
 
     function updateDayViewChrome() {
@@ -929,12 +866,16 @@ $defaultCompare2 = $yesterday;
         const title = document.getElementById('dayChartTitleText');
         const blurb = document.getElementById('dayChartBlurb');
         if (title) {
-            title.textContent = dayChartView === 'balance' ? 'Energy Balance' : 'Daily Generation Curve';
+            title.textContent = dayChartView === 'balance' ? 'Energy Balance' : 'Power History';
         }
         if (blurb) {
             blurb.textContent = dayChartView === 'balance'
-                ? 'Bands: self-sufficient / grid / surplus. Production and consumption are in the tooltip (stack outline).'
-                : '5-minute solar profile from history_5min - type a date or open the calendar';
+                ? 'Mixed 1-min / 5-min. Bands: self-sufficient / grid / surplus. Production and consumption in the tooltip.'
+                : 'Mixed 1-min / 5-min solar / home profile for the selected window.';
+        }
+        const balLeg = document.getElementById('explorerBalanceLegend');
+        if (balLeg) {
+            balLeg.classList.toggle('is-hidden', dayChartView !== 'balance');
         }
     }
 
@@ -945,72 +886,158 @@ $defaultCompare2 = $yesterday;
         }
         dayChartView = next;
         updateDayViewChrome();
-        syncDayViewUrl();
-        loadIntraday();
+        syncExplorerUrl();
+        renderExplorerChart();
     }
 
-    async function loadIntraday() {
-        const date = document.getElementById('singleDateText').value.trim();
-        if (!isValidIsoDate(date)) return;
+    function setExplorerPreset(rangeId) {
+        explorerPreset = rangeId;
+        explorerCustom = false;
+        const seconds = {
+            '15m': 15 * 60,
+            '1h': 3600,
+            '2h': 2 * 3600,
+            '6h': 6 * 3600,
+            '24h': 24 * 3600,
+            '7d': 7 * 24 * 3600
+        }[rangeId] || (6 * 3600);
+        explorerEnd = Math.floor(Date.now() / 1000);
+        explorerStart = explorerEnd - seconds;
+        loadExplorer();
+    }
 
-        const viewQ = dayChartView === 'classic' ? '&view=classic' : '';
-        const res = await fetch(
-            `analytics.php?ajax=day&date=${encodeURIComponent(date)}${viewQ}`
-        );
-        const data = await res.json();
-        if (data.error) return;
+    /** Default explorer view: last 6 hours ending now. */
+    function resetExplorerView() {
+        setExplorerPreset('6h');
+    }
 
+    function panExplorer(direction) {
+        const span = Math.max(15 * 60, explorerEnd - explorerStart);
+        explorerStart += direction * span;
+        explorerEnd += direction * span;
+        const now = Math.floor(Date.now() / 1000);
+        if (explorerEnd > now) {
+            explorerEnd = now;
+            explorerStart = explorerEnd - span;
+        }
+        explorerCustom = true;
+        explorerPreset = '';
+        loadExplorer();
+    }
+
+    function yPoint(arr, i) {
+        if (!arr || !arr[i]) return null;
+        return arr[i].y;
+    }
+
+    function renderExplorerChart() {
+        if (!explorerPayload) return;
+        const data = explorerPayload;
+        const bal = data.balance || {};
+        const classic = data.classic || {};
+        if (
+            dayChartView === 'balance'
+            && !(bal.self_sufficient && bal.self_sufficient.length)
+        ) {
+            const hostEmpty = document.querySelector('#chart-intraday');
+            if (hostEmpty) {
+                hostEmpty.innerHTML = '<p class="text-sm text-slate-400 p-6">No balance samples in this window.</p>';
+            }
+            syncExplorerUrl();
+            return;
+        }
         let options;
-        if (dayChartView === 'balance') {
-            // Three painted bands only. Production / Consumption are the stack outline
-            // (self+surplus / self+grid) - shown in tooltip, not as separate strokes.
-            const selfB = data.self_sufficient;
-            const gridB = data.grid;
-            const surplusB = data.surplus;
-            const gridTop = selfB.map(function (v, i) {
-                if (v === null || v === undefined || gridB[i] === null || gridB[i] === undefined) {
-                    return null;
-                }
-                return Number(v) + Number(gridB[i]);
-            });
-            const stackTop = gridTop.map(function (v, i) {
-                if (v === null || v === undefined || surplusB[i] === null || surplusB[i] === undefined) {
-                    return null;
-                }
-                return Number(v) + Number(surplusB[i]);
-            });
-            options = {
-                ...baseChartOptions,
-                series: [
-                    { name: 'Surplus', type: 'area', data: stackTop },
-                    { name: 'Grid', type: 'area', data: gridTop },
-                    { name: 'Self-sufficient', type: 'area', data: selfB }
-                ],
-                chart: { ...baseChartOptions.chart, type: 'area', height: 400, stacked: false },
-                colors: ['#10b981', '#7c3aed', '#3b82f6'],
-                stroke: { curve: 'straight', width: 0 },
-                fill: {
-                    type: 'solid',
-                    opacity: [0.45, 0.5, 0.55]
+        const xaxisCommon = {
+            type: 'datetime',
+            min: explorerStart * 1000,
+            max: explorerEnd * 1000,
+            labels: {
+                datetimeUTC: false,
+                format: 'HH:mm',
+                style: { fontSize: '11px', colors: '#94a3b8' }
+            }
+        };
+        const yaxisCommon = {
+            min: 0,
+            labels: {
+                formatter: function (val) {
+                    if (val === null || val === undefined || !Number.isFinite(Number(val))) return '';
+                    return Number(val).toFixed(0) + ' W';
                 },
-                xaxis: { type: 'category', categories: data.categories, labels: timeAxisLabels },
-                legend: { show: true, position: 'top' },
+                style: { fontSize: '10px', colors: '#94a3b8' }
+            }
+        };
+        const gridPad = { borderColor: '#f1f5f9', strokeDashArray: 4, padding: { left: 10, right: 16, bottom: 12 } };
+
+        /** Apex stacked areas go blank on null y - coerce to 0. */
+        function stackSafeXy(points) {
+            if (!Array.isArray(points)) return [];
+            const out = [];
+            for (let i = 0; i < points.length; i++) {
+                const p = points[i];
+                if (!p || p.x === null || p.x === undefined) continue;
+                const y = (p.y === null || p.y === undefined || !Number.isFinite(Number(p.y)))
+                    ? 0
+                    : Number(p.y);
+                out.push({ x: p.x, y: y });
+            }
+            return out;
+        }
+
+        if (dayChartView === 'balance') {
+            const tip = data.tip_bands || {};
+            const src = data.sources || [];
+            const selfPts = stackSafeXy(bal.self_sufficient);
+            const gridPts = stackSafeXy(bal.grid);
+            const surpPts = stackSafeXy(bal.surplus);
+            const tipSelf = stackSafeXy(tip.self_sufficient);
+            const tipGrid = stackSafeXy(tip.grid);
+            const tipSurp = stackSafeXy(tip.surplus);
+            const tipCons = stackSafeXy(tip.consumption);
+            const tipProd = stackSafeXy(tip.production);
+            options = {
+                series: [
+                    { name: 'Self-sufficient', data: selfPts },
+                    { name: 'Grid', data: gridPts },
+                    { name: 'Surplus', data: surpPts }
+                ],
+                chart: {
+                    type: 'area',
+                    height: 420,
+                    stacked: true,
+                    animations: { enabled: false },
+                    toolbar: { show: true },
+                    zoom: { enabled: true },
+                    parentHeightOffset: 12
+                },
+                colors: ['#3b82f6', '#7c3aed', '#10b981'],
+                dataLabels: { enabled: false },
+                // HW-like silk edges on stacked bands (Classic stays straight).
+                stroke: { curve: 'smooth', width: 0 },
+                fill: { type: 'solid', opacity: 0.75 },
+                xaxis: xaxisCommon,
+                yaxis: yaxisCommon,
+                grid: gridPad,
+                legend: { show: false },
                 tooltip: {
                     shared: true,
                     intersect: false,
-                    custom: function ({ dataPointIndex }) {
+                    custom: function ({ dataPointIndex, w }) {
                         const i = dataPointIndex;
                         const fmt = function (v) {
                             if (v === null || v === undefined) return '-';
                             return Math.round(Number(v)) + ' W';
                         };
-                        const when = (data.categories && data.categories[i]) ? data.categories[i] : '';
+                        const when = w.globals.seriesX[0] && w.globals.seriesX[0][i] != null
+                            ? new Date(w.globals.seriesX[0][i]).toLocaleString()
+                            : '';
+                        const source = (src[i] && src[i].source) ? src[i].source : '';
                         const rows = [
-                            ['Self-sufficient', selfB[i], '#3b82f6'],
-                            ['Grid', gridB[i], '#7c3aed'],
-                            ['Surplus', surplusB[i], '#10b981'],
-                            ['Consumption', data.consumption[i], 'linear-gradient(90deg,#3b82f6 50%,#7c3aed 50%)'],
-                            ['Production', data.production[i], 'linear-gradient(90deg,#3b82f6 50%,#10b981 50%)']
+                            ['Self-sufficient', yPoint(tipSelf, i), '#3b82f6'],
+                            ['Grid', yPoint(tipGrid, i), '#7c3aed'],
+                            ['Surplus', yPoint(tipSurp, i), '#10b981'],
+                            ['Consumption', yPoint(tipCons, i), 'linear-gradient(90deg,#3b82f6 50%,#7c3aed 50%)'],
+                            ['Production', yPoint(tipProd, i), 'linear-gradient(90deg,#3b82f6 50%,#10b981 50%)']
                         ];
                         let body = '';
                         for (let r = 0; r < rows.length; r++) {
@@ -1019,28 +1046,39 @@ $defaultCompare2 = $yesterday;
                                 + '<span>' + rows[r][0] + ': <strong>' + fmt(rows[r][1]) + '</strong></span></div>';
                         }
                         return '<div style="padding:8px 10px;font-size:12px">'
-                            + '<div style="margin-bottom:4px;font-weight:600">' + when + '</div>'
-                            + body + '</div>';
+                            + '<div style="margin-bottom:4px;font-weight:600">' + when
+                            + (source ? ' <span style="color:#64748b">(' + source + ')</span>' : '')
+                            + '</div>' + body + '</div>';
                     }
                 }
             };
         } else {
             options = {
-                ...baseChartOptions,
-                series: [{ name: 'Solar Output (W)', data: data.series }],
-                chart: { ...baseChartOptions.chart, type: 'area', height: 400, stacked: false },
-                colors: ['#f59e0b'],
-                stroke: { curve: 'smooth', width: 2 },
-                fill: {
-                    type: 'gradient',
-                    gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.05, stops: [0, 100] }
+                series: [
+                    { name: 'Home Consumption', data: classic.home || [] },
+                    { name: 'Solar Output', data: classic.solar || [] }
+                ],
+                chart: {
+                    type: 'line',
+                    height: 420,
+                    stacked: false,
+                    animations: { enabled: false },
+                    toolbar: { show: true },
+                    zoom: { enabled: true },
+                    parentHeightOffset: 12
                 },
-                xaxis: { type: 'category', categories: data.categories, labels: timeAxisLabels },
-                legend: { show: false },
+                colors: ['#4f46e5', '#f59e0b'],
+                dataLabels: { enabled: false },
+                stroke: { curve: 'straight', width: 2 },
+                xaxis: xaxisCommon,
+                yaxis: yaxisCommon,
+                grid: gridPad,
+                legend: { show: true, position: 'top' },
                 tooltip: {
-                    custom: function (opts) {
-                        return pacTooltip(opts);
-                    }
+                    shared: true,
+                    intersect: false,
+                    x: { format: 'HH:mm' },
+                    y: { formatter: (val) => (val === null || val === undefined) ? '' : `${val} W` }
                 }
             };
         }
@@ -1050,9 +1088,42 @@ $defaultCompare2 = $yesterday;
         }
         const host = document.querySelector('#chart-intraday');
         host.innerHTML = '';
-        chartIntraday = new ApexCharts(host, options);
-        chartIntraday.render();
-        syncDayViewUrl();
+        try {
+            chartIntraday = new ApexCharts(host, options);
+            chartIntraday.render();
+        } catch (err) {
+            console.error('explorer chart render failed', err);
+            host.innerHTML = '<p class="text-sm text-rose-600 p-6">Chart failed to render. See console.</p>';
+        }
+        syncExplorerUrl();
+    }
+
+    async function loadExplorer() {
+        const params = new URLSearchParams();
+        params.set('ajax', 'explorer');
+        params.set('from', chartQueryTime(explorerStart));
+        params.set('to', chartQueryTime(explorerEnd));
+        if (dayChartView === 'classic') {
+            params.set('view', 'classic');
+        }
+        try {
+            const res = await fetch('analytics.php?' + params.toString());
+            const data = await res.json();
+            if (data.error) {
+                console.error('explorer ajax error', data.error);
+                return;
+            }
+            explorerStart = data.start;
+            explorerEnd = data.end;
+            explorerPayload = data;
+            renderExplorerChart();
+        } catch (err) {
+            console.error('explorer load failed', err);
+            const host = document.querySelector('#chart-intraday');
+            if (host) {
+                host.innerHTML = '<p class="text-sm text-rose-600 p-6">Failed to load explorer data.</p>';
+            }
+        }
     }
 
     let compareLoadTimer = null;
@@ -1096,12 +1167,6 @@ $defaultCompare2 = $yesterday;
     function scheduleCompareLoad() {
         if (compareLoadTimer) clearTimeout(compareLoadTimer);
         compareLoadTimer = setTimeout(() => { loadComparison(); }, 200);
-    }
-
-    let intradayLoadTimer = null;
-    function scheduleIntradayLoad() {
-        if (intradayLoadTimer) clearTimeout(intradayLoadTimer);
-        intradayLoadTimer = setTimeout(() => { loadIntraday(); }, 200);
     }
 
     async function loadEnvelope() {
@@ -1183,15 +1248,11 @@ $defaultCompare2 = $yesterday;
             dayRange = { min: null, max: null };
         }
 
-        bindDateField('singleDateText', 'singleDatePicker', () => {
-            updateGenerateTodayBtn();
-            scheduleIntradayLoad();
-        });
         bindDateField('compareText1', 'comparePicker1', () => scheduleCompareLoad());
         bindDateField('compareText2', 'comparePicker2', () => scheduleCompareLoad());
 
-        updateGenerateTodayBtn();
-        loadIntraday();
+        updateDayViewChrome();
+        loadExplorer();
         loadComparison();
         loadEnvelope();
         lucide.createIcons();

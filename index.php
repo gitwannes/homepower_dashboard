@@ -52,82 +52,26 @@ if (isset($_GET['action']) && $_GET['action'] === 'poll') {
 }
 
 // 2. CSV Streaming
-if (isset($_GET['download'])) {
-    if (!file_exists($dbFile) || !is_readable($dbFile)) die("Database not found.");
-
+if (isset($_GET['download']) && $_GET['download'] === 'logs') {
+    if (!file_exists($dbFile) || !is_readable($dbFile)) {
+        die('Database not found.');
+    }
     header('Content-Type: text/csv; charset=UTF-8');
     header('Pragma: no-cache');
     header('Expires: 0');
-
+    header('Content-Disposition: attachment; filename="system_logs_' . date('Ymd_His') . '.csv"');
     $output = fopen('php://output', 'w');
-    fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
-
+    fprintf($output, chr(0xEF) . chr(0xBB) . chr(0xBF));
     try {
-        $pdo = new PDO("sqlite:" . $dbFile);
+        $pdo = new PDO('sqlite:' . $dbFile);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-
-        if ($_GET['download'] === 'csv') {
-            header('Content-Disposition: attachment; filename="energy_history_' . date('Ymd_His') . '.csv"');
-            fputcsv($output, [
-                "Timestamp",
-                "Net Grid (W)",
-                "Solar Power (W)",
-                "Import Peak (kWh)",
-                "Import Off peak (kWh)",
-                "Total Import (kWh)",
-                "Export Peak (kWh)",
-                "Export Off peak (kWh)",
-                "Total Export (kWh)",
-                "Capacity Peak (W)",
-                "Solar Lifetime (kWh)",
-                "Solar Radiation (W/m2)",
-                "Module Temp (C)",
-                "Wind Speed (m/s)",
-                "Gas (m3)",
-                "Water (m3)"
-            ], ';');
-
-            $stmt = $pdo->query("
-                SELECT timestamp, active_power, solar_power,
-                       import_t1, import_t2, total_import,
-                       export_t1, export_t2, total_export,
-                       capacity_peak_w, solar_total_kwh,
-                       solar_radiation, temp_module, wind_speed,
-                       gas, water
-                FROM readings
-                ORDER BY id ASC
-            ");
-
-            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-                fputcsv($output, [
-                    date('d/m/Y H:i:s', strtotime($row['timestamp'])),
-                    $row['active_power'],
-                    $row['solar_power'] ?? 0,
-                    number_format((float)$row['import_t1'], 3, ',', ''),
-                    number_format((float)$row['import_t2'], 3, ',', ''),
-                    ($row['total_import'] !== null) ? number_format((float)$row['total_import'], 3, ',', '') : '',
-                    number_format((float)$row['export_t1'], 3, ',', ''),
-                    number_format((float)$row['export_t2'], 3, ',', ''),
-                    ($row['total_export'] !== null) ? number_format((float)$row['total_export'], 3, ',', '') : '',
-                    $row['capacity_peak_w'] ?? '',
-                    ($row['solar_total_kwh'] !== null) ? number_format((float)$row['solar_total_kwh'], 2, ',', '') : '',
-                    ($row['solar_radiation'] !== null) ? number_format((float)$row['solar_radiation'], 1, ',', '') : '',
-                    ($row['temp_module'] !== null) ? number_format((float)$row['temp_module'], 1, ',', '') : '',
-                    ($row['wind_speed'] !== null) ? number_format((float)$row['wind_speed'], 1, ',', '') : '',
-                    ($row['gas'] !== null) ? number_format((float)$row['gas'], 3, ',', '') : '',
-                    ($row['water'] !== null) ? number_format((float)$row['water'], 3, ',', '') : ''
-                ], ';');
-            }
-        } elseif ($_GET['download'] === 'logs') {
-            header('Content-Disposition: attachment; filename="system_logs_' . date('Ymd_His') . '.csv"');
-            fputcsv($output, ["ID", "First Seen", "Last Seen", "Status", "Count", "Message"], ';');
-
-            $stmt = $pdo->query("SELECT id, first_seen, last_seen, status, count, message FROM system_logs ORDER BY id ASC");
-            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-                fputcsv($output, [$row['id'], $row['first_seen'], $row['last_seen'], $row['status'], $row['count'], $row['message']], ';');
-            }
+        fputcsv($output, ['ID', 'First Seen', 'Last Seen', 'Status', 'Count', 'Message'], ';');
+        $stmt = $pdo->query('SELECT id, first_seen, last_seen, status, count, message FROM system_logs ORDER BY id ASC');
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            fputcsv($output, [$row['id'], $row['first_seen'], $row['last_seen'], $row['status'], $row['count'], $row['message']], ';');
         }
-    } catch (Exception $e) {}
+    } catch (Exception $e) {
+    }
     fclose($output);
     exit;
 }
@@ -148,7 +92,14 @@ $chartBalance = [
     'grid' => [],
     'surplus' => [],
 ];
-$chartWindow = hp_live_chart_window();
+// A5b: fixed 2-hour live pulse (exploration lives on analytics).
+$nowPulse = time();
+$chartWindow = [
+    'start' => $nowPulse - (2 * 3600),
+    'end' => $nowPulse,
+    'preset' => '2h',
+    'custom' => false,
+];
 $chartView = hp_chart_view();
 $logHistory = [];
 
@@ -746,11 +697,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                     <span id="liveChartTitleText"><?= $chartView === 'balance' ? 'Energy Balance' : ($hasSolar ? 'Solar & Consumption Profile' : 'Power History') ?></span>
                 </h2>
                 <p id="liveChartBlurb" class="text-xs text-slate-400 mt-0.5">
-                    <?= $chartView === 'balance'
-                        ? 'Bands: self-sufficient / grid / surplus. Production and consumption are in the tooltip (stack outline).'
-                        : ($hasSolar
-                            ? 'Real-time area correlation (Amber area above Indigo line = 100% self-sufficient + export)'
-                            : 'Real-time net grid profile with zero-line crossing') ?>
+                    Last 2 hours. Open Analytics for longer windows, pan, and mixed 1-min / 5-min history.
                 </p>
             </div>
             <div class="flex flex-wrap items-center gap-3">
@@ -758,6 +705,9 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                     <button type="button" id="view-balance" class="<?= $chartView === 'balance' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'balance' ? 'true' : 'false' ?>" onclick="setLiveChartView('balance')">Balance</button>
                     <button type="button" id="view-classic" class="<?= $chartView === 'classic' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'classic' ? 'true' : 'false' ?>" onclick="setLiveChartView('classic')">Classic</button>
                 </div>
+                <a href="analytics.php<?= $chartView === 'classic' ? '?view=classic' : '' ?>" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
+                    <i data-lucide="line-chart" class="w-3.5 h-3.5 text-indigo-600"></i> Analytics
+                </a>
                 <div id="liveChartLegendClassic" class="flex items-center gap-3 text-xs <?= $chartView === 'classic' ? '' : 'is-hidden' ?>">
                     <?php if ($hasSolar): ?>
                         <span class="inline-flex items-center gap-1.5 text-indigo-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span> Home Load (W)</span>
@@ -780,73 +730,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                 </div>
             </div>
         </div>
-        <div class="flex flex-wrap items-center gap-1.5 mb-2" role="group" aria-label="Chart range">
-            <?php foreach (hp_live_chart_presets() as $presetId => $preset): ?>
-                <?php
-                $presetOn = !$chartWindow['custom'] && $chartWindow['preset'] === $presetId;
-                $presetHref = hp_chart_view_query(['range' => $presetId], $chartView);
-                ?>
-                <a href="<?= htmlspecialchars($presetHref, ENT_QUOTES, 'UTF-8') ?>" class="px-2.5 py-1 rounded-full text-[11px] font-semibold border <?= $presetOn ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200' ?>"><?= htmlspecialchars($preset['label'], ENT_QUOTES, 'UTF-8') ?></a>
-            <?php endforeach; ?>
-            <?php if ($chartWindow['custom']): ?>
-                <span class="text-[11px] text-slate-400">Custom range</span>
-            <?php endif; ?>
-        </div>
         <div id="historyTimelineChart" class="w-full h-[280px]"></div>
-    </div>
-
-    <!-- Telemetry Table + CSV Export -->
-    <div class="card border border-slate-200">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-            <div>
-                <h2 class="card-title !mb-0"><i data-lucide="table" class="w-4 h-4 text-slate-600"></i> Detailed Telemetry Log</h2>
-                <span class="text-xs text-slate-400">Stored in SQLite by background worker</span>
-            </div>
-            <a href="?download=csv" class="inline-flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-lg text-xs font-semibold transition-all shadow-sm">
-                <i data-lucide="download" class="w-3.5 h-3.5"></i> Download CSV
-            </a>
-        </div>
-
-        <div class="table-scroll overflow-x-auto overflow-y-auto max-h-[320px] rounded-xl border border-slate-100 bg-white">
-            <table class="w-full text-left border-collapse whitespace-nowrap">
-                <thead class="sticky top-0 bg-slate-50 border-b border-slate-200 z-10 text-[11px] uppercase tracking-wider text-slate-500">
-                    <tr>
-                        <th class="py-2.5 px-3.5 font-bold">Timestamp</th>
-                        <th class="py-2.5 px-3.5 font-bold text-right">Net Grid (W)</th>
-                        <?php if ($hasSolar): ?><th class="py-2.5 px-3.5 font-bold text-right text-amber-600">Solar (W)</th><?php endif; ?>
-                        <th class="py-2.5 px-3.5 font-bold text-right">Import Peak</th>
-                        <th class="py-2.5 px-3.5 font-bold text-right">Import Off</th>
-                        <th class="py-2.5 px-3.5 font-bold text-right">Export Peak</th>
-                        <th class="py-2.5 px-3.5 font-bold text-right">Export Off</th>
-                        <th class="py-2.5 px-3.5 font-bold text-right">Gas</th>
-                        <?php if ($hasWater): ?><th class="py-2.5 px-3.5 font-bold text-right">Water</th><?php endif; ?>
-                    </tr>
-                </thead>
-                <tbody class="text-xs text-slate-600 divide-y divide-slate-100 font-mono">
-                    <?php if (!empty($displayHistory)): ?>
-                        <?php foreach ($displayHistory as $index => $row): ?>
-                            <tr class="hover:bg-slate-50 transition-colors <?= $index === 0 ? 'bg-blue-50/20' : '' ?>">
-                                <td class="py-2 px-3.5 text-slate-500 font-sans"><?= htmlspecialchars($row[0]) ?></td>
-                                <td class="py-2 px-3.5 text-right font-bold <?= ($row[1] < 0) ? 'text-emerald-600' : 'text-blue-600' ?>">
-                                    <?= num($row[1], 0) ?>
-                                </td>
-                                <?php if ($hasSolar): ?><td class="py-2 px-3.5 text-right font-bold text-amber-500"><?= num($row[2], 0) ?></td><?php endif; ?>
-                                <td class="py-2 px-3.5 text-right"><?= num($row[3]) ?></td>
-                                <td class="py-2 px-3.5 text-right"><?= num($row[4]) ?></td>
-                                <td class="py-2 px-3.5 text-right <?= ($row[5] > 0) ? 'text-emerald-600 font-medium' : '' ?>"><?= num($row[5]) ?></td>
-                                <td class="py-2 px-3.5 text-right <?= ($row[6] > 0) ? 'text-emerald-600 font-medium' : '' ?>"><?= num($row[6]) ?></td>
-                                <td class="py-2 px-3.5 text-right"><?= ($row[7] !== null) ? num($row[7], 3) : '-' ?></td>
-                                <?php if ($hasWater): ?>
-                                <td class="py-2 px-3.5 text-right"><?= ($row[8] !== null) ? num($row[8], 3) : '-' ?></td>
-                                <?php endif; ?>
-                            </tr>
-                        <?php endforeach; ?>
-                    <?php else: ?>
-                        <tr><td colspan="<?= 7 + ($hasSolar ? 1 : 0) + ($hasWater ? 1 : 0) ?>" class="text-center py-6 text-slate-400 font-sans italic">Waiting for logger.py to record data...</td></tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
     </div>
 
     <!-- NEW SECTION: Sunny WebBox Connected Devices & SensorBox -->
@@ -1333,29 +1217,23 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         if (hasSolar) {
             return {
                 series: [
-                    { name: 'Home Consumption', type: 'area', data: classicHome },
-                    { name: 'Solar Output', type: 'area', data: classicSolar }
+                    { name: 'Home Consumption', type: 'line', data: classicHome },
+                    { name: 'Solar Output', type: 'line', data: classicSolar }
                 ],
                 colors: ['#4f46e5', '#f59e0b'],
-                stroke: { curve: 'straight', width: [2, 2] },
-                fill: {
-                    type: 'gradient',
-                    gradient: { shadeIntensity: 1, opacityFrom: 0.5, opacityTo: 0.05, stops: [0, 90, 100] }
-                },
+                stroke: { curve: 'straight', width: 2 },
+                fill: { type: 'solid', opacity: 0 },
                 annotations: {},
                 stacked: false
             };
         }
         return {
             series: [
-                { name: 'Net Grid Power', type: 'area', data: classicGrid }
+                { name: 'Net Grid Power', type: 'line', data: classicGrid }
             ],
             colors: ['#2563eb'],
             stroke: { curve: 'straight', width: 2 },
-            fill: {
-                type: 'gradient',
-                gradient: { shadeIntensity: 1, opacityFrom: 0.5, opacityTo: 0.05, stops: [0, 90, 100] }
-            },
+            fill: { type: 'solid', opacity: 0 },
             annotations: {
                 yaxis: [{
                     y: 0,
@@ -1372,55 +1250,38 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         };
     }
 
-    /**
-     * Pointwise sum for fake stacked areas (Apex stacked:true hides line strokes).
-     * Paint order back-to-front: surplus top, grid top, self; then absolute lines.
-     *
-     * @param {Array<{x:number,y:number|null}>} a
-     * @param {Array<{x:number,y:number|null}>} b
-     * @returns {Array<{x:number,y:number|null}>}
-     */
-    function addXyWatts(a, b) {
-        const n = Math.min(a.length, b.length);
+    /** Apex stacked areas go blank on null y - coerce to 0. */
+    function stackSafeXy(points) {
+        if (!Array.isArray(points)) return [];
         const out = [];
-        for (let i = 0; i < n; i++) {
-            const pa = a[i];
-            const pb = b[i];
-            if (
-                pa.y === null || pa.y === undefined
-                || pb.y === null || pb.y === undefined
-            ) {
-                out.push({ x: pa.x, y: null });
-            } else {
-                out.push({ x: pa.x, y: Number(pa.y) + Number(pb.y) });
-            }
+        for (let i = 0; i < points.length; i++) {
+            const p = points[i];
+            if (!p || p.x === null || p.x === undefined) continue;
+            const y = (p.y === null || p.y === undefined || !Number.isFinite(Number(p.y)))
+                ? 0
+                : Number(p.y);
+            out.push({ x: p.x, y: y });
         }
         return out;
     }
 
     function balanceChartConfig() {
-        // Paint only the three bands. Production / Consumption equal the stack outline
-        // (self+surplus / self+grid), so separate strokes sit on that edge and vanish.
-        // They stay in the legend (split dots) and in the tooltip.
-        const self = balanceData.self_sufficient;
-        const grid = balanceData.grid;
-        const surplus = balanceData.surplus;
-        const gridTop = addXyWatts(self, grid);
-        const stackTop = addXyWatts(gridTop, surplus);
+        // Three band thicknesses with Apex stacked:true (no fake cumulative tops).
+        const self = stackSafeXy(balanceData.self_sufficient);
+        const grid = stackSafeXy(balanceData.grid);
+        const surplus = stackSafeXy(balanceData.surplus);
         return {
             series: [
-                { name: 'Surplus', type: 'area', data: stackTop },
-                { name: 'Grid', type: 'area', data: gridTop },
-                { name: 'Self-sufficient', type: 'area', data: self }
+                { name: 'Self-sufficient', data: self },
+                { name: 'Grid', data: grid },
+                { name: 'Surplus', data: surplus }
             ],
-            colors: ['#10b981', '#7c3aed', '#3b82f6'],
-            stroke: { curve: 'straight', width: 0 },
-            fill: {
-                type: 'solid',
-                opacity: [0.45, 0.5, 0.55]
-            },
+            colors: ['#3b82f6', '#7c3aed', '#10b981'],
+            // HW-like silk edges on stacked bands (Classic stays straight).
+            stroke: { curve: 'smooth', width: 0 },
+            fill: { type: 'solid', opacity: 0.75 },
             annotations: {},
-            stacked: false,
+            stacked: true,
             tipBands: { self: self, grid: grid, surplus: surplus }
         };
     }
@@ -1432,32 +1293,11 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
             + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
     }
 
-    function rememberChartZoom(minMs, maxMs) {
-        let min = minMs;
-        let max = maxMs;
-        if (max - min < minZoomMs) {
-            min = max - minZoomMs;
-        }
-        if (max - min > maxZoomMs) {
-            min = max - maxZoomMs;
-        }
-        if (Math.abs(min - chartStartMs) < 1500 && Math.abs(max - chartEndMs) < 1500) {
-            return;
-        }
-        const params = new URLSearchParams(window.location.search);
-        params.delete('range');
-        params.set('from', chartQueryTime(min));
-        params.set('to', chartQueryTime(max));
-        if (liveChartView === 'classic') {
-            params.set('view', 'classic');
-        } else {
-            params.delete('view');
-        }
-        window.location.search = params.toString();
-    }
-
     function syncLiveViewUrl() {
         const url = new URL(window.location.href);
+        url.searchParams.delete('range');
+        url.searchParams.delete('from');
+        url.searchParams.delete('to');
         if (liveChartView === 'classic') {
             url.searchParams.set('view', 'classic');
         } else {
@@ -1487,11 +1327,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                 : (hasSolar ? 'Solar & Consumption Profile' : 'Power History');
         }
         if (blurb) {
-            blurb.textContent = liveChartView === 'balance'
-                ? 'Bands: self-sufficient / grid / surplus. Production and consumption are in the tooltip (stack outline).'
-                : (hasSolar
-                    ? 'Real-time area correlation (Amber area above Indigo line = 100% self-sufficient + export)'
-                    : 'Real-time net grid profile with zero-line crossing');
+            blurb.textContent = 'Last 2 hours. Open Analytics for longer windows, pan, and mixed 1-min / 5-min history.';
         }
     }
 
@@ -1503,10 +1339,11 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         const options = {
             series: cfg.series,
             chart: {
-                type: 'line',
+                type: liveChartView === 'balance' ? 'area' : 'line',
                 height: 280,
                 stacked: !!cfg.stacked,
                 animations: { enabled: false },
+                parentHeightOffset: 8,
                 toolbar: {
                     show: true,
                     tools: { download: false, selection: true, zoom: true, zoomin: false, zoomout: false, pan: false, reset: true }
@@ -1526,11 +1363,8 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                         }
                         return range;
                     },
-                    zoomed: function (_ctx, range) {
-                        if (!range || !range.xaxis) {
-                            return;
-                        }
-                        rememberChartZoom(range.xaxis.min, range.xaxis.max);
+                    zoomed: function () {
+                        // Visual zoom only; pulse stays last 2 hours on reload.
                     }
                 }
             },
@@ -1544,15 +1378,21 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                 type: 'datetime',
                 min: chartStartMs,
                 max: chartEndMs,
-                labels: { datetimeUTC: false, style: { fontSize: '10px', colors: '#94a3b8' } },
+                labels: {
+                    datetimeUTC: false,
+                    format: 'HH:mm',
+                    style: { fontSize: '11px', colors: '#94a3b8' }
+                },
                 tickAmount: 8
             },
             yaxis: {
+                min: 0,
                 labels: {
                     formatter: (val) => (val === null || val === undefined || !Number.isFinite(Number(val))) ? '' : `${Number(val).toFixed(0)} W`,
                     style: { fontSize: '10px', colors: '#94a3b8' }
                 }
             },
+            grid: { borderColor: '#f1f5f9', padding: { left: 8, right: 12, bottom: 8 } },
             tooltip: tipBands ? {
                 shared: true,
                 intersect: false,
@@ -1562,12 +1402,14 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                     const when = w.globals.seriesX[0] && w.globals.seriesX[0][i] != null
                         ? new Date(w.globals.seriesX[0][i]).toLocaleString()
                         : '';
+                    const prod = stackSafeXy(balanceData.production);
+                    const cons = stackSafeXy(balanceData.consumption);
                     const rows = [
-                        ['Production', balanceData.production[i] && balanceData.production[i].y, '#f59e0b'],
-                        ['Consumption', balanceData.consumption[i] && balanceData.consumption[i].y, '#334155'],
-                        ['Self-sufficient', tipBands.self[i] && tipBands.self[i].y, '#3b82f6'],
-                        ['Grid', tipBands.grid[i] && tipBands.grid[i].y, '#7c3aed'],
-                        ['Surplus', tipBands.surplus[i] && tipBands.surplus[i].y, '#10b981']
+                        ['Production', prod[i] ? prod[i].y : null, '#f59e0b'],
+                        ['Consumption', cons[i] ? cons[i].y : null, '#334155'],
+                        ['Self-sufficient', tipBands.self[i] ? tipBands.self[i].y : null, '#3b82f6'],
+                        ['Grid', tipBands.grid[i] ? tipBands.grid[i].y : null, '#7c3aed'],
+                        ['Surplus', tipBands.surplus[i] ? tipBands.surplus[i].y : null, '#10b981']
                     ];
                     let body = '';
                     for (let r = 0; r < rows.length; r++) {
@@ -1585,17 +1427,24 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                 x: { format: 'dd MMM HH:mm' },
                 y: { formatter: (val) => (val === null || val === undefined) ? '' : `${val} W` }
             },
-            grid: { borderColor: '#f1f5f9' },
             legend: { show: false }
         };
         const host = document.querySelector('#historyTimelineChart');
+        if (!host) {
+            return;
+        }
         if (historyChart) {
             historyChart.destroy();
             historyChart = null;
         }
         host.innerHTML = '';
-        historyChart = new ApexCharts(host, options);
-        historyChart.render();
+        try {
+            historyChart = new ApexCharts(host, options);
+            historyChart.render();
+        } catch (err) {
+            console.error('live chart render failed', err);
+            host.innerHTML = '<p class="text-sm text-rose-600 p-4">Chart failed to render. See console.</p>';
+        }
     }
 
     function setLiveChartView(view) {
