@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4**, **A5**, **A6**, **A8**, **A9**, **A10**, and **A13 Done**; **A5b** and **A7** coding on `main`; A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-27 (main consolidate: A5+A5b+A7)  
+**Status:** **A4**, **A5**, **A6**, **A7**, **A8**, **A9**, **A10**, and **A13 Done**; **A5b** coding on `main`; A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-27 (**A7** closed)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py` · `settings.php`
 
 ---
@@ -15,7 +15,7 @@
 | **A5** | Done | Balance/Classic multi-series power (both pages). Product: [`docs/architecture.md`](../architecture.md) |
 | **A5b** | coding | Balance explorer; index 2h pulse; mixed 1/5-min; CSV→Settings; drop telemetry table |
 | **A6** | Done | Settings page (`settings.php`). Product: [`docs/architecture.md`](../architecture.md) |
-| **A7** | coding | `top_records` on `topn.php` + `-daily` beat + `-buildalltoprecords` |
+| **A7** | Done | `top_records` on `topn.php`. Product: [`docs/architecture.md`](../architecture.md) |
 | **A8** | Done | Live chart clock window. Product: [`docs/architecture.md`](../architecture.md) |
 | **A9** | Done | Settings encrypted backup download + restore. Product: [`docs/architecture.md`](../architecture.md) |
 | **A10** | Done | Warehouse rebuild. Product: [`docs/architecture.md`](../architecture.md) (Rollup CLI) |
@@ -23,9 +23,9 @@
 | **A12** | open | Historical monthly Fluvius peak on a page. Not P3. Not kicked off |
 | **A13** | Done | Grid import/export on summary and top-n. Product: [`docs/architecture.md`](../architecture.md) |
 
-**Parallel:** **A5b** and A7 are independent of **P1–P2**. **A11** and **A12** read Fluvius rows **P3** stored. They are not kicked off. Wind for A11 is already in the warehouse.
+**Parallel:** **A5b** is independent of **P1–P2**. **A11** and **A12** read Fluvius rows **P3** stored. They are not kicked off. Wind for A11 is already in the warehouse.
 
-**Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 keeps `top_records` singles on `topn.php`.
+**Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
 ---
 
@@ -332,27 +332,12 @@ SQLite in `meter_history.db` (web user and poller can both open it). PHP does no
 
 ## A7 — `top_records` on Top-N
 
-**Status:** coding (on `main`; awaiting operator close)  
-**Product:** [`docs/architecture.md`](../architecture.md) (`topn.php`, Rollup CLI)  
-**Scope:** Keep `top_records` as all-time singles; show them on `topn.php`; refresh extremes on `-daily`; add `-buildalltoprecords`.  
-**Context:** Hall of Fame UI removed in A3. A4 `top_periods` covers yield Top-N lists. This phase is the leftover singles table + UI.
+**Status:** **Done** 2026-10-27  
+**Product:** [`docs/architecture.md`](../architecture.md) (`topn.php`, Rollup CLI)
 
-### Locks (operator 2026-10-27)
+### Done summary
 
-| # | Lock |
-|---|---|
-| 1 | **Keep** `top_records`. UI: fold a records table into **`topn.php`**. |
-| 2 | **Record ids (eight):** `best_day_kwh`, `peak_surge_w`, `max_wind_ms`, `max_temp_c`, `min_temp_c`, `max_sun_hours`, `max_module_temp_c`, `best_self_consumption_kwh`. |
-| 3 | **Conditional rows:** wind / ambient min-max / module temp / self-consumption — show only when the warehouse has usable values for that metric. Hide the row when absent. |
-| 4 | **Out of A7 record set:** `max_radiation_wm2`, daily `solar_peak_w` as a separate single. Yield month/year and grid Top-N stay A4/A13. |
-| 5 | **Links:** every row with a `record_date` links to **analytics for that day**. |
-| 6 | **`-buildall`:** still full warehouse rebuild, including a full rewrite of `top_records`. |
-| 7 | **`-buildalltoprecords`:** full rewrite of `top_records` only. |
-| 8 | **`-daily`:** after downsample + `daily_history` refresh, beat-check candidates in the Fluvius stitch calendar span; replace only on a **stricter extreme**. |
-
-### Done summary (code on main)
-
-Eight all-time singles in `top_records`. `-buildall` and `-buildalltoprecords` full rewrite; `-daily` stricter-extreme beat. `topn.php` shows an All-time records table above the rankings; missing sensorbox/self-consumption rows stay hidden; every dated row opens `analytics.php?date=`.
+All-time singles live in `top_records` and on `topn.php` (above the rankings). Eight ids: best day kWh, peak surge W, sun-hours, self-consumption, wind, ambient min/max, module max. Wind / ambient / module / self-consumption rows hide when absent. Every dated row opens analytics for that day. `-buildall` and `-buildalltoprecords` full rewrite; `-daily` replaces a row only on a stricter extreme in the Fluvius stitch calendar span.
 
 ### DoD
 
@@ -360,7 +345,12 @@ Eight all-time singles in `top_records`. `-buildall` and `-buildalltoprecords` f
 - [x] `-daily` beat path; `-buildalltoprecords`; `-buildall` still builds tops
 - [x] `topn.php` table + analytics day links; hide empty sensorbox/grid rows
 - [x] Product docs (`architecture.md` / roadmap)
-- [ ] Operator close
+- [x] Operator close
+
+### Verbatim — 2026-10-27 (close)
+
+> close A7
+
 ### Verbatim — 2026-10-23 (triage origin)
 
 > 7B + add to triage to either drop or change
@@ -431,7 +421,7 @@ Settings downloads and restores an encrypted copy of the whole database. `db_bac
 
 - Fluvius (**P3**) and SMA / ennexOS (**P1**, **P2**).
 - Restoring `sql_importer.py`.
-- `top_records` from `-daily` (**A7**).
+- (A7 Done: `top_records` beat on `-daily` + `-buildalltoprecords`.)
 
 ### Verbatim — 2026-10-26 (close)
 
