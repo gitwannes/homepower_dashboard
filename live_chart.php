@@ -1,10 +1,11 @@
 <?php
 # --- file: live_chart.php ---
 /**
- * Live dashboard time window (A8).
+ * Live dashboard time window (A8) and classic/balance series (A5).
  * Presets end at now. A dragged range is from/to and is kept as given.
  * A step longer than 3 minutes is a gap. A 3-minute step stays connected.
  */
+require_once __DIR__ . '/balance_chart.php';
 
 /**
  * Preset id => label and length in seconds.
@@ -104,4 +105,60 @@ function hp_live_chart_series(array $rows): array
         $prev = $ts;
     }
     return ['home' => $home, 'solar' => $solar, 'grid' => $grid];
+}
+
+/**
+ * Apex datetime points for balance bands from 1-minute readings.
+ * Same 3-minute gap rule as classic.
+ *
+ * @param array<int, array<string, mixed>> $rows Oldest first.
+ * @return array{
+ *   production: array<int, array{x: int, y: int|null}>,
+ *   consumption: array<int, array{x: int, y: int|null}>,
+ *   self_sufficient: array<int, array{x: int, y: int|null}>,
+ *   grid: array<int, array{x: int, y: int|null}>,
+ *   surplus: array<int, array{x: int, y: int|null}>
+ * }
+ */
+function hp_live_chart_balance_series(array $rows): array
+{
+    $production = [];
+    $consumption = [];
+    $selfSufficient = [];
+    $grid = [];
+    $surplus = [];
+    $prev = null;
+    foreach ($rows as $row) {
+        $ts = strtotime((string)($row['timestamp'] ?? ''));
+        if ($ts === false) {
+            continue;
+        }
+        if ($prev !== null && ($ts - $prev) > 180) {
+            $breakAt = ($prev * 1000) + 1000;
+            $production[] = ['x' => $breakAt, 'y' => null];
+            $consumption[] = ['x' => $breakAt, 'y' => null];
+            $selfSufficient[] = ['x' => $breakAt, 'y' => null];
+            $grid[] = ['x' => $breakAt, 'y' => null];
+            $surplus[] = ['x' => $breakAt, 'y' => null];
+        }
+        $ms = $ts * 1000;
+        $solarRaw = $row['solar_power'] ?? null;
+        $gridRaw = $row['active_power'] ?? null;
+        $solarW = ($solarRaw === null || $solarRaw === '') ? null : (float)$solarRaw;
+        $gridNetW = ($gridRaw === null || $gridRaw === '') ? null : (float)$gridRaw;
+        $parts = hp_balance_parts($solarW, $gridNetW);
+        $production[] = ['x' => $ms, 'y' => $parts ? hp_chart_watt($parts['production']) : null];
+        $consumption[] = ['x' => $ms, 'y' => $parts ? hp_chart_watt($parts['consumption']) : null];
+        $selfSufficient[] = ['x' => $ms, 'y' => $parts ? hp_chart_watt($parts['self_sufficient']) : null];
+        $grid[] = ['x' => $ms, 'y' => $parts ? hp_chart_watt($parts['grid']) : null];
+        $surplus[] = ['x' => $ms, 'y' => $parts ? hp_chart_watt($parts['surplus']) : null];
+        $prev = $ts;
+    }
+    return [
+        'production' => $production,
+        'consumption' => $consumption,
+        'self_sufficient' => $selfSufficient,
+        'grid' => $grid,
+        'surplus' => $surplus,
+    ];
 }

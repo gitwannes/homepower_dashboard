@@ -141,7 +141,15 @@ $displayHistory = [];
 $chartGrid = [];
 $chartSolar = [];
 $chartHome = [];
+$chartBalance = [
+    'production' => [],
+    'consumption' => [],
+    'self_sufficient' => [],
+    'grid' => [],
+    'surplus' => [],
+];
 $chartWindow = hp_live_chart_window();
+$chartView = hp_chart_view();
 $logHistory = [];
 
 if (!$fatalError) {
@@ -184,10 +192,12 @@ if (!$fatalError) {
                     date('Y-m-d H:i:s', $chartWindow['start']),
                     date('Y-m-d H:i:s', $chartWindow['end']),
                 ]);
-                $chartBuilt = hp_live_chart_series($chartStmt->fetchAll(PDO::FETCH_ASSOC));
+                $chartRows = $chartStmt->fetchAll(PDO::FETCH_ASSOC);
+                $chartBuilt = hp_live_chart_series($chartRows);
                 $chartHome = $chartBuilt['home'];
                 $chartSolar = $chartBuilt['solar'];
                 $chartGrid = $chartBuilt['grid'];
+                $chartBalance = hp_live_chart_balance_series($chartRows);
 
                 $stmt = $pdo->query("SELECT id, first_seen, last_seen, status, count, message FROM system_logs ORDER BY id DESC LIMIT 50");
                 $logHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -285,6 +295,33 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         .table-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
         .table-scroll::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px; }
         .table-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .metric-switch {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px;
+            border: 2px solid #0f172a;
+            border-radius: 999px;
+            background: #e2e8f0;
+        }
+        .metric-switch button {
+            appearance: none;
+            -webkit-appearance: none;
+            margin: 0;
+            border: 0;
+            border-radius: 999px;
+            padding: 6px 14px;
+            font: 700 12px/1.2 system-ui, sans-serif;
+            color: #334155;
+            background: transparent;
+            cursor: pointer;
+        }
+        .metric-switch button.metric-on {
+            background: #0f172a;
+            color: #ffffff;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
+        }
+        .is-hidden { display: none !important; }
     </style>
 </head>
 <body class="p-4 md:p-8">
@@ -704,28 +741,52 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
     <div class="card border-t-4 border-t-slate-800">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
             <div>
-                <h2 class="card-title !mb-0">
+                <h2 id="liveChartTitle" class="card-title !mb-0">
                     <i data-lucide="trending-up" class="w-4 h-4 text-slate-700"></i>
-                    <?= $hasSolar ? "Solar & Consumption Profile" : "Power History" ?>
+                    <span id="liveChartTitleText"><?= $chartView === 'balance' ? 'Energy Balance' : ($hasSolar ? 'Solar & Consumption Profile' : 'Power History') ?></span>
                 </h2>
-                <p class="text-xs text-slate-400 mt-0.5">
-                    <?= $hasSolar ? "Real-time area correlation (Amber area above Indigo line = 100% self-sufficient + export)" : "Real-time net grid profile with zero-line crossing" ?>
+                <p id="liveChartBlurb" class="text-xs text-slate-400 mt-0.5">
+                    <?= $chartView === 'balance'
+                        ? 'Bands: self-sufficient / grid / surplus. Production and consumption are in the tooltip (stack outline).'
+                        : ($hasSolar
+                            ? 'Real-time area correlation (Amber area above Indigo line = 100% self-sufficient + export)'
+                            : 'Real-time net grid profile with zero-line crossing') ?>
                 </p>
             </div>
-            <div class="flex items-center gap-3 text-xs">
-                <?php if ($hasSolar): ?>
-                    <span class="inline-flex items-center gap-1.5 text-indigo-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span> Home Load (W)</span>
-                    <span class="inline-flex items-center gap-1.5 text-amber-500 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span> Solar Output (W)</span>
-                <?php else: ?>
-                    <span class="inline-flex items-center gap-1.5 text-blue-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Grid Import (> 0 W)</span>
-                    <span class="inline-flex items-center gap-1.5 text-emerald-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Solar Export (< 0 W)</span>
-                <?php endif; ?>
+            <div class="flex flex-wrap items-center gap-3">
+                <div class="metric-switch" role="group" aria-label="Chart view">
+                    <button type="button" id="view-balance" class="<?= $chartView === 'balance' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'balance' ? 'true' : 'false' ?>" onclick="setLiveChartView('balance')">Balance</button>
+                    <button type="button" id="view-classic" class="<?= $chartView === 'classic' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'classic' ? 'true' : 'false' ?>" onclick="setLiveChartView('classic')">Classic</button>
+                </div>
+                <div id="liveChartLegendClassic" class="flex items-center gap-3 text-xs <?= $chartView === 'classic' ? '' : 'is-hidden' ?>">
+                    <?php if ($hasSolar): ?>
+                        <span class="inline-flex items-center gap-1.5 text-indigo-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span> Home Load (W)</span>
+                        <span class="inline-flex items-center gap-1.5 text-amber-500 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span> Solar Output (W)</span>
+                    <?php else: ?>
+                        <span class="inline-flex items-center gap-1.5 text-blue-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Grid Import (> 0 W)</span>
+                        <span class="inline-flex items-center gap-1.5 text-emerald-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Solar Export (< 0 W)</span>
+                    <?php endif; ?>
+                </div>
+                <div id="liveChartLegendBalance" class="flex flex-wrap items-center gap-2 text-xs <?= $chartView === 'balance' ? '' : 'is-hidden' ?>">
+                    <span class="inline-flex items-center gap-1.5 text-blue-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Self-sufficient</span>
+                    <span class="inline-flex items-center gap-1.5 text-violet-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-violet-600"></span> Grid</span>
+                    <span class="inline-flex items-center gap-1.5 text-emerald-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Surplus</span>
+                    <span class="inline-flex items-center gap-1.5 text-slate-600 font-medium" title="Self-sufficient + Grid (tooltip)">
+                        <span class="w-2.5 h-2.5 rounded-full inline-block" style="background:linear-gradient(90deg,#3b82f6 50%,#7c3aed 50%)"></span> Consumption
+                    </span>
+                    <span class="inline-flex items-center gap-1.5 text-slate-600 font-medium" title="Self-sufficient + Surplus (tooltip)">
+                        <span class="w-2.5 h-2.5 rounded-full inline-block" style="background:linear-gradient(90deg,#3b82f6 50%,#10b981 50%)"></span> Production
+                    </span>
+                </div>
             </div>
         </div>
         <div class="flex flex-wrap items-center gap-1.5 mb-2" role="group" aria-label="Chart range">
             <?php foreach (hp_live_chart_presets() as $presetId => $preset): ?>
-                <?php $presetOn = !$chartWindow['custom'] && $chartWindow['preset'] === $presetId; ?>
-                <a href="?range=<?= htmlspecialchars($presetId, ENT_QUOTES, 'UTF-8') ?>" class="px-2.5 py-1 rounded-full text-[11px] font-semibold border <?= $presetOn ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200' ?>"><?= htmlspecialchars($preset['label'], ENT_QUOTES, 'UTF-8') ?></a>
+                <?php
+                $presetOn = !$chartWindow['custom'] && $chartWindow['preset'] === $presetId;
+                $presetHref = hp_chart_view_query(['range' => $presetId], $chartView);
+                ?>
+                <a href="<?= htmlspecialchars($presetHref, ENT_QUOTES, 'UTF-8') ?>" class="px-2.5 py-1 rounded-full text-[11px] font-semibold border <?= $presetOn ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200' ?>"><?= htmlspecialchars($preset['label'], ENT_QUOTES, 'UTF-8') ?></a>
             <?php endforeach; ?>
             <?php if ($chartWindow['custom']): ?>
                 <span class="text-[11px] text-slate-400">Custom range</span>
@@ -1255,33 +1316,112 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
     const chartEndMs = <?= (int)$chartWindow['end'] * 1000 ?>;
     const minZoomMs = 15 * 60 * 1000;
     const maxZoomMs = 7 * 24 * 60 * 60 * 1000;
+    let liveChartView = <?= json_encode($chartView) ?>;
 
-    let chartSeries = [];
-    let chartColors = [];
-    let chartAnnotations = {};
+    const classicHome = <?= json_encode($chartHome) ?>;
+    const classicSolar = <?= json_encode($chartSolar) ?>;
+    const classicGrid = <?= json_encode($chartGrid) ?>;
+    const balanceData = {
+        production: <?= json_encode($chartBalance['production']) ?>,
+        consumption: <?= json_encode($chartBalance['consumption']) ?>,
+        self_sufficient: <?= json_encode($chartBalance['self_sufficient']) ?>,
+        grid: <?= json_encode($chartBalance['grid']) ?>,
+        surplus: <?= json_encode($chartBalance['surplus']) ?>
+    };
 
-    if (hasSolar) {
-        chartSeries = [
-            { name: 'Home Consumption', data: <?= json_encode($chartHome) ?> },
-            { name: 'Solar Output', data: <?= json_encode($chartSolar) ?> }
-        ];
-        chartColors = ['#4f46e5', '#f59e0b'];
-    } else {
-        chartSeries = [
-            { name: 'Net Grid Power', data: <?= json_encode($chartGrid) ?> }
-        ];
-        chartColors = ['#2563eb'];
-        chartAnnotations = {
-            yaxis: [{
-                y: 0,
-                borderColor: '#10b981',
-                borderWidth: 1.5,
-                label: {
+    function classicChartConfig() {
+        if (hasSolar) {
+            return {
+                series: [
+                    { name: 'Home Consumption', type: 'area', data: classicHome },
+                    { name: 'Solar Output', type: 'area', data: classicSolar }
+                ],
+                colors: ['#4f46e5', '#f59e0b'],
+                stroke: { curve: 'straight', width: [2, 2] },
+                fill: {
+                    type: 'gradient',
+                    gradient: { shadeIntensity: 1, opacityFrom: 0.5, opacityTo: 0.05, stops: [0, 90, 100] }
+                },
+                annotations: {},
+                stacked: false
+            };
+        }
+        return {
+            series: [
+                { name: 'Net Grid Power', type: 'area', data: classicGrid }
+            ],
+            colors: ['#2563eb'],
+            stroke: { curve: 'straight', width: 2 },
+            fill: {
+                type: 'gradient',
+                gradient: { shadeIntensity: 1, opacityFrom: 0.5, opacityTo: 0.05, stops: [0, 90, 100] }
+            },
+            annotations: {
+                yaxis: [{
+                    y: 0,
                     borderColor: '#10b981',
-                    style: { color: '#fff', background: '#10b981', fontSize: '10px' },
-                    text: '0 W (Grid Neutral)'
-                }
-            }]
+                    borderWidth: 1.5,
+                    label: {
+                        borderColor: '#10b981',
+                        style: { color: '#fff', background: '#10b981', fontSize: '10px' },
+                        text: '0 W (Grid Neutral)'
+                    }
+                }]
+            },
+            stacked: false
+        };
+    }
+
+    /**
+     * Pointwise sum for fake stacked areas (Apex stacked:true hides line strokes).
+     * Paint order back-to-front: surplus top, grid top, self; then absolute lines.
+     *
+     * @param {Array<{x:number,y:number|null}>} a
+     * @param {Array<{x:number,y:number|null}>} b
+     * @returns {Array<{x:number,y:number|null}>}
+     */
+    function addXyWatts(a, b) {
+        const n = Math.min(a.length, b.length);
+        const out = [];
+        for (let i = 0; i < n; i++) {
+            const pa = a[i];
+            const pb = b[i];
+            if (
+                pa.y === null || pa.y === undefined
+                || pb.y === null || pb.y === undefined
+            ) {
+                out.push({ x: pa.x, y: null });
+            } else {
+                out.push({ x: pa.x, y: Number(pa.y) + Number(pb.y) });
+            }
+        }
+        return out;
+    }
+
+    function balanceChartConfig() {
+        // Paint only the three bands. Production / Consumption equal the stack outline
+        // (self+surplus / self+grid), so separate strokes sit on that edge and vanish.
+        // They stay in the legend (split dots) and in the tooltip.
+        const self = balanceData.self_sufficient;
+        const grid = balanceData.grid;
+        const surplus = balanceData.surplus;
+        const gridTop = addXyWatts(self, grid);
+        const stackTop = addXyWatts(gridTop, surplus);
+        return {
+            series: [
+                { name: 'Surplus', type: 'area', data: stackTop },
+                { name: 'Grid', type: 'area', data: gridTop },
+                { name: 'Self-sufficient', type: 'area', data: self }
+            ],
+            colors: ['#10b981', '#7c3aed', '#3b82f6'],
+            stroke: { curve: 'straight', width: 0 },
+            fill: {
+                type: 'solid',
+                opacity: [0.45, 0.5, 0.55]
+            },
+            annotations: {},
+            stacked: false,
+            tipBands: { self: self, grid: grid, surplus: surplus }
         };
     }
 
@@ -1308,68 +1448,169 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         params.delete('range');
         params.set('from', chartQueryTime(min));
         params.set('to', chartQueryTime(max));
+        if (liveChartView === 'classic') {
+            params.set('view', 'classic');
+        } else {
+            params.delete('view');
+        }
         window.location.search = params.toString();
     }
 
-    const historyChart = new ApexCharts(document.querySelector("#historyTimelineChart"), {
-        series: chartSeries,
-        chart: {
-            type: 'area',
-            height: 250,
-            animations: { enabled: false },
-            toolbar: {
-                show: true,
-                tools: { download: false, selection: true, zoom: true, zoomin: false, zoomout: false, pan: false, reset: true }
-            },
-            zoom: { enabled: true, type: 'x', autoScaleYaxis: false },
-            events: {
-                beforeZoom: function (_ctx, range) {
-                    if (!range || !range.xaxis) {
-                        return range;
-                    }
-                    const span = range.xaxis.max - range.xaxis.min;
-                    if (span < minZoomMs) {
-                        return { xaxis: { min: range.xaxis.max - minZoomMs, max: range.xaxis.max } };
-                    }
-                    if (span > maxZoomMs) {
-                        return { xaxis: { min: range.xaxis.max - maxZoomMs, max: range.xaxis.max } };
-                    }
-                    return range;
+    function syncLiveViewUrl() {
+        const url = new URL(window.location.href);
+        if (liveChartView === 'classic') {
+            url.searchParams.set('view', 'classic');
+        } else {
+            url.searchParams.delete('view');
+        }
+        window.history.replaceState({}, '', url.pathname + url.search);
+    }
+
+    function updateLiveViewChrome() {
+        const balBtn = document.getElementById('view-balance');
+        const clsBtn = document.getElementById('view-classic');
+        if (balBtn && clsBtn) {
+            balBtn.classList.toggle('metric-on', liveChartView === 'balance');
+            clsBtn.classList.toggle('metric-on', liveChartView === 'classic');
+            balBtn.setAttribute('aria-pressed', liveChartView === 'balance' ? 'true' : 'false');
+            clsBtn.setAttribute('aria-pressed', liveChartView === 'classic' ? 'true' : 'false');
+        }
+        const legB = document.getElementById('liveChartLegendBalance');
+        const legC = document.getElementById('liveChartLegendClassic');
+        if (legB) legB.classList.toggle('is-hidden', liveChartView !== 'balance');
+        if (legC) legC.classList.toggle('is-hidden', liveChartView !== 'classic');
+        const title = document.getElementById('liveChartTitleText');
+        const blurb = document.getElementById('liveChartBlurb');
+        if (title) {
+            title.textContent = liveChartView === 'balance'
+                ? 'Energy Balance'
+                : (hasSolar ? 'Solar & Consumption Profile' : 'Power History');
+        }
+        if (blurb) {
+            blurb.textContent = liveChartView === 'balance'
+                ? 'Bands: self-sufficient / grid / surplus. Production and consumption are in the tooltip (stack outline).'
+                : (hasSolar
+                    ? 'Real-time area correlation (Amber area above Indigo line = 100% self-sufficient + export)'
+                    : 'Real-time net grid profile with zero-line crossing');
+        }
+    }
+
+    let historyChart = null;
+
+    function renderLiveHistoryChart() {
+        const cfg = liveChartView === 'balance' ? balanceChartConfig() : classicChartConfig();
+        const tipBands = cfg.tipBands || null;
+        const options = {
+            series: cfg.series,
+            chart: {
+                type: 'line',
+                height: 280,
+                stacked: !!cfg.stacked,
+                animations: { enabled: false },
+                toolbar: {
+                    show: true,
+                    tools: { download: false, selection: true, zoom: true, zoomin: false, zoomout: false, pan: false, reset: true }
                 },
-                zoomed: function (_ctx, range) {
-                    if (!range || !range.xaxis) {
-                        return;
+                zoom: { enabled: true, type: 'x', autoScaleYaxis: false },
+                events: {
+                    beforeZoom: function (_ctx, range) {
+                        if (!range || !range.xaxis) {
+                            return range;
+                        }
+                        const span = range.xaxis.max - range.xaxis.min;
+                        if (span < minZoomMs) {
+                            return { xaxis: { min: range.xaxis.max - minZoomMs, max: range.xaxis.max } };
+                        }
+                        if (span > maxZoomMs) {
+                            return { xaxis: { min: range.xaxis.max - maxZoomMs, max: range.xaxis.max } };
+                        }
+                        return range;
+                    },
+                    zoomed: function (_ctx, range) {
+                        if (!range || !range.xaxis) {
+                            return;
+                        }
+                        rememberChartZoom(range.xaxis.min, range.xaxis.max);
                     }
-                    rememberChartZoom(range.xaxis.min, range.xaxis.max);
                 }
-            }
-        },
-        stroke: { curve: 'straight', width: hasSolar ? [2, 2] : 2 },
-        colors: chartColors,
-        fill: {
-            type: 'gradient',
-            gradient: { shadeIntensity: 1, opacityFrom: 0.5, opacityTo: 0.05, stops: [0, 90, 100] }
-        },
-        annotations: chartAnnotations,
-        dataLabels: { enabled: false },
-        markers: { size: 0 },
-        xaxis: {
-            type: 'datetime',
-            min: chartStartMs,
-            max: chartEndMs,
-            labels: { datetimeUTC: false, style: { fontSize: '10px', colors: '#94a3b8' } },
-            tickAmount: 8
-        },
-        yaxis: { labels: { formatter: (val) => (val === null || val === undefined || !Number.isFinite(Number(val))) ? '' : `${Number(val).toFixed(0)} W`, style: { fontSize: '10px', colors: '#94a3b8' } } },
-        tooltip: {
-            shared: true,
-            intersect: false,
-            x: { format: 'dd MMM HH:mm' },
-            y: { formatter: (val) => (val === null || val === undefined) ? '' : `${val} W` }
-        },
-        grid: { borderColor: '#f1f5f9' }
-    });
-    historyChart.render();
+            },
+            stroke: cfg.stroke,
+            colors: cfg.colors,
+            fill: cfg.fill,
+            annotations: cfg.annotations,
+            dataLabels: { enabled: false },
+            markers: { size: 0 },
+            xaxis: {
+                type: 'datetime',
+                min: chartStartMs,
+                max: chartEndMs,
+                labels: { datetimeUTC: false, style: { fontSize: '10px', colors: '#94a3b8' } },
+                tickAmount: 8
+            },
+            yaxis: {
+                labels: {
+                    formatter: (val) => (val === null || val === undefined || !Number.isFinite(Number(val))) ? '' : `${Number(val).toFixed(0)} W`,
+                    style: { fontSize: '10px', colors: '#94a3b8' }
+                }
+            },
+            tooltip: tipBands ? {
+                shared: true,
+                intersect: false,
+                custom: function ({ dataPointIndex, w }) {
+                    const i = dataPointIndex;
+                    const fmt = (v) => (v === null || v === undefined) ? '-' : (Math.round(Number(v)) + ' W');
+                    const when = w.globals.seriesX[0] && w.globals.seriesX[0][i] != null
+                        ? new Date(w.globals.seriesX[0][i]).toLocaleString()
+                        : '';
+                    const rows = [
+                        ['Production', balanceData.production[i] && balanceData.production[i].y, '#f59e0b'],
+                        ['Consumption', balanceData.consumption[i] && balanceData.consumption[i].y, '#334155'],
+                        ['Self-sufficient', tipBands.self[i] && tipBands.self[i].y, '#3b82f6'],
+                        ['Grid', tipBands.grid[i] && tipBands.grid[i].y, '#7c3aed'],
+                        ['Surplus', tipBands.surplus[i] && tipBands.surplus[i].y, '#10b981']
+                    ];
+                    let body = '';
+                    for (let r = 0; r < rows.length; r++) {
+                        body += '<div style="display:flex;align-items:center;gap:6px;padding:2px 0">'
+                            + '<span style="width:8px;height:8px;border-radius:50%;background:' + rows[r][2] + '"></span>'
+                            + '<span>' + rows[r][0] + ': <strong>' + fmt(rows[r][1]) + '</strong></span></div>';
+                    }
+                    return '<div style="padding:8px 10px;font-size:12px">'
+                        + '<div style="margin-bottom:4px;font-weight:600">' + when + '</div>'
+                        + body + '</div>';
+                }
+            } : {
+                shared: true,
+                intersect: false,
+                x: { format: 'dd MMM HH:mm' },
+                y: { formatter: (val) => (val === null || val === undefined) ? '' : `${val} W` }
+            },
+            grid: { borderColor: '#f1f5f9' },
+            legend: { show: false }
+        };
+        const host = document.querySelector('#historyTimelineChart');
+        if (historyChart) {
+            historyChart.destroy();
+            historyChart = null;
+        }
+        host.innerHTML = '';
+        historyChart = new ApexCharts(host, options);
+        historyChart.render();
+    }
+
+    function setLiveChartView(view) {
+        const next = view === 'classic' ? 'classic' : 'balance';
+        if (next === liveChartView) {
+            return;
+        }
+        liveChartView = next;
+        updateLiveViewChrome();
+        syncLiveViewUrl();
+        renderLiveHistoryChart();
+    }
+
+    updateLiveViewChrome();
+    renderLiveHistoryChart();
     <?php endif; ?>
 
     // Auto-refresh logic

@@ -6,11 +6,13 @@
  */
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
+require_once __DIR__ . '/balance_chart.php';
 
 $hp = hp_boot();
 hp_require_ready($hp);
 hp_publish_pac($hp['settings']);
 $dbFile = $hp['db'];
+$chartView = hp_chart_view();
 
 /**
  * @param mixed $w PAC watts
@@ -136,6 +138,18 @@ if (isset($_GET['ajax'])) {
             return $slots;
         }
 
+        /** @return array<string, null> */
+        function getEmptyDayNullTemplate(): array
+        {
+            $slots = [];
+            for ($h = 0; $h < 24; $h++) {
+                for ($m = 0; $m < 60; $m += 5) {
+                    $slots[sprintf('%02d:%02d', $h, $m)] = null;
+                }
+            }
+            return $slots;
+        }
+
         $action = $_GET['ajax'];
 
         if ($action === 'range') {
@@ -234,25 +248,93 @@ if (isset($_GET['ajax'])) {
 
         if ($action === 'day' && isset($_GET['date'])) {
             $date = $_GET['date'];
-            $slots = getEmptyDayTemplate();
+            $view = isset($_GET['view']) && strtolower(trim((string)$_GET['view'])) === 'classic'
+                ? 'classic'
+                : 'balance';
+
+            if ($view === 'classic') {
+                $slots = getEmptyDayTemplate();
+                $stmt = $pdo->prepare(
+                    "SELECT strftime('%H:%M', timestamp) as time_slot,
+                            CAST(strftime('%H', timestamp) AS INTEGER) as hh,
+                            solar_power_w, solar_radiation
+                     FROM history_5min
+                     WHERE timestamp LIKE ?
+                     ORDER BY timestamp ASC"
+                );
+                $stmt->execute([$date . '%']);
+                while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                    if (isset($slots[$row['time_slot']])) {
+                        $pac = sanitize_pac_w($row['solar_power_w'], (int)$row['hh'], $row['solar_radiation']);
+                        $slots[$row['time_slot']] = $pac !== null ? $pac : 0.0;
+                    }
+                }
+                echo json_encode([
+                    'view' => 'classic',
+                    'categories' => array_keys($slots),
+                    'series' => array_values($slots),
+                ]);
+                exit;
+            }
+
+            $production = getEmptyDayNullTemplate();
+            $consumption = getEmptyDayNullTemplate();
+            $selfSufficient = getEmptyDayNullTemplate();
+            $gridBand = getEmptyDayNullTemplate();
+            $surplus = getEmptyDayNullTemplate();
             $stmt = $pdo->prepare(
                 "SELECT strftime('%H:%M', timestamp) as time_slot,
                         CAST(strftime('%H', timestamp) AS INTEGER) as hh,
-                        solar_power_w, solar_radiation
+                        solar_power_w, solar_radiation, grid_power_w,
+                        grid_import_kwh, grid_export_kwh
                  FROM history_5min
                  WHERE timestamp LIKE ?
                  ORDER BY timestamp ASC"
             );
             $stmt->execute([$date . '%']);
             while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-                if (isset($slots[$row['time_slot']])) {
-                    $pac = sanitize_pac_w($row['solar_power_w'], (int)$row['hh'], $row['solar_radiation']);
-                    $slots[$row['time_slot']] = $pac !== null ? $pac : 0.0;
+                $slot = $row['time_slot'];
+                if (!array_key_exists($slot, $production)) {
+                    continue;
                 }
+                $pac = sanitize_pac_w($row['solar_power_w'], (int)$row['hh'], $row['solar_radiation']);
+                if ($row['solar_power_w'] === null || $row['solar_power_w'] === '') {
+                    $solarW = null;
+                } elseif ($pac !== null) {
+                    $solarW = $pac;
+                } else {
+                    // Spike / night / shoulder gate: no solar contribution.
+                    $solarW = 0.0;
+                }
+                $gridNet = hp_grid_net_w(
+                    $row['grid_power_w'],
+                    $row['grid_import_kwh'],
+                    $row['grid_export_kwh']
+                );
+                $parts = hp_balance_parts($solarW, $gridNet);
+                if ($parts === null) {
+                    continue;
+                }
+                $production[$slot] = $parts['production'];
+                $consumption[$slot] = $parts['consumption'];
+                $selfSufficient[$slot] = $parts['self_sufficient'];
+                $gridBand[$slot] = $parts['grid'];
+                $surplus[$slot] = $parts['surplus'];
             }
+            $categories = array_keys($production);
+            $prodVals = hp_bridge_short_nulls(array_values($production), 2);
+            $consVals = hp_bridge_short_nulls(array_values($consumption), 2);
+            $selfVals = hp_bridge_short_nulls(array_values($selfSufficient), 2);
+            $gridVals = hp_bridge_short_nulls(array_values($gridBand), 2);
+            $surpVals = hp_bridge_short_nulls(array_values($surplus), 2);
             echo json_encode([
-                'categories' => array_keys($slots),
-                'series' => array_values($slots),
+                'view' => 'balance',
+                'categories' => $categories,
+                'production' => array_map('hp_chart_watt', $prodVals),
+                'consumption' => array_map('hp_chart_watt', $consVals),
+                'self_sufficient' => array_map('hp_chart_watt', $selfVals),
+                'grid' => array_map('hp_chart_watt', $gridVals),
+                'surplus' => array_map('hp_chart_watt', $surpVals),
             ]);
             exit;
         }
@@ -441,6 +523,33 @@ $defaultCompare2 = $yesterday;
             height: 0;
             pointer-events: none;
         }
+        .metric-switch {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px;
+            border: 2px solid #0f172a;
+            border-radius: 999px;
+            background: #e2e8f0;
+        }
+        .metric-switch button {
+            appearance: none;
+            -webkit-appearance: none;
+            margin: 0;
+            border: 0;
+            border-radius: 999px;
+            padding: 6px 14px;
+            font: 700 12px/1.2 system-ui, sans-serif;
+            color: #334155;
+            background: transparent;
+            cursor: pointer;
+        }
+        .metric-switch button.metric-on {
+            background: #0f172a;
+            color: #ffffff;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
+        }
+        .is-hidden { display: none !important; }
     </style>
 </head>
 <body class="p-4 md:p-8">
@@ -476,12 +585,21 @@ $defaultCompare2 = $yesterday;
     <div class="card border-t-4 border-t-amber-500">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
             <div>
-                <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
-                    <i data-lucide="sun" class="w-5 h-5 text-amber-500"></i> Daily Generation Curve
+                <h2 id="dayChartHeading" class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <i data-lucide="sun" class="w-5 h-5 text-amber-500"></i>
+                    <span id="dayChartTitleText"><?= $chartView === 'balance' ? 'Energy Balance' : 'Daily Generation Curve' ?></span>
                 </h2>
-                <p class="text-xs text-slate-400">5-minute profile from history_5min - type a date or open the calendar</p>
+                <p id="dayChartBlurb" class="text-xs text-slate-400">
+                    <?= $chartView === 'balance'
+                        ? 'Bands: self-sufficient / grid / surplus. Production and consumption are in the tooltip (stack outline).'
+                        : '5-minute solar profile from history_5min - type a date or open the calendar' ?>
+                </p>
             </div>
             <div class="flex flex-wrap items-center gap-2">
+                <div class="metric-switch" role="group" aria-label="Day chart view">
+                    <button type="button" id="day-view-balance" class="<?= $chartView === 'balance' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'balance' ? 'true' : 'false' ?>" onclick="setDayChartView('balance')">Balance</button>
+                    <button type="button" id="day-view-classic" class="<?= $chartView === 'classic' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'classic' ? 'true' : 'false' ?>" onclick="setDayChartView('classic')">Classic</button>
+                </div>
                 <button type="button" class="jump-btn" onclick="goToToday()" title="Jump to today">Today</button>
                 <button type="button" id="btnGenerateToday" class="jump-btn hidden"
                         onclick="generateTodayTable()"
@@ -783,30 +901,149 @@ $defaultCompare2 = $yesterday;
         setIntradayDate(next, true);
     }
 
+    let dayChartView = <?= json_encode($chartView) ?>;
+
+    function syncDayViewUrl() {
+        const url = new URL(window.location.href);
+        const date = document.getElementById('singleDateText').value.trim();
+        if (isValidIsoDate(date)) {
+            url.searchParams.set('date', date);
+        }
+        if (dayChartView === 'classic') {
+            url.searchParams.set('view', 'classic');
+        } else {
+            url.searchParams.delete('view');
+        }
+        window.history.replaceState({}, '', url.pathname + url.search);
+    }
+
+    function updateDayViewChrome() {
+        const balBtn = document.getElementById('day-view-balance');
+        const clsBtn = document.getElementById('day-view-classic');
+        if (balBtn && clsBtn) {
+            balBtn.classList.toggle('metric-on', dayChartView === 'balance');
+            clsBtn.classList.toggle('metric-on', dayChartView === 'classic');
+            balBtn.setAttribute('aria-pressed', dayChartView === 'balance' ? 'true' : 'false');
+            clsBtn.setAttribute('aria-pressed', dayChartView === 'classic' ? 'true' : 'false');
+        }
+        const title = document.getElementById('dayChartTitleText');
+        const blurb = document.getElementById('dayChartBlurb');
+        if (title) {
+            title.textContent = dayChartView === 'balance' ? 'Energy Balance' : 'Daily Generation Curve';
+        }
+        if (blurb) {
+            blurb.textContent = dayChartView === 'balance'
+                ? 'Bands: self-sufficient / grid / surplus. Production and consumption are in the tooltip (stack outline).'
+                : '5-minute solar profile from history_5min - type a date or open the calendar';
+        }
+    }
+
+    function setDayChartView(view) {
+        const next = view === 'classic' ? 'classic' : 'balance';
+        if (next === dayChartView) {
+            return;
+        }
+        dayChartView = next;
+        updateDayViewChrome();
+        syncDayViewUrl();
+        loadIntraday();
+    }
+
     async function loadIntraday() {
         const date = document.getElementById('singleDateText').value.trim();
         if (!isValidIsoDate(date)) return;
 
-        const res = await fetch(`analytics.php?ajax=day&date=${encodeURIComponent(date)}`);
+        const viewQ = dayChartView === 'classic' ? '&view=classic' : '';
+        const res = await fetch(
+            `analytics.php?ajax=day&date=${encodeURIComponent(date)}${viewQ}`
+        );
         const data = await res.json();
         if (data.error) return;
 
-        const options = {
-            ...baseChartOptions,
-            series: [{ name: 'Solar Output (W)', data: data.series }],
-            chart: { ...baseChartOptions.chart, type: 'area', height: 400 },
-            colors: ['#f59e0b'],
-            fill: {
-                type: 'gradient',
-                gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.05, stops: [0, 100] }
-            },
-            xaxis: { type: 'category', categories: data.categories, labels: timeAxisLabels },
-            tooltip: {
-                custom: function (opts) {
-                    return pacTooltip(opts);
+        let options;
+        if (dayChartView === 'balance') {
+            // Three painted bands only. Production / Consumption are the stack outline
+            // (self+surplus / self+grid) - shown in tooltip, not as separate strokes.
+            const selfB = data.self_sufficient;
+            const gridB = data.grid;
+            const surplusB = data.surplus;
+            const gridTop = selfB.map(function (v, i) {
+                if (v === null || v === undefined || gridB[i] === null || gridB[i] === undefined) {
+                    return null;
                 }
-            }
-        };
+                return Number(v) + Number(gridB[i]);
+            });
+            const stackTop = gridTop.map(function (v, i) {
+                if (v === null || v === undefined || surplusB[i] === null || surplusB[i] === undefined) {
+                    return null;
+                }
+                return Number(v) + Number(surplusB[i]);
+            });
+            options = {
+                ...baseChartOptions,
+                series: [
+                    { name: 'Surplus', type: 'area', data: stackTop },
+                    { name: 'Grid', type: 'area', data: gridTop },
+                    { name: 'Self-sufficient', type: 'area', data: selfB }
+                ],
+                chart: { ...baseChartOptions.chart, type: 'area', height: 400, stacked: false },
+                colors: ['#10b981', '#7c3aed', '#3b82f6'],
+                stroke: { curve: 'straight', width: 0 },
+                fill: {
+                    type: 'solid',
+                    opacity: [0.45, 0.5, 0.55]
+                },
+                xaxis: { type: 'category', categories: data.categories, labels: timeAxisLabels },
+                legend: { show: true, position: 'top' },
+                tooltip: {
+                    shared: true,
+                    intersect: false,
+                    custom: function ({ dataPointIndex }) {
+                        const i = dataPointIndex;
+                        const fmt = function (v) {
+                            if (v === null || v === undefined) return '-';
+                            return Math.round(Number(v)) + ' W';
+                        };
+                        const when = (data.categories && data.categories[i]) ? data.categories[i] : '';
+                        const rows = [
+                            ['Self-sufficient', selfB[i], '#3b82f6'],
+                            ['Grid', gridB[i], '#7c3aed'],
+                            ['Surplus', surplusB[i], '#10b981'],
+                            ['Consumption', data.consumption[i], 'linear-gradient(90deg,#3b82f6 50%,#7c3aed 50%)'],
+                            ['Production', data.production[i], 'linear-gradient(90deg,#3b82f6 50%,#10b981 50%)']
+                        ];
+                        let body = '';
+                        for (let r = 0; r < rows.length; r++) {
+                            body += '<div style="display:flex;align-items:center;gap:6px;padding:2px 0">'
+                                + '<span style="width:8px;height:8px;border-radius:50%;background:' + rows[r][2] + '"></span>'
+                                + '<span>' + rows[r][0] + ': <strong>' + fmt(rows[r][1]) + '</strong></span></div>';
+                        }
+                        return '<div style="padding:8px 10px;font-size:12px">'
+                            + '<div style="margin-bottom:4px;font-weight:600">' + when + '</div>'
+                            + body + '</div>';
+                    }
+                }
+            };
+        } else {
+            options = {
+                ...baseChartOptions,
+                series: [{ name: 'Solar Output (W)', data: data.series }],
+                chart: { ...baseChartOptions.chart, type: 'area', height: 400, stacked: false },
+                colors: ['#f59e0b'],
+                stroke: { curve: 'smooth', width: 2 },
+                fill: {
+                    type: 'gradient',
+                    gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.05, stops: [0, 100] }
+                },
+                xaxis: { type: 'category', categories: data.categories, labels: timeAxisLabels },
+                legend: { show: false },
+                tooltip: {
+                    custom: function (opts) {
+                        return pacTooltip(opts);
+                    }
+                }
+            };
+        }
         if (chartIntraday) {
             chartIntraday.destroy();
             chartIntraday = null;
@@ -815,6 +1052,7 @@ $defaultCompare2 = $yesterday;
         host.innerHTML = '';
         chartIntraday = new ApexCharts(host, options);
         chartIntraday.render();
+        syncDayViewUrl();
     }
 
     let compareLoadTimer = null;

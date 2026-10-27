@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4**, **A6**, **A8**, **A9**, **A10**, and **A13 Done**; A5, A7, A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-27 (A13 closed)  
+**Status:** **A4**, **A5**, **A6**, **A8**, **A9**, **A10**, and **A13 Done**; **A5b** kickoff; A7, A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-27 (A5 closed; A5b kickoff locked)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py` · `settings.php`
 
 ---
@@ -12,7 +12,8 @@
 | Id | Status | What |
 |---|---|---|
 | **A4** | Done | Top-N tables (days / months / years) + graphs |
-| **A5** | open | Multi-series power graph (PV + grid import + home usage) — ref image |
+| **A5** | Done | Balance/Classic multi-series power (both pages). Product: [`docs/architecture.md`](../architecture.md) |
+| **A5b** | kickoff locked | Balance explorer; index 2h pulse; mixed 1/5-min; CSV→Settings; drop telemetry table |
 | **A6** | Done | Settings page (`settings.php`). Product: [`docs/architecture.md`](../architecture.md) |
 | **A7** | open | `top_records`: drop or change (assess at kickoff) |
 | **A8** | Done | Live chart clock window. Product: [`docs/architecture.md`](../architecture.md) |
@@ -22,7 +23,7 @@
 | **A12** | open | Historical monthly Fluvius peak on a page. Not P3. Not kicked off |
 | **A13** | Done | Grid import/export on summary and top-n. Product: [`docs/architecture.md`](../architecture.md) |
 
-**Parallel:** A5 and A7 are independent of **P1–P2**. **A8**, **A9**, and **A13** are Done. **A11** and **A12** read Fluvius rows **P3** stored. They are not kicked off. Wind for A11 is already in the warehouse. **A10** and **P3** are Done. The day-chart grid unit sits on A5. A13 did not change `analytics.php`.
+**Parallel:** **A5b** and A7 are independent of **P1–P2**. **A11** and **A12** read Fluvius rows **P3** stored. They are not kicked off. Wind for A11 is already in the warehouse.
 
 **Related:** A3 removed Hall of Fame UI. A4 is new Top-N. A7 decides fate of leftover `top_records` singles table.
 
@@ -164,11 +165,126 @@ Best/worst yield rankings (20 days, 10 months, 10 years) in `top_periods` via `-
 
 ## A5 — Multi-series power (PV / grid pull / home usage)
 
-**Status:** open (not kicked off)  
-**Scope (placement):** Chart series beside PV: power from grid + net/home usage, in the spirit of [`HomeWizard-graph.jpg`](HomeWizard-graph.jpg).  
-**Locks:** Which page (`index` live vs `analytics` intraday vs both), exact series definitions (P1 channels), resolution — kickoff.
+**Status:** **Done** 2026-10-27  
+**Product:** [`docs/architecture.md`](../architecture.md) (live + analytics Balance/Classic)  
+**Branch:** `feature/a5-balance-chart` (merge/commit still operator-owned)
 
-**From A13 (2026-10-27):** `analytics.php` stays in this phase. Open here: a grid day-chart in kWh per quarter, or in average kW. A13 does not add that chart.
+### Done summary
+
+Balance vs Classic on `index.php` and `analytics.php` (default Balance). Three painted W bands: Self-sufficient, Grid, Surplus. Production and Consumption are stack-outline composites (legend split dots + tooltip). Fluvius quarter kWh → average W on analytics when P1 grid is missing; ≤2 missing 5-min slots bridged. Overlay and envelope stay solar-only. No vendor product name in UI. Windowed explorer / index pulse / mixed 1-min+5-min → **A5b**.
+
+### DoD
+
+- [x] Balance formulas, paint rule, mode switch, Fluvius derive on analytics day
+- [x] Product docs (`architecture.md`)
+- [x] Operator close → A5b
+
+### Locks (operator 2026-10-27) — shipped
+
+| # | Lock |
+|---|---|
+| 1 | Both pages (superseded for layout by **A5b**; formulas stay). |
+| 2–10 | Chart model, W, Fluvius derive, decomposition, overlay/envelope solar-only, mode switch, default Balance, five series with three painted, no vendor name. |
+
+**Formulas** (unchanged; A5b reuses):
+
+- `grid_net_w` = P1 signed net (`active_power` / `grid_power_w`; import positive, export negative). From Fluvius-only slots: `import_w - export_w` (`kWh * 4000`).
+- **Production** = `max(0, solar_w)`
+- **Consumption** = `max(0, solar_w + grid_net_w)`
+- **Self-sufficient** = `min(production, consumption)`
+- **Grid** = `max(0, consumption - production)`
+- **Surplus** = `max(0, production - consumption)`
+
+### Verbatim — 2026-10-27 (kickoff)
+
+> 1: both
+> 2: HW-style
+> 3: all W
+> 4: yes, derive
+> 5: like HW
+> 6: elaborate
+> 7: give options
+
+> 6: compare (that is the "Two-Day Overlay"?) stays as it is now, the graph we are creating is new - so 6A
+> 7D
+
+> 1 mode switch
+> 2 default = HW
+> 3 keep all
+> no "HomeWizard" title should be anywhere, we are using the graphs as reference, not the name
+
+---
+
+## A5b — Balance explorer (window, pan, mixed resolution)
+
+**Status:** kickoff locked (no code until `implement`)  
+**Depends on:** **A5** Done  
+**Scope:** Analytics owns Balance exploration (clock window + pan). Index keeps a short live pulse with link to analytics. Mixed 1-min / 5-min by 5-minute bucket. Warehouse tables unchanged (`readings` + `history_5min` stay).
+
+### Locks (operator 2026-10-27)
+
+| # | Lock |
+|---|---|
+| 1 | **Index:** 2 h live pulse (Balance default). Link to analytics uses the same control pattern as the top-nav Analytics button. |
+| 2 | **Analytics Balance:** presets 15 m, 1 h, 2 h, 6 h, 24 h, 7 d; default 2 h. Date/time anchor. |
+| 3 | **Pan:** ← / → moves the current window by **one full step** (window length). |
+| 4 | **Mixed resolution (per 5-minute bucket):** if at least **two** 1-minute `readings` exist in that bucket under rule 4a, use 1-min points for that bucket; otherwise use the `history_5min` row for that bucket (Fluvius derive rules from A5 still apply on 5-min). Chart **may mix** densities in one view. |
+| 4a | **V — visible only:** count and emit only 1-min samples in **bucket ∩ chart window**. |
+| 5 | **Analytics Classic:** same window presets, pan ←/→, deep links as Balance (not calendar-day-only). Classic series stay solar / home+solar style from A5, resolution mix same as Balance. |
+| 6 | **Deep link:** `range` and `from`/`to` parity with live (plus `view=balance|classic`). |
+| 7 | **Index cleanup:** remove Detailed Telemetry Log table. Move **Download CSV** to Settings, beside DB backup, with operator info: download all 1-min samples as CSV. |
+| 8 | **Not in scope:** dropping `history_5min` or `readings`; changing overlay/envelope. |
+
+### Assess — is per-bucket mix a good idea?
+
+**Yes, with native points and resolution-aware gaps** — not as one blended average series.
+
+| | |
+|---|---|
+| **Good** | Uses detail where the logger actually sampled; falls back per bucket when thin; matches how 5-min is produced (up to five 1-min samples). |
+| **Risk** | Mid-chart density change (jagged 1-min next to stepped 5-min). Blind linear bridging across a 1-min cluster and a Fluvius 5-min point invents fake slopes. |
+| **Rule to implement** | Emit **native** samples: qualifying 1-min rows, else the single 5-min point. Gap rules: 1-min regions keep the 3-minute break; 5-min-only stretches keep ≤2 missing 5-min slots. **Do not** interpolate across a resolution change. Tooltip should show source (`1 min` / `5 min`) when mixed. |
+
+### Q1 elaborate — count/emit: **V** vs **F**
+
+For each aligned 5-minute bucket that intersects the chart window:
+
+| | **V — visible only** (matches “visible” in your wording) | **F — full bucket in DB** |
+|---|---|---|
+| **Count ≥2 using** | 1-min rows with timestamp in **bucket ∩ window** | All 1-min rows stored in that bucket (even if outside the window) |
+| **If qualified, plot** | Those same in-window 1-min points | In-window 1-min points only (still clip; do not draw outside the axis) |
+| **If not qualified** | `history_5min` for that bucket if its stamp is in the window | Same |
+| **Window edge example** | Window starts 14:03; bucket 14:00–14:05 has DB samples at 14:00,14:01,14:02,14:03,14:04. **Visible** = 14:03,14:04 → count 2 → 1-min. If only 14:03 in window → count 1 → **5-min** fallback even though the bucket is rich in the DB. | Same bucket always count 5 → 1-min; plot only 14:03–14:04 in view. |
+| **Pros** | Honest to what the user sees; no “secret” samples deciding the mode. | Stable mode for a bucket when panning by less than 5 minutes; less flicker at edges. |
+| **Cons** | Panning by 1 minute can flip a bucket 1-min ↔ 5-min at the cut. | A bucket can “qualify” as 1-min while only one point is drawn in the window (odd). Slightly disagrees with “visible”. |
+
+**Recommendation:** **V**. Your phrase was “2 minute-readings … are visible.” Edge flicker is acceptable; tooltip source makes flips understandable.
+
+### Still open
+
+None for kickoff.
+
+### Verbatim — 2026-10-27
+
+> why wouldn't we move the 1min energy balance table to the analytics page and remove that 5min table? and add filters and date selectors and defaults : 15 min, 1 h, 2 h, 6 h, 24 h, 7 d - and add arrows left/right to pan the view
+> assess and propose
+
+> prefer auto: use 1 min if there are any and otherwise 5min
+> B: short (2hrs) live pulse on index with button to go to analytics (same button as on top of page)
+> pan: take current window and move back/forward 1 "step"
+
+> use 1min if at least 2 minute-readings in the 5minute are visible, otherwise use the 5min reading
+> so can be mixed -- is this a good idea?
+> placement: A5b - close A5, A5b starts now
+
+> 1: elaborate on those 2 choices
+> 2: same windows / left-right etc
+> 3: yes
+> also in A5b:
+> "download CSV" move to config page, next to backup db, and add info: "download all 1min samples in csv"
+> remove detailed telemetry log data table
+
+> V
 
 ---
 
