@@ -10,7 +10,7 @@
 2. Place a copy next to the app on the host (same folder as `logger.py` / `index.php`).
 3. **Never** commit `.env`. **Never** include `.env*` in robocopy MIR.
 
-The file holds **`DB_BACKUP_ENCRYPTION_KEY` only**. Device addresses, device passwords, titles, and plant limits are on the **Settings** page (`settings.php`) and stored in `meter_history.db`. An existing `.env` that still has `P1_IP` / SMA / WebBox / `SITE_*` is imported once when `app_settings` is empty. The file is not rewritten.
+The file holds **`DB_BACKUP_ENCRYPTION_KEY` only**. Device addresses, device passwords, titles, plant limits, and Sunny Portal credentials are on the **Settings** page (`settings.php`) and stored in `meter_history.db`. Nothing else is read from `.env`.
 
 The first browser open asks for an admin password (enter it twice) when none is stored. A new install with no imported P1 address then shows Settings and stays there until that page is saved.
 

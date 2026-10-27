@@ -299,7 +299,6 @@ def main():
     conn = sqlite3.connect(db_path, timeout=10)
     try:
         site_config.ensure_schema(conn)
-        site_config.import_env_if_empty(conn)
         settings = site_config.load_settings(conn)
         configured = site_config.is_configured(conn)
     finally:

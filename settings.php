@@ -251,7 +251,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 if (isset($_GET['saved'])) {
-    $notice = 'Settings saved. Titles apply on the next page load. Plant limits and expected generation apply after: python3 rollup.py -buildall';
+    $notice = 'Settings saved. Titles and Summary PVGIS curve apply on the next page load. Plant limits and monthly target_pct apply after: python3 rollup.py -buildall';
 }
 if (isset($_GET['admin_changed'])) {
     $notice = 'Admin password changed.';
@@ -567,7 +567,7 @@ function hp_field(array $settings, string $key): string
                     </label>
                 <?php endfor; ?>
             </div>
-            <p class="text-xs text-slate-500">These plant values apply after <code>python3 rollup.py -buildall</code>.</p>
+            <p class="text-xs text-slate-500">Summary year / all-years PVGIS curve reads these values live (all zero = no curve). Monthly <code>target_pct</code> in the DB updates after <code>python3 rollup.py -buildall</code> or <code>-daily</code>.</p>
         </section>
 
         <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">

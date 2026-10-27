@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseP-portals.md ---
 # Phase P — Cloud / utility portal ingest
 
-**Status:** P3 Done. P1 kickoff in progress. P2 queued.  
-**Last updated:** 2026-10-26 (P3 closed)  
+**Status:** P3 Done. P2 closed as P1 duplicate. P1 **coding** 2026-10-27 (pull CLI + rollup wire + `.env` cleanup shipped; non-PV map after `-probe`).  
+**Last updated:** 2026-10-27 (P1 implement)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) · `logger.py` (local SMA/WebBox already — **not** this track)
 
 ---
@@ -17,13 +17,13 @@ Pull historical / periodic data from **cloud or utility portals** into the wareh
 
 | Id | Status | What |
 |---|---|---|
-| **P1** | kickoff | Sunny Portal cloud ingest |
-| **P2** | open | SMA portal ingest |
+| **P1** | coding | Sunny Portal / ennexOS cloud ingest (same as former P2) |
+| **P2** | Done | Duplicate of P1 — closed 2026-10-27 |
 | **P3** | Done | Fluvius manual CSV into `fluvius_interval`. Product: [`docs/architecture.md`](../architecture.md) |
 
-**Source / API / auth / target tables:** TBD at each kickoff (operator lock). Do not assume APIs or credentials.
+**Source / auth:** ennexOS via unpaid portal login (paid Monitoring API out). **Target tables / channel map:** see P1 locks; non-PV column map still open.
 
-**Depends on:** none across P1–P3 (may run in any order after kickoff; ask if parallel).
+**Depends on:** none across P1–P3 (P2 closed; P3 Done).
 
 ---
 
@@ -69,13 +69,146 @@ Pull historical / periodic data from **cloud or utility portals** into the wareh
 
 > kickoff this P3, don't implement step 2 (automatic importer) - which table is needed additionaly, give what needs to be added/changed - any open items or questions?
 
+### 2026-10-27 — kickoff P1 + P2
+
+> kickoff P1 & P2 - they are the same, no? that is this ennexos?
+
+### 2026-10-27 — P1 lock answers
+
+> 1 yes
+> 2 confirm
+> 3 fill all that is not presently in the db
+> 4 pull all the portal will give
+
+### 2026-10-27 — re-assess three workstreams
+
+> ok, we need three things:
+> - functionality of the current sunnyportal_pull.py as "initial import" as single py file, then merge/copy that into meter_history.db
+> - same functionality to grab gaps if needed, probable only last hours/days (when could this be needed?) - merged into that table in our meter_history.db
+> - check other "channels" within either portal
+> re-assess
+
+### 2026-10-27 — CLI / staging locks
+
+> 1: propose name - no, buildall must not fill this table, this table is filled from the sunnyportal_pull.py - this file launched without switches will do nothing, add a -pullall to have today's functionality
+> 2: will be a switch -lastdays -n 7 (pulls last week from today) n can be 1-366
+> 3: -probe first, lets see which cnalles there are, next we'll see what we can do
+> 4: see above
+
+### 2026-10-27 — table / buildall / lastdays / Sofie file
+
+> 1 ok
+> 2 ok, change: buildall parses sunnyportal_pv_5min  and wires it into history_5min: update the wiring plan - cfr the fluvius fill
+> 3 include today
+>
+> -pullall: currently sofie is working with the current script to put everything into sunnyportal_pv.sqlite -- this must be merged into our db: how
+
+### 2026-10-27 — csv_test + daily
+
+> sunnyportal_csv_test.py is no longer usefull?
+> yes, daily should also empty-fill from staging
+
+### 2026-10-27 — remove csv probe
+
+> remove the csv importer
+> sunnyportal_pull.py should use the credentials in the meter_history.db
+> update docs (including power-notes.md)
+
+### 2026-10-27 — fold .env reader cleanup
+
+> ok, fold cleanup of those old .env readers into this phase
+> any open Qs or items?
+
+### 2026-10-27 — close remaining open Qs
+
+> 1 ok
+> 2 console only
+> 3 write straight into meter_history.db (is that ok, concorrent-sqlite-wise?)
+> 4 ok
+> 5 ok
+
+### 2026-10-27 — implement
+
+> one-shot ATTACH of Sofie’s current portable file is done
+> non-PV map after -probe: we 'll get to that once I do the probe
+> implement
+
 ---
 
-## P1 — Sunny Portal
+## P1 — Sunny Portal / ennexOS
 
-**Status:** kickoff (pull script written; not locked into `history_5min`)  
-**Scope (placement only):** ingest from Sunny Portal cloud. Operator URL for this kickoff: `https://ennexos.sunnyportal.com`. `https://portal.sma.energy/login` forwards there.  
-**Locks:** none yet.
+**Status:** coding 2026-10-27 — PV pull + empty-fill shipped; non-PV map waits on `-probe`  
+**Scope:** historical (+ on-demand gap) ingest from Sunny Portal powered by ennexOS (`https://ennexos.sunnyportal.com`; `https://portal.sma.energy/login` forwards there). Same surface as former **P2**. Live PV / grid / home stay on the P1 logger. Paid Monitoring API out. There is **one** portal, not two.
+
+### Locks (operator 2026-10-27)
+
+1. **P2** is a duplicate of **P1**. Close P2 (Done).
+2. **Staging table:** `sunnyportal_pv_5min` in `meter_history.db`. Never purged. Filled **only** by `sunnyportal_pull.py`. `-buildall` must **not** write this table.
+3. **`-buildall` / `-daily` / Fluvius-style wire:** after readings downsample and WebBox consolidate, **read** `sunnyportal_pv_5min` and fill `history_5min.solar_power_w` only where that field is still empty. `-buildall`: full table. `-daily`: same empty-fill for the Fluvius stitch calendar span (last 2 local days). Do not overwrite P1/WebBox solar. Stamp = `interval_start`. Use the component that has samples (probe: `13941800`); ignore empty plant-id rows. No `solar_total_kwh` from this channel; daily yield uses the PAC integral.
+4. **`data_source`:** portal-only new rows use `sunnyportal`. When only filling a null `solar_power_w` on an existing row, leave that row’s `data_source` unchanged (Fluvius-style).
+5. **Fill rule (intent):** portal series the warehouse can take **and** that are not already present — non-PV channel set TBD after `-probe` results (PV first).
+6. **CLI (single file `sunnyportal_pull.py`):**
+   - No switches → usage only / exit.
+   - `-pullall` → full-history pull **straight into** `sunnyportal_pv_5min` in `meter_history.db` (default DB via `site_config.resolve_db_path()` / `HP_DB_FILE`).
+   - `-lastdays` with `-n N` → last **N** local calendar days **including today**; **N** in **1..366**.
+   - `-probe` → list channels to **console only** (no JSON dump file).
+7. **Who fills staging:** `sunnyportal_pull.py` only. One-shot ATTACH of an existing Sofie `sunnyportal_pv.sqlite` remains valid as a **migration** of that already-pulled file; new pulls do not use a portable sqlite as the primary path.
+8. **`.env` device/portal import cleanup (in P1):** remove dead one-shot maps/helpers that copy device or Sunny Portal keys from `.env` into `app_settings`. Keep `.env` / `read_env()` only for `DB_BACKUP_ENCRYPTION_KEY` (`db_backup.py`). Mirror in PHP `site_settings.php`. Drop `import_env_if_empty` call sites (keep `ensure_schema` where needed). Update architecture / deploy / power-notes.
+9. **Implement order:** (a) `.env` cleanup + docs → (b) CLI `-pullall` / `-lastdays` / `-probe` + default = usage → (c) rollup empty-fill on `-buildall` / `-daily` → (d) channel map after `-probe` results.
+
+### SQLite concurrency (lock note for implement)
+
+**Yes — writing straight into `meter_history.db` is OK** if the pull follows the same pattern as the logger/rollup:
+
+- Live DB already uses **WAL** (`logger.py` / `rollup.py`) and **busy timeouts** (10–30 s). Readers (PHP) and the 1-min logger can coexist with short writers.
+- Commit **one local day per transaction** (already how the pull stores). Do not hold a multi-day write lock. Open with `timeout=` + `busy_timeout` like the other CLIs. Do **not** force `journal_mode=DELETE` on the live DB (that was only for the portable copy file).
+- Network wait between days is outside the transaction — good.
+- Avoid overlapping a long `-pullall` with `-buildall` / restore. `-lastdays` is light.
+
+[Certain] WAL + short per-day commits matches how this host already runs. [Likely] minute logger polls will only briefly wait if they hit a commit.
+
+### Wiring plan (`history_5min` rebuild) — cfr Fluvius
+
+Same pattern as Fluvius: never-purged SoT table → rollup **reads** it → empty-only columns on `history_5min`. Portal does not own the row when solar already exists.
+
+| Step | `-buildall` | Notes |
+|---|---|---|
+| 1 | `DELETE` `history_5min` / daily / monthly | Unchanged |
+| 2 | `readings` → `history_5min` | Unchanged (skip open 5-min slice) |
+| 3 | WebBox staging → solar / weather | Unchanged (`webbox_archive`) |
+| 4 | **`sunnyportal_pv_5min` → empty `solar_power_w` only** | **New.** Analog to Fluvius stitch, but solar W not grid kWh. Insert row if timestamp missing; if row exists and `solar_power_w` IS NULL, set it. Leave non-null solar alone. |
+| 5 | Fluvius electricity quarters → grid columns | Unchanged (after solar so WebBox/`data_source` rules stay coherent) |
+| 6 | daily / monthly / envelopes / tops | Unchanged |
+
+**`-daily` (locked):** after readings downsample, also empty-fill solar from `sunnyportal_pv_5min` for the same recent calendar span as the Fluvius stitch (last 2 local days), so `-lastdays` staging shows up without a full `-buildall`.
+
+**`-purge_derived`:** keep `sunnyportal_pv_5min` (add to the never-purged source list next to WebBox + Fluvius when coding).
+
+### Sofie portable file → `meter_history.db` (now)
+
+Current Sofie run writes `sunnyportal_pv.sqlite` (table `sunnyportal_pv_5min`). That file is already the right schema. When the pull finishes (one file, no `-wal`):
+
+1. Copy `sunnyportal_pv.sqlite` next to `meter_history.db` on the dashboard host (or run ATTACH on Sofie if that **is** the host and both files sit together).
+2. Load into the real DB (creates the table if missing):
+
+```sql
+ATTACH 'sunnyportal_pv.sqlite' AS src;
+CREATE TABLE IF NOT EXISTS sunnyportal_pv_5min (
+    component_id TEXT NOT NULL,
+    interval_start TEXT NOT NULL,
+    interval_end TEXT NOT NULL,
+    power_w REAL,
+    PRIMARY KEY (component_id, interval_start)
+);
+INSERT OR REPLACE INTO sunnyportal_pv_5min
+    SELECT component_id, interval_start, interval_end, power_w
+    FROM src.sunnyportal_pv_5min;
+DETACH src;
+```
+
+3. Portal solar appears on charts only after the **wiring** exists and you run `rollup.py -buildall` (or `-daily` if that stitch is locked). Until then the staging table is SoT only.
+
+Do not open the live `meter_history.db` from two machines at once. Do not merge into `history_5min` by hand.
 
 ### Verified (public SMA docs, 2026-10-25)
 
@@ -120,40 +253,76 @@ SMA also documents two other downloads, not used by this file:
 - Analysis Pro → Details → Download. The manual describes that details table as 15-minute means. Different page, coarser than this sample.
 - Configuration → Data Export (portal update Sept 2026): up to one year of Energy Balance per download, plus an intraday power CSV per year; current year only through the previous month. Intraday resolution is **not** stated. Not confirmed on this plant.
 
-### Operator answers (2026-10-25, not a full lock)
+### Operator answers (2026-10-25; superseded where 2026-10-27 locks differ)
 
-1. **Source:** only `portal.sma.energy` / ennexOS. No second Classic plant. P2 still needs an explicit close or keep.
+1. **Source:** only `portal.sma.energy` / ennexOS. No second Classic plant. (**P2 closed as duplicate 2026-10-27.**)
 2. **Pull:** paid API rejected. Do not hand-drop CSVs. One-time historical pull, automated. Live PV / grid / home stay on the P1 logger. No daily portal job. The earlier “config page + daily check/fill” answer is superseded.
 3. **Probe result (2026-10-25, day 2026-10-06):** `measurements/search` returned three rows. System id `13941795` and `13941796` had empty `values`. Component `13941800` had 287 samples. Converted from UTC to `Europe/Paris`, those clocks and watts match the Day CSV exactly (max abs diff 0, peak 2256 W). Both sides omit `20:05`. The stamp is the CSV clock, which is the bucket **end** (`22:05Z` = local `00:05`). Header `max` on that row is 3000 and is not the peak of the samples. For `history_5min`, subtract 5 minutes so the value sits on the interval start.
-4. **Warehouse:** suggestion below. Not locked.
+4. **Warehouse:** staging + empty-only merge — **locked 2026-10-27** (see Locks above). Channel set beyond PV still open.
 
-### Warehouse suggestion (pending confirm)
+### Warehouse (locked shape; PV proven, other channels TBD)
 
 Importer calls the same `measurements/search` the chart uses (see the probe). One-shot CLI. No portal password in git. No hand-dropped CSV folder.
 
-Do **not** write `readings`. Do **not** overwrite a `history_5min` slot that already has WebBox or P1 solar. `-daily` will otherwise treat the row as logger-owned and can rewrite `data_source`.
+Do **not** write `readings`. Do **not** overwrite a `history_5min` field that already has a value (WebBox, P1, Fluvius, or earlier portal fill).
 
-Keep a small SoT staging table (survives `-purge_derived`): interval start and PV watts. Then one consolidate copies into `history_5min.solar_power_w` only where that slot is still empty. No `solar_total_kwh` on this channel, so daily yield for those days uses the existing PAC integral (`SUM(solar_power_w) * 5/60/1000`), not an E-total delta. Missing stamps stay missing.
+Never-purged staging SoT, then consolidate into empty target fields only. For the proven PV channel: interval start + PV watts → `history_5min.solar_power_w` where null. No `solar_total_kwh` on this channel, so daily yield for those days uses the existing PAC integral (`SUM(solar_power_w) * 5/60/1000`), not an E-total delta. Missing stamps stay missing.
 
-The probe (`sunnyportal_csv_test.py`) logs in over HTTP with the same SMA ID form the website uses (no Playwright; that package has no build on the Pi), takes an access token, then calls `measurements/search` for the day. `sunnyportal_pull.py` repeats that call per day. It will break when SMA changes the login form. That is the cost of staying off the paid API. User, password, plant id, and timezone live on the Settings page (`sunnyportal_user`, `sunnyportal_password`, `sunnyportal_plant_id`, `sunnyportal_timezone`). The password is not in git. An empty timezone means `Europe/Paris` in the scripts. Samples stay in `sunnyportal_pv.sqlite` until a later lock says how they enter `history_5min`.
+`sunnyportal_pull.py` owns login + `measurements/search` (no separate CSV probe). It logs in over HTTP with the same SMA ID form the website uses (no Playwright). It will break when SMA changes the login form. That is the cost of staying off the paid API. User, password, plant id, and timezone come from `app_settings` in `meter_history.db` (Settings). Samples go into `sunnyportal_pv_5min` on that DB. Rollup empty-fills `history_5min.solar_power_w`. **`sunnyportal_csv_test.py` removed 2026-10-27.**
 
-Night zeros that the API returns are real zeros. Missing stamps stay missing. There is no lifetime energy counter on this channel, so those days get their yield from the power integral already in the rollup.
+Night zeros that the API returns are real zeros. Missing stamps stay missing. There is no lifetime energy counter on this PV channel, so those days get their yield from the power integral already in the rollup.
+
+### Re-assess — three workstreams (2026-10-27)
+
+**Existing code (after implement):** `sunnyportal_pull.py` + rollup empty-fill. Operator run on Sofie found portal PV from **2024-06-19** onward (component `13941800`).
+
+| # | Ask | Assessment |
+|---|---|---|
+| **A** | Initial import = current pull as one py, then into `meter_history.db` | **Keep.** Pull (or ATTACH) into a **never-purged** staging table in `meter_history.db`, then empty-only consolidate into `history_5min`. Staging must survive `-purge_derived` and be a **source for `-buildall`**, or the next rebuild wipes portal-filled solar. Do not write `readings`. |
+| **B** | Gap grab last hours/days into that same staging table | **On-demand** `-lastdays -n N` (includes today; N 1..366). Not a scheduled daily job. Needed on logger/NAS outage while cloud still got uploads. Empty-field merge into `history_5min` via rollup wire only. |
+| **C** | Check other channels / “either portal” | **One portal** (ennexOS). Classic is not in play. Channel probe is still missing; only PV is verified. Other Energy Balance series may exist; warehouse columns for consumption/grid are awkward (Fluvius/P1 already own grid; no 5-min home-load column). Probe first; map second; do not invent columns in the same breath as the probe. |
+
+**Hard constraint:** portal samples that only land in `history_5min` and not in never-purged staging are lost on `-buildall` / `-purge_derived`. Same pattern as WebBox staging and `fluvius_interval`.
+
+### Shipped in this implement (2026-10-27)
+
+- Removed dead `.env`→`app_settings` importers (`site_config.py`, `site_settings.php`, call sites).
+- `sunnyportal_pull.py`: `-pullall` / `-lastdays -n` / `-probe`; default = usage; writes `sunnyportal_pv_5min` on live DB (WAL).
+- `rollup.py -buildall` / `-daily`: empty-fill `solar_power_w` from staging (preferred component by row count); new rows `data_source` `sunnyportal`.
+- Docs: architecture, deploy, power-notes, pipeline, this file, cursor rule.
 
 ### Still open
 
-1. Confirm staging, then fill empty `solar_power_w` only. Stamp rule from the 2026-10-06 compare: store interval start = API local time minus 5 minutes. Use the component row that actually has `values` (`13941800` on this day), not the empty system-id row.
-2. Span (first year / last year) is still unknown. The one-day compare is done.
-3. PV only, or also grid and consumption for the years before the P1 logger?
-4. P2: close as duplicate, or keep?
-5. A5–A7 are still ahead of P1. Continue in parallel?
+1. **Non-PV channel map** — run `python3.14 sunnyportal_pull.py -probe`, then lock what (if anything) besides PV enters the warehouse.
+2. Operator smoke: `-lastdays -n 1` or `-pullall` resume, then `-daily` or `-buildall` and confirm empty solar slots fill.
+
+### Sofie note
+
+Portable ATTACH already done. Future pulls: `python3.14 sunnyportal_pull.py -pullall` or `-lastdays -n N` on the host (same DB as the dashboard).
+
+Merge staging into `history_5min` without a full rebuild:
+
+```bash
+python3.14 rollup.py -buildallsunnyportal
+```
+
+Prints staging component, 5-min written (inserted/updated/skipped), first and last written stamp.
+
+### 2026-10-27 — buildallsunnyportal
+
+> add a rollup -buildallsunnyportal -- which will only execute the last step : merge sunnyportal into the 5min table
+> add summary when tool ends: how many records (5min?) were imported into the 5min - which was the first? the last? etc
 
 ---
 
-## P2 — SMA portal
+## P2 — SMA portal (duplicate of P1)
 
-**Status:** open (not kicked off)  
-**Scope (placement only):** ingest from SMA portal (cloud / account — not LAN WebConnect).  
-**Locks:** none yet — kickoff required before code.
+**Status:** **Done** 2026-10-27 — closed as duplicate of **P1**  
+**Scope:** was “SMA portal ingest”; same login as ennexOS Sunny Portal (`portal.sma.energy` → `ennexos.sunnyportal.com`). No second Classic plant.
+
+### Done summary
+
+Operator confirmed P1 and P2 are the same portal. All cloud-history work for this site lives under **P1**. No separate P2 source, auth, or tables.
 
 ---
 

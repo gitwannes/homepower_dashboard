@@ -12,12 +12,13 @@ Never purged, and the only legal sources for a rebuild:
 - `readings` (1-minute logger)
 - `sensorbox_history_5min` and `inverter_history_5min` (WebBox staging; every WebBox year lives here)
 - `fluvius_interval` (Fluvius CSV: 15-minute electricity, hourly gas, day totals, peak)
+- `sunnyportal_pv_5min` (Sunny Portal / ennexOS PV staging; filled only by `sunnyportal_pull.py` or ATTACH of its portable sqlite — never by `-buildall`)
 
 `app_settings` and `expected_monthly` stay too. They are not timeseries sources.
 
-`rollup.py -buildall` deletes `history_5min`, `daily_history`, and `monthly_history` (no `VACUUM`), then reconstructs `history_5min` from all `readings` rows except the open 5-minute slice, then from staging (`data_source` `webbox_archive`), then stitches Fluvius electricity quarters from `fluvius_interval`, then rebuilds daily, monthly, envelopes, `top_records`, and `top_periods`. It does not rescan `import_queue/processed/` or `import_queue/fluvius/processed/`. The day chart is empty until that command finishes. The command is rare.
+`rollup.py -buildall` deletes `history_5min`, `daily_history`, and `monthly_history` (no `VACUUM`), then reconstructs `history_5min` from all `readings` rows except the open 5-minute slice, then from WebBox staging (`data_source` `webbox_archive`), then empty-fills `solar_power_w` from `sunnyportal_pv_5min` where still null, then stitches Fluvius electricity quarters from `fluvius_interval`, then rebuilds daily, monthly, envelopes, `top_records`, and `top_periods`. It does not write `sunnyportal_pv_5min`. It does not rescan `import_queue/processed/` or `import_queue/fluvius/processed/`. The day chart is empty until that command finishes. The command is rare.
 
-`rollup.py -daily` downsamples only the last 2 local days of `readings`, stitches Fluvius quarters for those calendar days, refreshes the last 3 local days of `daily_history`, then rewrites `monthly_history` and `top_periods`, and beat-updates `top_records` when a day in that stitch span is a stricter extreme. That is not a rebuild. `rollup.py -buildalltoprecords` rewrites `top_records` only.
+`rollup.py -daily` downsamples only the last 2 local days of `readings`, empty-fills solar from `sunnyportal_pv_5min` for that same calendar span, stitches Fluvius quarters for those days, refreshes the last 3 local days of `daily_history`, then rewrites `monthly_history` and `top_periods`, and beat-updates `top_records` when a day in that stitch span is a stricter extreme. That is not a rebuild. `rollup.py -buildallsunnyportal` only empty-fills `solar_power_w` from `sunnyportal_pv_5min` (no wipe). `rollup.py -buildalltoprecords` rewrites `top_records` only.
 
 `importer.py` writes staging only. `importer.py -aggregate5min` and `rollup.py -today` are removed. Do not insert a series into `history_5min` unless a never-purged copy remains.
 

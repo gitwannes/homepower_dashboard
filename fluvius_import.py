@@ -836,7 +836,7 @@ def import_queue(conn: sqlite3.Connection) -> int:
 def main() -> int:
     conn = sqlite3.connect(site_config.resolve_db_path(), timeout=30.0)
     try:
-        site_config.import_env_if_empty(conn)
+        site_config.ensure_schema(conn)
         return import_queue(conn)
     except Exception as exc:
         sys.stderr.write(f"fluvius_import.py: {exc}\n")

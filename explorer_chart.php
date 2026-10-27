@@ -242,6 +242,32 @@ function hp_explorer_mixed_series(PDO $pdo, int $start, int $end, $sanitizePac =
         return $a['ts'] <=> $b['ts'];
     });
 
+    // Fluvius grid is 1-in-3 on history_5min (quarter starts only). Linear-bridge
+    // up to 2 nulls between known grid samples so Classic Home / Balance / grid
+    // draw on the intermediate solar-filled 5-min slots (day-graph rule).
+    // 1-min runs stay as sampled; do not bridge across a source change.
+    $nPts = count($rawPoints);
+    $seg = 0;
+    while ($seg < $nPts) {
+        if ($rawPoints[$seg]['source'] !== '5min') {
+            $seg++;
+            continue;
+        }
+        $segEnd = $seg;
+        while ($segEnd < $nPts && $rawPoints[$segEnd]['source'] === '5min') {
+            $segEnd++;
+        }
+        $grids = [];
+        for ($j = $seg; $j < $segEnd; $j++) {
+            $grids[] = $rawPoints[$j]['grid'];
+        }
+        $bridged = hp_bridge_short_nulls($grids, 2);
+        for ($j = $seg; $j < $segEnd; $j++) {
+            $rawPoints[$j]['grid'] = $bridged[$j - $seg];
+        }
+        $seg = $segEnd;
+    }
+
     $balanceSelf = [];
     $balanceGrid = [];
     $balanceSurplus = [];
@@ -301,9 +327,11 @@ function hp_explorer_mixed_series(PDO $pdo, int $start, int $end, $sanitizePac =
 
         $solarY = $pt['solar'] !== null ? hp_chart_watt(max(0.0, (float)$pt['solar'])) : null;
         $gridY = $pt['grid'] !== null ? hp_chart_watt((float)$pt['grid']) : null;
+        // Home = solar + signed grid net. Grid may be Fluvius-bridged above;
+        // still require non-null grid (never coerce missing to 0).
         $homeY = null;
-        if ($pt['solar'] !== null || $pt['grid'] !== null) {
-            $homeY = hp_chart_watt(max(0.0, (float)($pt['solar'] ?? 0) + (float)($pt['grid'] ?? 0)));
+        if ($pt['grid'] !== null) {
+            $homeY = hp_chart_watt(max(0.0, (float)($pt['solar'] ?? 0.0) + (float)$pt['grid']));
         }
         $classicSolar[] = ['x' => $ms, 'y' => $solarY];
         $classicHome[] = ['x' => $ms, 'y' => $homeY];

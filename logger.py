@@ -532,10 +532,9 @@ def run_poll():
     try:
         conn = init_db()
         site_config.ensure_schema(conn)
-        site_config.import_env_if_empty(conn)
         settings = site_config.load_settings(conn)
 
-        # P1 address comes from the settings page (imported once from .env).
+        # P1 address comes from the Settings page (app_settings).
         p1_ip = settings.get('p1_ip', '').strip()
         if not p1_ip:
             err_msg = "Configuration error: P1 address is not set. Open Settings in the dashboard."

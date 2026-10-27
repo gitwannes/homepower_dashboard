@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 
 import fluvius_import
 import site_config
+import sunnyportal_pull
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = site_config.resolve_db_path()
@@ -101,6 +102,7 @@ def init_analytical_db(conn: sqlite3.Connection) -> None:
         # Existing databases were created before the Fluvius quarter columns.
         fluvius_import.ensure_history_grid_columns(conn)
         fluvius_import.ensure_interval_schema(conn)
+        sunnyportal_pull.ensure_staging_schema(conn)
 
         # 2. Daily Rollups
         conn.execute("""
@@ -903,14 +905,19 @@ if __name__ == '__main__':
         conn = sqlite3.connect(DB_FILE, timeout=30.0)
         init_analytical_db(conn)
         site_config.ensure_schema(conn)
-        site_config.import_env_if_empty(conn)
         _apply_saved_pac(conn)
         
         if '-consolidate' in args:
             # Step 2: Bridge raw staging into consolidated master
             consolidate_historical_webbox(conn, step=1)
 
-        # Must be before -buildall: that flag is a prefix of -buildalltoprecords.
+        # Longer -buildall* flags before -buildall (prefix match).
+        elif '-buildallsunnyportal' in args:
+            # Empty-fill solar only from sunnyportal_pv_5min. Does not wipe history_5min.
+            result = sunnyportal_pull.stitch_solar_power(conn)
+            sunnyportal_pull.print_stitch_summary(result, "full staging")
+            print("=== SUCCESS: sunnyportal merge into history_5min done ===")
+
         elif '-buildalltoprecords' in args:
             build_top_records(conn, step=1)
             print("=== SUCCESS: top_records rebuilt; open topn.php ===")
@@ -933,6 +940,8 @@ if __name__ == '__main__':
                     conn.execute('DELETE FROM monthly_history;')
                 downsample_live_readings(conn, all_rows=True, step=1)
                 consolidate_historical_webbox(conn, step=2)
+                sp = sunnyportal_pull.stitch_solar_power(conn)
+                sunnyportal_pull.print_stitch_summary(sp, "full staging")
                 fluvius_import.stitch_electricity_curve(conn)
                 build_daily_history(conn, step=3)
                 build_monthly_history(conn, step=4)
@@ -945,6 +954,8 @@ if __name__ == '__main__':
             # Nightly: last 2 local days of readings, last 3 local days of daily_history.
             downsample_live_readings(conn, step=1)
             stitch_lo, stitch_hi = fluvius_import.local_span(conn, 2)
+            sp = sunnyportal_pull.stitch_solar_power(conn, stitch_lo, stitch_hi)
+            sunnyportal_pull.print_stitch_summary(sp, f"{stitch_lo}..{stitch_hi}")
             fluvius_import.stitch_electricity_curve(conn, stitch_lo, stitch_hi)
             build_daily_history(conn, days_back=3, step=2)
             build_monthly_history(conn, step=3)
@@ -969,13 +980,17 @@ if __name__ == '__main__':
                 conn.execute('DELETE FROM top_records;')
                 conn.execute('DELETE FROM top_periods;')
             conn.execute('VACUUM;')
-            print("[INFO] All derived analytical tables purged and vacuumed. (Raw staging & readings untouched).")
+            print(
+                "[INFO] All derived analytical tables purged and vacuumed. "
+                "(readings, WebBox staging, fluvius_interval, sunnyportal_pv_5min untouched)."
+            )
 
         else:
             print("P1 & Solar Data Warehouse Manager")
             print("Usage:")
             print("  python3 rollup.py -consolidate  (Snaps and merges raw staging into history_5min)")
             print("  python3 rollup.py -buildall     (Rebuild history_5min from readings + staging, then all analytical tables)")
+            print("  python3 rollup.py -buildallsunnyportal (Empty-fill solar_power_w from sunnyportal_pv_5min only)")
             print("  python3 rollup.py -buildalltoprecords (Full rewrite of top_records only)")
             print("  python3 rollup.py -daily        (Nightly: last 2 local days of readings, last 3 local days of daily_history)")
             print("  python3 rollup.py -purge_derived (Dev tool: deletes all analytical data safely to restart tests)")

@@ -1314,7 +1314,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
 
     /**
      * Split signed net into Grid (>=0) and Surplus (<=0) for bipolar area fill.
-     * Gap nulls stay null on both series.
+     * Omit nulls: Apex area often blanks when bipolar series contain gap markers.
      */
     function splitSignedNet(points) {
         const grid = [];
@@ -1328,8 +1328,6 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                 continue;
             }
             if (p.y === null || p.y === undefined || !Number.isFinite(Number(p.y))) {
-                grid.push({ x: p.x, y: null });
-                surplus.push({ x: p.x, y: null });
                 continue;
             }
             const y = Number(p.y);

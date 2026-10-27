@@ -28,42 +28,6 @@ function hp_db_path(): string
 }
 
 /**
- * .env key => app_settings key. Encryption key is not in this map.
- *
- * @return array<string, string>
- */
-function hp_env_map(): array
-{
-    return [
-        'P1_IP' => 'p1_ip',
-        'SMA_IP' => 'sma_ip',
-        'SMA_USER' => 'sma_user',
-        'SMA_PASSWORD' => 'sma_password',
-        'SUNNYWEBBOX_IP' => 'sunnywebbox_ip',
-        'SUNNYWEBBOX_PASSWORD' => 'sunnywebbox_password',
-        'SITE_TITLE' => 'site_title',
-        'SITE_TAGLINE' => 'site_tagline',
-        'SITE_PAGE_TITLE' => 'site_page_title',
-    ];
-}
-
-/**
- * Sunny Portal .env names => app_settings key.
- * SUNNYPORTAL_* wins. ENNEXOS_* is the previous name of the same four values.
- *
- * @return array<int, array{0: array<int, string>, 1: string}>
- */
-function hp_sunnyportal_env(): array
-{
-    return [
-        [['SUNNYPORTAL_USER', 'ENNEXOS_USER'], 'sunnyportal_user'],
-        [['SUNNYPORTAL_PASSWORD', 'ENNEXOS_PASSWORD'], 'sunnyportal_password'],
-        [['SUNNYPORTAL_PLANT_ID', 'ENNEXOS_PLANT_ID'], 'sunnyportal_plant_id'],
-        [['SUNNYPORTAL_TIMEZONE', 'ENNEXOS_TIMEZONE'], 'sunnyportal_timezone'],
-    ];
-}
-
-/**
  * Display defaults. Stored rows override these.
  *
  * @return array<string, string>
@@ -197,95 +161,6 @@ function hp_read_env(): array
 }
 
 /**
- * Copy Sunny Portal keys when that settings row is still absent.
- * SUNNYPORTAL_* wins over the previous ENNEXOS_* name. A saved row, including
- * an empty one, is left alone. Does not copy DB_BACKUP_ENCRYPTION_KEY.
- *
- * @param array<string, string>|null $env
- */
-function hp_import_sunnyportal_if_missing(PDO $pdo, ?array $env = null): bool
-{
-    hp_ensure_schema($pdo);
-    $source = $env === null ? hp_read_env() : $env;
-    $stored = hp_load_stored($pdo);
-    $pdo->exec('BEGIN IMMEDIATE');
-    try {
-        $inserted = false;
-        $stmt = $pdo->prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)');
-        foreach (hp_sunnyportal_env() as $pair) {
-            $envKeys = $pair[0];
-            $settingKey = $pair[1];
-            if (array_key_exists($settingKey, $stored)) {
-                continue;
-            }
-            $value = '';
-            foreach ($envKeys as $envKey) {
-                if (isset($source[$envKey]) && trim((string)$source[$envKey]) !== '') {
-                    $value = (string)$source[$envKey];
-                    break;
-                }
-            }
-            if ($value === '') {
-                continue;
-            }
-            $stmt->execute([$settingKey, $value]);
-            $inserted = true;
-        }
-        $pdo->exec('COMMIT');
-        return $inserted;
-    } catch (Exception $e) {
-        try {
-            $pdo->exec('ROLLBACK');
-        } catch (Exception $ignored) {
-        }
-        throw $e;
-    }
-}
-
-/**
- * Copy device and title keys once when app_settings is empty.
- * Does not rewrite .env. Does not copy DB_BACKUP_ENCRYPTION_KEY.
- * Sunny Portal keys are filled afterwards when those rows are still absent.
- *
- * @param array<string, string>|null $env
- */
-function hp_import_env_if_empty(PDO $pdo, ?array $env = null): bool
-{
-    hp_ensure_schema($pdo);
-    $source = $env === null ? hp_read_env() : $env;
-    $pdo->exec('BEGIN IMMEDIATE');
-    try {
-        $count = (int)$pdo->query('SELECT COUNT(*) FROM app_settings')->fetchColumn();
-        if ($count > 0) {
-            $pdo->exec('COMMIT');
-            $inserted = false;
-        } else {
-            $inserted = false;
-            $stmt = $pdo->prepare('INSERT INTO app_settings (key, value) VALUES (?, ?)');
-            foreach (hp_env_map() as $envKey => $settingKey) {
-                if (!array_key_exists($envKey, $source)) {
-                    continue;
-                }
-                $stmt->execute([$settingKey, (string)$source[$envKey]]);
-                $inserted = true;
-            }
-            if ($inserted) {
-                $stmt->execute(['env_imported', '1']);
-            }
-            $pdo->exec('COMMIT');
-        }
-    } catch (Exception $e) {
-        try {
-            $pdo->exec('ROLLBACK');
-        } catch (Exception $ignored) {
-        }
-        throw $e;
-    }
-    hp_import_sunnyportal_if_missing($pdo, $source);
-    return $inserted;
-}
-
-/**
  * @return array<string, string>
  */
 function hp_load_stored(PDO $pdo): array
@@ -341,7 +216,7 @@ function hp_is_configured(array $stored): bool
 }
 
 /**
- * Open the database, ensure tables, import .env once.
+ * Open the database and ensure tables. Settings come from app_settings only.
  *
  * mode: need_admin | need_config | ready
  *
@@ -351,7 +226,6 @@ function hp_boot(): array
 {
     $pdo = hp_pdo();
     hp_ensure_schema($pdo);
-    hp_import_env_if_empty($pdo);
     $stored = hp_load_stored($pdo);
     $settings = hp_merge_settings($stored);
     if (hp_admin_hash($pdo) === null) {

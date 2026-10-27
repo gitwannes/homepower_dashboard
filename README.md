@@ -25,7 +25,7 @@ See [`docs/architecture.md`](docs/architecture.md).
 
 | File | Role | Git |
 |---|---|---|
-| `.env` | `DB_BACKUP_ENCRYPTION_KEY` only. Legacy device keys are imported once into the database. | **no** (encrypted storage → host by hand) |
+| `.env` | `DB_BACKUP_ENCRYPTION_KEY` only. Device and portal settings are on the Settings page. | **no** (encrypted storage → host by hand) |
 | `.env.example` | Key names only | yes |
 | `helpers/` | Local sync tool + `p1-sync.config.json` | **no** (entire dir gitignored; MIR copies it to NAS) |
 
@@ -51,6 +51,7 @@ Never put real LAN IPs or site nicknames in committed files.
 | Doc | Purpose |
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | Scope + config split |
+| [`docs/power-notes.md`](docs/power-notes.md) | Operator warehouse cheat sheet (commands / tables) |
 | [`docs/deploy.md`](docs/deploy.md) | Synology + local sync notes |
 | [`docs/roadmap.md`](docs/roadmap.md) | Feature / archive roadmap |
 | [`docs/todo/pipeline.md`](docs/todo/pipeline.md) | Delivery pipeline |

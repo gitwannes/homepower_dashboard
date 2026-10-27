@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-27 (**A5b** closed)
+**Last updated:** 2026-10-27 (**P1** implement: pull CLI + rollup empty-fill + `.env` cleanup; await probe)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -45,6 +45,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **A5** | Balance chart (Balance/Classic, three painted bands, Fluvius W on analytics day) — **2026-10-27** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **A7** | `top_records` on `topn.php`; `-daily` beat; `-buildalltoprecords` — **2026-10-27** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **A5b** | Explorer + index 2h pulse; mixed 1/5-min V; Exchange default; CSV→Settings; drop telemetry — **2026-10-27** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
+| **P2** | Closed as duplicate of **P1** (same ennexOS / `portal.sma.energy` login; no second Classic plant) — **2026-10-27** — [`phaseP-portals.md`](phaseP-portals.md) |
 
 ---
 
@@ -52,10 +53,9 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| 1 | open | L | **P1** | Sunny Portal one-time history — kickoff, paid API out, not locked | [`phaseP-portals.md`](phaseP-portals.md) |
-| 2 | open | L | **P2** | SMA portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
-| 3 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 4 | open | S | **A12** | Historical monthly Fluvius peak on a page. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 1 | coding | L | **P1** | Sunny Portal / ennexOS — pull+wire shipped; non-PV map after operator `-probe` | [`phaseP-portals.md`](phaseP-portals.md) |
+| 2 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 3 | open | S | **A12** | Historical monthly Fluvius peak on a page. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
 
 ---
 
@@ -73,4 +73,4 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 |---|---|---|
 | **M** | Migration + public-repo hygiene + local sync | [`_archive/phaseM-migration.md`](_archive/phaseM-migration.md) (**archived**) |
 | **A** | Aggregation warehouse + analytics UI | [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md) (A0–A3 Done) · [`phaseA-analytics.md`](phaseA-analytics.md) (A4+) |
-| **P** | Cloud / utility portal ingest (Sunny / SMA / Fluvius) | [`phaseP-portals.md`](phaseP-portals.md) |
+| **P** | Cloud / utility portal ingest (ennexOS Sunny Portal = former P1+P2; Fluvius P3 Done) | [`phaseP-portals.md`](phaseP-portals.md) |

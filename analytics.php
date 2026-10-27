@@ -921,7 +921,13 @@ $defaultCompare2 = $yesterday;
         renderExplorerChart();
     }
 
-    /** Split signed net into Grid (>=0) and Surplus (<=0). Gap nulls stay null. */
+    /**
+     * Split signed net into Grid (>=0) and Surplus (<=0).
+     * Null / non-finite points are omitted (not kept as gap markers): Apex area
+     * charts often render blank when a bipolar series is peppered with nulls,
+     * which happens on solar-filled history days where many 5-min slots have
+     * solar but no grid. Balance already skips those slots; Exchange must too.
+     */
     function splitSignedNet(points) {
         const grid = [];
         const surplus = [];
@@ -932,8 +938,6 @@ $defaultCompare2 = $yesterday;
             const p = points[i];
             if (!p || p.x === null || p.x === undefined) continue;
             if (p.y === null || p.y === undefined || !Number.isFinite(Number(p.y))) {
-                grid.push({ x: p.x, y: null });
-                surplus.push({ x: p.x, y: null });
                 continue;
             }
             const y = Number(p.y);
@@ -941,6 +945,37 @@ $defaultCompare2 = $yesterday;
             surplus.push({ x: p.x, y: y < 0 ? y : 0 });
         }
         return { grid: grid, surplus: surplus };
+    }
+
+    /**
+     * Signed grid net for Exchange. Prefer classic.grid; if every point is null
+     * (legacy payloads), derive import - export from Balance band thicknesses.
+     */
+    function exchangeNetPoints(classicGrid, bal) {
+        const raw = Array.isArray(classicGrid) ? classicGrid : [];
+        let finite = 0;
+        for (let i = 0; i < raw.length; i++) {
+            const p = raw[i];
+            if (p && p.y !== null && p.y !== undefined && Number.isFinite(Number(p.y))) {
+                finite++;
+                break;
+            }
+        }
+        if (finite > 0) {
+            return raw;
+        }
+        const gBand = (bal && bal.grid) ? bal.grid : [];
+        const sBand = (bal && bal.surplus) ? bal.surplus : [];
+        const out = [];
+        const n = Math.min(gBand.length, sBand.length);
+        for (let i = 0; i < n; i++) {
+            const g = gBand[i];
+            const s = sBand[i];
+            if (!g || !s || g.x !== s.x) continue;
+            if (!Number.isFinite(Number(g.y)) || !Number.isFinite(Number(s.y))) continue;
+            out.push({ x: g.x, y: Number(g.y) - Number(s.y) });
+        }
+        return out;
     }
 
     function setExplorerPreset(rangeId) {
@@ -1038,7 +1073,16 @@ $defaultCompare2 = $yesterday;
         }
 
         if (dayChartView === 'exchange') {
-            const split = splitSignedNet(classic.grid || []);
+            const netPts = exchangeNetPoints(classic.grid, bal);
+            const split = splitSignedNet(netPts);
+            if (!split.grid.length && !split.surplus.length) {
+                const hostEmpty = document.querySelector('#chart-intraday');
+                if (hostEmpty) {
+                    hostEmpty.innerHTML = '<p class="text-sm text-slate-400 p-6">No grid exchange samples in this window.</p>';
+                }
+                syncExplorerUrl();
+                return;
+            }
             options = {
                 series: [
                     { name: 'Grid', data: split.grid },

@@ -513,11 +513,12 @@ if (isset($_GET['ajax'])) {
                         $ym = $row['year_month'];
                         $categories[] = $ym;
                         $actuals[] = round((float)$row['total_solar_kwh'], 1);
+                        // Chart expected follows Settings expected_monthly (live),
+                        // not the snapshot baked into monthly_history at -buildall.
                         $mNum = (int)substr($ym, 5, 2);
-                        $expVal = $row['expected_kwh'] !== null
-                            ? (float)$row['expected_kwh']
-                            : (isset($expByMonth[$mNum]) ? $expByMonth[$mNum] : 0.0);
-                        $expected[] = round($expVal, 1);
+                        $expected[] = isset($expByMonth[$mNum])
+                            ? round($expByMonth[$mNum], 1)
+                            : 0.0;
                     }
                 }
             } catch (Exception $e) {
@@ -830,15 +831,21 @@ if (isset($_GET['ajax'])) {
     function setYearStyleChart(chartKey, hostSel, data, expectedName) {
         const host = document.querySelector(hostSel);
         if (charts[chartKey]) { charts[chartKey].destroy(); charts[chartKey] = null; }
+        // Settings all-zero (or empty): omit PVGIS line entirely — do not draw a flat 0.
+        const expected = Array.isArray(data.expected) ? data.expected : [];
+        const hasExpected = expected.some((v) => Number(v) > 0);
+        const series = [{ name: 'Actual (kWh)', type: 'column', data: data.actuals }];
+        if (hasExpected) {
+            series.push({ name: expectedName, type: 'line', data: expected });
+        }
         charts[chartKey] = new ApexCharts(host, {
             ...baseChartOptions,
-            series: [
-                { name: 'Actual (kWh)', type: 'column', data: data.actuals },
-                { name: expectedName, type: 'line', data: data.expected }
-            ],
+            series: series,
             chart: { type: 'line', height: 320, toolbar: { show: false }, animations: { enabled: false } },
-            stroke: { width: [0, 3], curve: 'straight', dashArray: [0, 8] },
-            colors: ['#10b981', '#cbd5e1'],
+            stroke: hasExpected
+                ? { width: [0, 3], curve: 'straight', dashArray: [0, 8] }
+                : { width: [0], curve: 'straight' },
+            colors: hasExpected ? ['#10b981', '#cbd5e1'] : ['#10b981'],
             xaxis: {
                 categories: data.categories,
                 labels: { style: { colors: '#64748b', fontSize: '11px', fontWeight: 'bold' } }
@@ -1002,17 +1009,18 @@ if (isset($_GET['ajax'])) {
             return;
         }
         const avg = data.years > 0 ? data.total_kwh / data.years : 0;
-        renderStats('all-stats', [
+        const allStats = [
             { label: 'Lifetime', value: `${Number(data.total_kwh).toLocaleString()} kWh` },
             { label: 'Years', value: String(data.years) },
-            { label: 'Avg / year', value: `${avg.toFixed(0)} kWh` },
-            {
+            { label: 'Avg / year', value: `${avg.toFixed(0)} kWh` }
+        ];
+        if (Number(data.expected_kwh_year) > 0) {
+            allStats.push({
                 label: 'PVGIS / year',
-                value: data.expected_kwh_year > 0
-                    ? `${Number(data.expected_kwh_year).toLocaleString()} kWh`
-                    : '-'
-            }
-        ]);
+                value: `${Number(data.expected_kwh_year).toLocaleString()} kWh`
+            });
+        }
+        renderStats('all-stats', allStats);
         setYearStyleChart('all', '#chart-all', data, 'PVGIS year baseline');
     }
 
@@ -1064,17 +1072,24 @@ if (isset($_GET['ajax'])) {
             return;
         }
 
-        renderStats('year-stats', [
-            { label: 'Year total', value: `${Number(data.total_kwh).toLocaleString()} kWh` },
-            { label: 'PVGIS year', value: `${Number(data.expected_kwh).toLocaleString()} kWh` },
-            {
+        const yearStats = [
+            { label: 'Year total', value: `${Number(data.total_kwh).toLocaleString()} kWh` }
+        ];
+        if (Number(data.expected_kwh) > 0) {
+            yearStats.push({
+                label: 'PVGIS year',
+                value: `${Number(data.expected_kwh).toLocaleString()} kWh`
+            });
+            yearStats.push({
                 label: 'vs PVGIS',
-                value: data.expected_kwh > 0
-                    ? `${(100 * data.total_kwh / data.expected_kwh).toFixed(1)} %`
-                    : '-'
-            },
-            { label: 'Months', value: String((data.categories || []).length) }
-        ]);
+                value: `${(100 * data.total_kwh / data.expected_kwh).toFixed(1)} %`
+            });
+        }
+        yearStats.push({
+            label: 'Months',
+            value: String((data.categories || []).length)
+        });
+        renderStats('year-stats', yearStats);
         setYearChart(data);
     }
 

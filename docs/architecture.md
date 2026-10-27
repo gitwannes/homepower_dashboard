@@ -3,6 +3,7 @@
 
 **Status:** Migrated into this repo (2026-10-22). Phase A warehouse + UI Done.  
 **Last updated:** 2026-10-27 (A9 encrypted backup closed)  
+**Operator cheat sheet:** [`power-notes.md`](power-notes.md) (commands / tables / rebuild).  
 **Delivery archives:** [`docs/todo/_archive/phaseM-migration.md`](todo/_archive/phaseM-migration.md) · [`docs/todo/_archive/phaseA-aggregation.md`](todo/_archive/phaseA-aggregation.md) (A0–A3)
 
 ## What this is
@@ -42,7 +43,8 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 | `readings` | Live 1-min SoT (logger). Not purged by `-purge_derived`. |
 | `sensorbox_history_5min` / `inverter_history_5min` | Staging SoT (WebBox import). Never purged. Holds every WebBox year. |
 | `fluvius_interval` | Fluvius CSV SoT. Never purged. Electricity quarters, gas hours and days, monthly peak. |
-| `history_5min` | Derived master (5-min). Rebuilt by `-buildall` from all `readings`, then WebBox staging, then Fluvius electricity quarters. `-daily` refreshes the last 2 local days of `readings` and stitches Fluvius quarters on those days. `grid_import_kwh` / `grid_export_kwh` are the published quarter kWh on the quarter-start row. |
+| `sunnyportal_pv_5min` | Sunny Portal / ennexOS PV staging. Never purged. Filled only by `sunnyportal_pull.py`. `-buildall` does not write this table. |
+| `history_5min` | Derived master (5-min). Rebuilt by `-buildall` from all `readings`, then WebBox staging, then empty-fill `solar_power_w` from `sunnyportal_pv_5min` where still null, then Fluvius electricity quarters. `-daily` refreshes the last 2 local days of `readings`, empty-fills Sunny Portal solar for that span, then stitches Fluvius quarters. `grid_import_kwh` / `grid_export_kwh` are the published quarter kWh on the quarter-start row. |
 | `daily_history` / `monthly_history` / `clear_sky_envelopes` / `top_records` / `top_periods` | Derived analytics. `-buildall` rebuilds them after `history_5min`. `-daily` refreshes recent `daily_history`, then rewrites `monthly_history` and `top_periods`, and beat-updates `top_records` when a recent day is a stricter extreme. `-buildalltoprecords` rewrites `top_records` only. |
 
 **PAC quality gates** (rollup + analytics charts): spike cap is max inverter AC × 1.05 (default nameplate 12 kW, cap 12.6 kW) from Settings. Deep night and shoulder hours are editable; defaults drop PAC from 22:00 through 05:00, and on the shoulder (from 20:00 and before 06:00) when solar radiation is at or under 5 W/m². Night WebBox junk with rad≈0 must not define envelopes or inflate integrals.
@@ -56,7 +58,7 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 | Behavior | Rule |
 |---|---|
 | First open, no admin row | Create the admin password (enter it twice). The app does not continue until it is set. |
-| This host, after that password | Dashboard. Settings is linked, not forced. Existing device keys in `.env` are copied once into `app_settings` when that table is empty. |
+| This host, after that password | Dashboard. Settings is linked, not forced. Device and portal settings live in `app_settings` only. |
 | New install, no P1 address | Admin password, then Settings. The live dashboard waits until P1 is saved. |
 | Every settings save | Modal asks for the admin password. A wrong password rejects the save. No stay-logged-in session. |
 | Device passwords | Stars when set. **Edit** asks for the admin password, then the field is cleared for a new value. The stored secret is never in the page. An empty field on save does not change the password. An unset field can be typed directly; save still asks for the admin password. |
@@ -64,7 +66,7 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 | Admin hash | One-way (`password_hash`). Device passwords are stored so the poller can log in. |
 | Spike cap | Max inverter AC × 1.05. Default nameplate 12000 W, cap 12600 W. |
 | Night / shoulder | Defaults: drop PAC when the hour is `>= 22` or `< 5`; shoulder `>= 20` or `< 6` when radiation is `<= 5` W/m². |
-| Apply | Titles on the next page load. Plant limits and monthly kWh when `rollup.py -buildall` runs. No rebuild button. `importer.py` inserts an `expected_monthly` row only when that month and inclination are missing. |
+| Apply | Titles and Summary PVGIS curve on the next page load (all-zero months = no PVGIS series). Plant limits and monthly `target_pct` when `rollup.py -buildall` / `-daily` runs. No rebuild button. `importer.py` inserts an `expected_monthly` row only when that month and inclination are missing. |
 
 `DB_BACKUP_ENCRYPTION_KEY` is not a setting. It stays in `.env`. An empty key refuses both download and restore. Settings asks for the admin password on both. Restore also requires an explicit confirm that everything currently in the database will be destroyed. There is no stay-logged-in session.
 
@@ -79,8 +81,8 @@ The live chart on `index.php` is a **2-hour pulse** of 1-minute `readings` (auto
 | Page | Role |
 |---|---|
 | `index.php` | Live dashboard. Power chart: last **2 hours** of 1-minute `readings`. Switch: **Exchange** (default, bipolar signed net) / **Balance** (`?view=balance`, smooth stacked bands) / **Classic** (`?view=classic`, straight area). Link to Analytics. No telemetry table; 1-min CSV on Settings. |
-| `analytics.php` | Explorer: clock window presets 15 m–7 d (default **6 h** ending now), **Reset view**, pan ←/→ by one window. Switch: **Exchange** (default) / **Balance** (`?view=balance`) / **Classic** (`?view=classic`) — same modes as index. Balance legend includes split dots for Consumption / Production. Mixed resolution per 5-minute bucket (rule V): if at least two 1-min `readings` fall in **bucket ∩ window**, use those 1-min points; else use `history_5min` (Fluvius W derive as before). No linear bridge across a 1-min/5-min change. Tooltip shows source (`1 min` / `5 min`). Overlay and envelope stay solar-only calendar tools. Deep link: `range`, `from`/`to`, `view`. |
-| `summary.php` | Period charts: **All years**, week, month, year. Segmented switch: **Solar yield** (default) or **Grid import / export** (`?metric=grid`). Solar uses `solar_yield_kwh` / `total_solar_kwh` plus PVGIS. Grid uses grouped bars from `grid_import_kwh` / `grid_export_kwh` and the monthly `total_import_kwh` / `total_export_kwh`: import, export, and net (import minus export). A missing register is a gap. A second switch, only in grid mode, is **All** (default), **Import / export** (`bars=registers`), or **Net** (`bars=net`). Deep link: `?month=YYYY-MM`, `?year=YYYY`. |
+| `analytics.php` | Explorer: clock window presets 15 m–7 d (default **6 h** ending now), **Reset view**, pan ←/→ by one window. Switch: **Exchange** (default) / **Balance** (`?view=balance`) / **Classic** (`?view=classic`) — same modes as index. Balance legend includes split dots for Consumption / Production. Mixed resolution per 5-minute bucket (rule V): if at least two 1-min `readings` fall in **bucket ∩ window**, use those 1-min points; else use `history_5min` (Fluvius W derive as before). Within a 5-min run, grid nulls of length 1..2 are linear-bridged for Classic/Balance/Exchange (Fluvius 1-in-3). No bridge across a 1-min/5-min change. Tooltip shows source (`1 min` / `5 min`). Overlay and envelope stay solar-only calendar tools. Deep link: `range`, `from`/`to`, `view`. |
+| `summary.php` | Period charts: **All years**, week, month, year. Segmented switch: **Solar yield** (default) or **Grid import / export** (`?metric=grid`). Solar uses `solar_yield_kwh` / `total_solar_kwh` plus live `expected_monthly` PVGIS (omit the curve and PVGIS stats when every month is 0). Grid uses grouped bars from `grid_import_kwh` / `grid_export_kwh` and the monthly `total_import_kwh` / `total_export_kwh`: import, export, and net (import minus export). A missing register is a gap. A second switch, only in grid mode, is **All** (default), **Import / export** (`bars=registers`), or **Net** (`bars=net`). Deep link: `?month=YYYY-MM`, `?year=YYYY`. |
 | `topn.php` | Same two switches. **All-time records** (above the charts) from `top_records`: best day kWh, peak surge W, sun-hours, self-consumption, wind, ambient min/max, module max — wind/ambient/module/self-consumption rows only when present. Each dated row → analytics that day. Solar: best/worst yield (20 days, 10 months, 10 years) from `top_periods`; day click → analytics, month/year → summary. Worst **days** exclude yield ≤ 0 and the current calendar day. Grid: highest net import (import minus export) and highest net export (export minus import), same limits, read from `daily_history` / `monthly_history`. Both day lists omit the local day still in progress. Each card shows import, export, and the ranking net, filtered by the bars switch. A grid day click opens that month on summary; a month or year click opens summary. The link keeps `metric` and `bars`. |
 | `settings.php` | First open creates the admin password (entered twice) when none is stored. After that, graph pages open with no login session. The page edits devices, titles, 12 monthly expected kWh (inclination 30 only; irradiance stays the seed), max inverter AC, the night/shoulder gates, and the optional Fluvius electricity and gas EANs. Download and restore of the encrypted database backup ask for the admin password. Restore asks for an explicit confirm that everything currently in the database will be destroyed. **Download 1-min CSV** (all `readings` rows) sits beside backup and also asks for the admin password. |
 
@@ -89,12 +91,15 @@ The live chart on `index.php` is a **2-hour pulse** of 1-minute `readings` (auto
 | Flag | Effect |
 |---|---|
 | `-consolidate` | Staging → solar and weather on `history_5min` (`data_source` `webbox_archive`) |
-| `-daily` | Last 2 local days of `readings` → `history_5min`, then Fluvius quarter stitch for those days; last 3 local days of `history_5min` → `daily_history`; full rewrite of `monthly_history` and `top_periods`; beat-update `top_records` for that stitch calendar span (stricter extreme only) |
-| `-buildall` | Delete `history_5min`, `daily_history`, `monthly_history` (no `VACUUM`). Refill `history_5min` from every `readings` row except the open 5-minute slice, then from staging, then Fluvius electricity quarters. Then daily, monthly, envelopes, `top_records`, `top_periods`. Rare. The day chart is empty until the command finishes. |
+| `-daily` | Last 2 local days of `readings` → `history_5min`, then Sunny Portal empty-fill `solar_power_w` for that span, then Fluvius quarter stitch; last 3 local days of `history_5min` → `daily_history`; full rewrite of `monthly_history` and `top_periods`; beat-update `top_records` for that stitch calendar span (stricter extreme only) |
+| `-buildall` | Delete `history_5min`, `daily_history`, `monthly_history` (no `VACUUM`). Refill `history_5min` from every `readings` row except the open 5-minute slice, then WebBox staging, then Sunny Portal empty-fill `solar_power_w`, then Fluvius electricity quarters. Then daily, monthly, envelopes, `top_records`, `top_periods`. Rare. The day chart is empty until the command finishes. |
+| `-buildallsunnyportal` | Empty-fill `history_5min.solar_power_w` from `sunnyportal_pv_5min` only (no wipe, no daily/monthly rebuild). Prints how many 5-min slots were written, first/last stamp. |
 | `-buildalltoprecords` | Full rewrite of `top_records` only (no wipe of `history_5min` / daily / monthly) |
-| `-purge_derived` | Wipes the six derived tables and `VACUUM`. `readings`, WebBox staging, and `fluvius_interval` stay. Separate from `-buildall`. |
+| `-purge_derived` | Wipes the six derived tables and `VACUUM`. `readings`, WebBox staging, `fluvius_interval`, and `sunnyportal_pv_5min` stay. Separate from `-buildall`. |
 
 `importer.py -aggregate5min`, `rollup.py -today`, and the analytics **Generate today table** UI are removed. Today’s closed 5-minute buckets land in `history_5min` via nightly `-daily` (or a rare `-buildall`). WebBox import writes staging only.
+
+`sunnyportal_pull.py` logs in with Sunny Portal credentials from `app_settings` in `meter_history.db` (Settings page). It POSTs the unpaid ennexOS `measurements/search` API for PV power into `sunnyportal_pv_5min` on that same database. No switches prints usage. `-pullall` pulls the full portal span through today. `-lastdays -n N` pulls the last N days including today (N 1..366). `-probe` prints candidate channels that return samples (console only). It does not write `history_5min`; rollup empty-fills `solar_power_w` where null (`data_source` `sunnyportal` only on new rows). There is no `sunnyportal_csv_test.py`.
 
 `fluvius_import.py` reads `import_queue/fluvius/*.csv` and writes `fluvius_interval`. A row is kept when its EAN equals Electricity EAN or Gas EAN from Settings. Both empty: the CLI stops and reads nothing. A file that parses is moved to `import_queue/fluvius/processed/` even when every row was skipped. A file that does not parse stays in the queue and the CLI names the row. The process exits 1 if any file failed. There is no import button. `importer.py` does not read these CSVs.
 
@@ -107,7 +112,7 @@ On a passing electricity day the daily kWh stays the P1 counter delta. A finishe
 | Concern | File | Public git | Sync to NAS |
 |---|---|---|---|
 | Backup encryption key | `.env` (`DB_BACKUP_ENCRYPTION_KEY` only) | name in `.env.example` | **never** |
-| Device IPs, device passwords, titles, plant limits, Sunny Portal user / password / plant id / timezone, Fluvius electricity EAN and gas EAN | `meter_history.db` `app_settings` (Settings page). Existing `.env` device keys are imported once when that table is empty. Sunny Portal keys are copied when that settings row is still absent. | no | DB is not in git; sync excludes `.env*` and `*.db` |
+| Device IPs, device passwords, titles, plant limits, Sunny Portal user / password / plant id / timezone, Fluvius electricity EAN and gas EAN | `meter_history.db` `app_settings` (Settings page only; not read from `.env`) | no | DB is not in git; sync excludes `.env*` and `*.db` |
 | Admin password | `meter_history.db` `app_admin` (one-way hash) | no | same as the DB |
 | Sync source + SMB targets | `helpers/p1-sync.config.json` | no | Synology: **no** / OneDrive helpers-backup: **yes** |
 | Sync scripts + local helpers README | `helpers/` | no (whole dir gitignored) | Synology: **no** / OneDrive helpers-backup: **yes** |
