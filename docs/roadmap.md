@@ -73,7 +73,7 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 
 ## PHASE 2: MODERN UI & ANALYTICS SUITE (PRESENTATION)
 - [x] Multi-page dashboard:
-      - Live (`index.php`), exploration (`analytics.php`), period summaries (`summary.php`).
+      - Live (`index.php`): power chart is a clock window of 1-minute readings (default last 2 hours, presets through 7 days, drag zoom, gap after 3 minutes). Exploration (`analytics.php`), period summaries (`summary.php`).
       - Cross-navigation between hubs.
 - [x] Day Explorer (Intraday) on `analytics.php`:
       - 24-hour 5-minute curve from `history_5min`; ←/→ + date; **Generate table** (today) downsamples `readings`.
@@ -81,10 +81,12 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 - [x] Two-Day Overlay on `analytics.php`.
 - [x] Summary period views (`summary.php`):
       - **All years** (lifetime bars vs PVGIS year baseline), week, month, year (months vs PVGIS).
+      - **A13 Done:** Solar yield / Grid switch. Grid mode is grouped bars (import, export, net). A second switch shows all three, import/export only, or net only.
 - [x] Hall of Fame / Top 10:
       - Old live Top 10 removed in A3. **A4 Done:** `topn.php` + `top_periods` (best/worst days 20, months/years 10); rebuilt by `-buildall`/`-daily`. Worst days skip zero yield and today.
+      - **A13 Done:** the same page ranks highest net import and highest net export from `daily_history` / `monthly_history` (20 days, 10 months, 10 years). Both day lists omit today. No second ranking table.
       - Legacy `top_records` singles still built; fate = **A7**.
-- [x] Settings (`settings.php`): admin password on first open; devices, titles, monthly expected kWh, spike cap, and night gates in `meter_history.db`. See [`architecture.md`](architecture.md).
+- [x] Settings (`settings.php`): admin password on first open; devices, titles, monthly expected kWh, spike cap, and night gates in `meter_history.db`. Encrypted full-database download and restore (`db_backup.py`). See [`architecture.md`](architecture.md).
 - [x] Verify analytics / summary with populated rollups (A2/A3 + operator smoke).
 
 ---

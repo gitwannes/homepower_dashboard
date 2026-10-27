@@ -2,6 +2,7 @@
 # --- file: index.php ---
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
+require_once __DIR__ . '/live_chart.php';
 
 $hp = hp_boot();
 hp_require_ready($hp);
@@ -137,10 +138,10 @@ $fatalError = null;
 // 4. Load Data from SQLite
 $state = null;
 $displayHistory = [];
-$chartLabels = [];
 $chartGrid = [];
 $chartSolar = [];
 $chartHome = [];
+$chartWindow = hp_live_chart_window();
 $logHistory = [];
 
 if (!$fatalError) {
@@ -176,15 +177,17 @@ if (!$fatalError) {
                     ];
                 }
 
-                $chronological = array_reverse($rawRows);
-                foreach ($chronological as $r) {
-                    $chartLabels[] = date('H:i', strtotime($r['timestamp']));
-                    $grW = (int)$r['active_power'];
-                    $solW = (int)($r['solar_power'] ?? 0);
-                    $chartGrid[] = $grW;
-                    $chartSolar[] = $solW;
-                    $chartHome[] = max(0, $solW + $grW);
-                }
+                $chartStmt = $pdo->prepare(
+                    'SELECT timestamp, active_power, solar_power FROM readings WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC'
+                );
+                $chartStmt->execute([
+                    date('Y-m-d H:i:s', $chartWindow['start']),
+                    date('Y-m-d H:i:s', $chartWindow['end']),
+                ]);
+                $chartBuilt = hp_live_chart_series($chartStmt->fetchAll(PDO::FETCH_ASSOC));
+                $chartHome = $chartBuilt['home'];
+                $chartSolar = $chartBuilt['solar'];
+                $chartGrid = $chartBuilt['grid'];
 
                 $stmt = $pdo->query("SELECT id, first_seen, last_seen, status, count, message FROM system_logs ORDER BY id DESC LIMIT 50");
                 $logHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -703,7 +706,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
             <div>
                 <h2 class="card-title !mb-0">
                     <i data-lucide="trending-up" class="w-4 h-4 text-slate-700"></i>
-                    <?= $hasSolar ? "Solar & Consumption Profile (Last 2 Hours)" : "Power History (Last 2 Hours)" ?>
+                    <?= $hasSolar ? "Solar & Consumption Profile" : "Power History" ?>
                 </h2>
                 <p class="text-xs text-slate-400 mt-0.5">
                     <?= $hasSolar ? "Real-time area correlation (Amber area above Indigo line = 100% self-sufficient + export)" : "Real-time net grid profile with zero-line crossing" ?>
@@ -718,6 +721,15 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                     <span class="inline-flex items-center gap-1.5 text-emerald-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Solar Export (< 0 W)</span>
                 <?php endif; ?>
             </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-1.5 mb-2" role="group" aria-label="Chart range">
+            <?php foreach (hp_live_chart_presets() as $presetId => $preset): ?>
+                <?php $presetOn = !$chartWindow['custom'] && $chartWindow['preset'] === $presetId; ?>
+                <a href="?range=<?= htmlspecialchars($presetId, ENT_QUOTES, 'UTF-8') ?>" class="px-2.5 py-1 rounded-full text-[11px] font-semibold border <?= $presetOn ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200' ?>"><?= htmlspecialchars($preset['label'], ENT_QUOTES, 'UTF-8') ?></a>
+            <?php endforeach; ?>
+            <?php if ($chartWindow['custom']): ?>
+                <span class="text-[11px] text-slate-400">Custom range</span>
+            <?php endif; ?>
         </div>
         <div id="historyTimelineChart" class="w-full h-[280px]"></div>
     </div>
@@ -1237,9 +1249,12 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         subtitle: { text: `Monthly Peak: ${monthlyPeakW} W`, align: 'center', style: { fontSize: '12px', fontWeight: 'bold', color: '#94a3b8' } }
     }).render();
 
-    // Timeline Chart
-    const chartLabels = <?= json_encode($chartLabels) ?>;
+    // Timeline chart. Straight segments so a null gap is not curved across.
     const hasSolar = <?= json_encode($hasSolar) ?>;
+    const chartStartMs = <?= (int)$chartWindow['start'] * 1000 ?>;
+    const chartEndMs = <?= (int)$chartWindow['end'] * 1000 ?>;
+    const minZoomMs = 15 * 60 * 1000;
+    const maxZoomMs = 7 * 24 * 60 * 60 * 1000;
 
     let chartSeries = [];
     let chartColors = [];
@@ -1270,10 +1285,66 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         };
     }
 
-    new ApexCharts(document.querySelector("#historyTimelineChart"), {
+    function chartQueryTime(ms) {
+        const d = new Date(ms);
+        const p = (n) => String(n).padStart(2, '0');
+        return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+            + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    }
+
+    function rememberChartZoom(minMs, maxMs) {
+        let min = minMs;
+        let max = maxMs;
+        if (max - min < minZoomMs) {
+            min = max - minZoomMs;
+        }
+        if (max - min > maxZoomMs) {
+            min = max - maxZoomMs;
+        }
+        if (Math.abs(min - chartStartMs) < 1500 && Math.abs(max - chartEndMs) < 1500) {
+            return;
+        }
+        const params = new URLSearchParams(window.location.search);
+        params.delete('range');
+        params.set('from', chartQueryTime(min));
+        params.set('to', chartQueryTime(max));
+        window.location.search = params.toString();
+    }
+
+    const historyChart = new ApexCharts(document.querySelector("#historyTimelineChart"), {
         series: chartSeries,
-        chart: { type: 'area', height: 250, toolbar: { show: false }, zoom: { enabled: false } },
-        stroke: { curve: 'smooth', width: hasSolar ? [2, 2] : 2 },
+        chart: {
+            type: 'area',
+            height: 250,
+            animations: { enabled: false },
+            toolbar: {
+                show: true,
+                tools: { download: false, selection: true, zoom: true, zoomin: false, zoomout: false, pan: false, reset: true }
+            },
+            zoom: { enabled: true, type: 'x', autoScaleYaxis: false },
+            events: {
+                beforeZoom: function (_ctx, range) {
+                    if (!range || !range.xaxis) {
+                        return range;
+                    }
+                    const span = range.xaxis.max - range.xaxis.min;
+                    if (span < minZoomMs) {
+                        return { xaxis: { min: range.xaxis.max - minZoomMs, max: range.xaxis.max } };
+                    }
+                    if (span > maxZoomMs) {
+                        return { xaxis: { min: range.xaxis.max - maxZoomMs, max: range.xaxis.max } };
+                    }
+                    return range;
+                },
+                zoomed: function (_ctx, range) {
+                    if (!range || !range.xaxis) {
+                        return;
+                    }
+                    rememberChartZoom(range.xaxis.min, range.xaxis.max);
+                }
+            }
+        },
+        stroke: { curve: 'straight', width: hasSolar ? [2, 2] : 2 },
         colors: chartColors,
         fill: {
             type: 'gradient',
@@ -1281,11 +1352,24 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         },
         annotations: chartAnnotations,
         dataLabels: { enabled: false },
-        xaxis: { categories: chartLabels, labels: { style: { fontSize: '10px', colors: '#94a3b8' } }, tickAmount: 8 },
-        yaxis: { labels: { formatter: (val) => `${val.toFixed(0)} W`, style: { fontSize: '10px', colors: '#94a3b8' } } },
-        tooltip: { shared: true, intersect: false, y: { formatter: (val) => `${val} W` } },
+        markers: { size: 0 },
+        xaxis: {
+            type: 'datetime',
+            min: chartStartMs,
+            max: chartEndMs,
+            labels: { datetimeUTC: false, style: { fontSize: '10px', colors: '#94a3b8' } },
+            tickAmount: 8
+        },
+        yaxis: { labels: { formatter: (val) => (val === null || val === undefined || !Number.isFinite(Number(val))) ? '' : `${Number(val).toFixed(0)} W`, style: { fontSize: '10px', colors: '#94a3b8' } } },
+        tooltip: {
+            shared: true,
+            intersect: false,
+            x: { format: 'dd MMM HH:mm' },
+            y: { formatter: (val) => (val === null || val === undefined) ? '' : `${val} W` }
+        },
         grid: { borderColor: '#f1f5f9' }
-    }).render();
+    });
+    historyChart.render();
     <?php endif; ?>
 
     // Auto-refresh logic

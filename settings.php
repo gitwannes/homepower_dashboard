@@ -3,10 +3,11 @@
 /**
  * First-run admin password and the site configuration page (A6).
  * Device passwords are never written into the HTML.
- * A9 database download / restore is not on this page.
+ * A9 database download and restore are on this page.
  */
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
+require_once __DIR__ . '/db_backup.php';
 
 $boot = hp_boot();
 $pdo = $boot['pdo'];
@@ -87,6 +88,90 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
+    } elseif ($action === 'backup_download') {
+        $work = '';
+        try {
+            if ($boot['mode'] === 'need_admin') {
+                throw new RuntimeException('Set an admin password first.');
+            }
+            $adminPassword = isset($_POST['admin_password']) ? (string)$_POST['admin_password'] : '';
+            if (!hp_admin_ok($pdo, $adminPassword)) {
+                throw new RuntimeException('Admin password is wrong. Nothing was downloaded.');
+            }
+            if (hp_backup_encryption_key() === '') {
+                throw new RuntimeException('DB_BACKUP_ENCRYPTION_KEY is missing from .env.');
+            }
+            @set_time_limit(0);
+            @ignore_user_abort(true);
+            $work = hp_backup_work_dir();
+            $removeWork = static function () use ($work): void {
+                hp_backup_remove_tree($work);
+            };
+            register_shutdown_function($removeWork);
+            $encPath = $work . DIRECTORY_SEPARATOR . 'download.backup';
+            $downloadName = hp_backup_build_encrypted($boot['db'], $work, $encPath);
+            hp_backup_send_file($encPath, $downloadName);
+            hp_backup_remove_tree($work);
+            exit;
+        } catch (Throwable $e) {
+            if ($work !== '') {
+                hp_backup_remove_tree($work);
+            }
+            if (headers_sent()) {
+                exit;
+            }
+            $error = $e->getMessage();
+        }
+    } elseif ($action === 'backup_restore') {
+        $checked = '';
+        $incoming = '';
+        try {
+            if ($boot['mode'] === 'need_admin') {
+                throw new RuntimeException('Set an admin password first.');
+            }
+            $adminPassword = isset($_POST['admin_password']) ? (string)$_POST['admin_password'] : '';
+            if (!hp_admin_ok($pdo, $adminPassword)) {
+                throw new RuntimeException('Admin password is wrong. Nothing was restored.');
+            }
+            if (!isset($_POST['restore_sure']) || (string)$_POST['restore_sure'] !== 'yes') {
+                throw new RuntimeException('Confirm that everything currently in the database will be destroyed.');
+            }
+            if (hp_backup_encryption_key() === '') {
+                throw new RuntimeException('DB_BACKUP_ENCRYPTION_KEY is missing from .env.');
+            }
+            @set_time_limit(0);
+            $upload = isset($_FILES['backup_file']) && is_array($_FILES['backup_file']) ? $_FILES['backup_file'] : [];
+            $checked = rtrim(sys_get_temp_dir(), '\\/') . DIRECTORY_SEPARATOR . 'hp-restore-' . bin2hex(random_bytes(8)) . '.db';
+            hp_backup_prepare_upload($upload, hp_backup_encryption_key(), $checked);
+            $incoming = $boot['db'] . '.incoming';
+            if (is_file($incoming) && !@unlink($incoming)) {
+                throw new RuntimeException('Could not remove an older incoming database file. Nothing was restored.');
+            }
+            if (!@copy($checked, $incoming)) {
+                throw new RuntimeException('Could not copy the restored database beside the live file. Nothing was restored.');
+            }
+            @unlink($checked);
+            $checked = '';
+            hp_backup_checkpoint($pdo);
+            $livePath = $boot['db'];
+            $pdo = null;
+            $boot['pdo'] = null;
+            hp_backup_install($livePath, $incoming);
+            header('Location: settings.php?restored=1');
+            exit;
+        } catch (Throwable $e) {
+            if ($checked !== '' && is_file($checked)) {
+                @unlink($checked);
+            }
+            if ($incoming !== '' && is_file($incoming)) {
+                @unlink($incoming);
+            }
+            if ($pdo === null) {
+                $boot = hp_boot();
+                $pdo = $boot['pdo'];
+            }
+            $error = $e->getMessage();
+        }
     }
 }
 
@@ -95,6 +180,9 @@ if (isset($_GET['saved'])) {
 }
 if (isset($_GET['admin_changed'])) {
     $notice = 'Admin password changed.';
+}
+if (isset($_GET['restored'])) {
+    $notice = 'Database restored.';
 }
 
 $stored = hp_load_stored($pdo);
@@ -424,6 +512,19 @@ function hp_field(array $settings, string $key): string
         <button type="button" id="saveSettings" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">Save settings</button>
     </form>
 
+    <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-3 shadow-sm">
+        <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Database backup</h2>
+        <p class="text-xs text-slate-500">Download is an encrypted copy of the whole database. The plain backup and the encrypted file are deleted on the server after the download. Restore replaces the live database.</p>
+        <div class="flex flex-wrap gap-2">
+            <button type="button" id="downloadBackup" class="px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold">Download full backup</button>
+            <button type="button" id="openRestore" class="px-4 py-2 rounded-xl border border-rose-200 text-rose-700 text-sm font-semibold">Restore full backup</button>
+        </div>
+    </section>
+    <form id="backupDownloadForm" method="post" class="hidden">
+        <input type="hidden" name="action" value="backup_download">
+        <input type="hidden" name="admin_password" id="backupDownloadPassword" value="">
+    </form>
+
     <div id="gateModal" class="fixed inset-0 bg-slate-900/40 items-center justify-center p-4" style="display:none">
         <form id="gateForm" class="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-sm space-y-3 shadow-lg" autocomplete="off">
             <h2 id="gateTitle" class="text-lg font-bold">Admin password</h2>
@@ -454,6 +555,28 @@ function hp_field(array $settings, string $key): string
             <div class="flex justify-end gap-2">
                 <button type="button" id="adminCancel" class="px-3 py-2 rounded-xl border border-slate-200 text-sm">Cancel</button>
                 <button type="submit" class="px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">Enter</button>
+            </div>
+        </form>
+    </div>
+
+    <div id="restoreModal" class="fixed inset-0 bg-slate-900/40 items-center justify-center p-4" style="display:none">
+        <form method="post" enctype="multipart/form-data" class="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-md space-y-3 shadow-lg" autocomplete="off">
+            <input type="hidden" name="action" value="backup_restore">
+            <h2 class="text-lg font-bold">Restore the database?</h2>
+            <p class="text-sm text-slate-700">Restore replaces the live database. Everything currently in the database will be destroyed. Are you sure?</p>
+            <label class="flex items-start gap-2 text-sm font-semibold">
+                <input type="checkbox" name="restore_sure" value="yes" required class="mt-1">
+                <span>Yes, I am sure. Everything currently in the database will be destroyed.</span>
+            </label>
+            <label class="block text-sm font-semibold">Encrypted backup
+                <input type="file" name="backup_file" accept=".backup,application/octet-stream" required class="mt-1 w-full text-sm font-normal">
+            </label>
+            <label class="block text-sm font-semibold">Admin password
+                <input type="password" name="admin_password" required autocomplete="current-password" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+            </label>
+            <div class="flex justify-end gap-2">
+                <button type="button" id="restoreCancel" class="px-3 py-2 rounded-xl border border-slate-200 text-sm">Cancel</button>
+                <button type="submit" class="px-3 py-2 rounded-xl bg-rose-600 text-white text-sm font-semibold">Restore</button>
             </div>
         </form>
     </div>
@@ -497,6 +620,22 @@ function hp_field(array $settings, string $key): string
                 closeGate();
                 document.getElementById('settingsForm').submit();
             });
+        });
+
+        document.getElementById('downloadBackup').addEventListener('click', function () {
+            openGate('Enter the admin password to download the backup', function (password) {
+                document.getElementById('backupDownloadPassword').value = password;
+                closeGate();
+                document.getElementById('backupDownloadForm').submit();
+            });
+        });
+
+        var restoreModal = document.getElementById('restoreModal');
+        document.getElementById('openRestore').addEventListener('click', function () {
+            restoreModal.style.display = 'flex';
+        });
+        document.getElementById('restoreCancel').addEventListener('click', function () {
+            restoreModal.style.display = 'none';
         });
 
         Array.prototype.forEach.call(document.querySelectorAll('.js-edit-pw'), function (button) {

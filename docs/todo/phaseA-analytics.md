@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4**, **A6**, and **A10 Done**; A5, A7–A9, A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-26 (A10 closed, NAS smoke)  
+**Status:** **A4**, **A6**, **A8**, **A9**, **A10**, and **A13 Done**; A5, A7, A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-27 (A13 closed)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py` · `settings.php`
 
 ---
@@ -15,13 +15,14 @@
 | **A5** | open | Multi-series power graph (PV + grid import + home usage) — ref image |
 | **A6** | Done | Settings page (`settings.php`). Product: [`docs/architecture.md`](../architecture.md) |
 | **A7** | open | `top_records`: drop or change (assess at kickoff) |
-| **A8** | open | Live Solar & Consumption chart: scaled X-axis, gaps, zoom to 1 week, title |
-| **A9** | open | Full DB download + restore on the A6 page (admin password); `p1-sync` pulls the DB |
+| **A8** | Done | Live chart clock window. Product: [`docs/architecture.md`](../architecture.md) |
+| **A9** | Done | Settings encrypted backup download + restore. Product: [`docs/architecture.md`](../architecture.md) |
 | **A10** | Done | Warehouse rebuild. Product: [`docs/architecture.md`](../architecture.md) (Rollup CLI) |
 | **A11** | open | Historical gas, wind, and similar series on the pages. Not P3. Not kicked off |
 | **A12** | open | Historical monthly Fluvius peak on a page. Not P3. Not kicked off |
+| **A13** | Done | Grid import/export on summary and top-n. Product: [`docs/architecture.md`](../architecture.md) |
 
-**Parallel:** A5, A7, A8 independent of **P1–P2**. **A9** depends on **A6** (control sits on that page). A8 is not part of **A5**. **A11** and **A12** read Fluvius rows **P3** stored. They are not kicked off. Wind for A11 is already in the warehouse. **A10** and **P3** are Done.
+**Parallel:** A5 and A7 are independent of **P1–P2**. **A8**, **A9**, and **A13** are Done. **A11** and **A12** read Fluvius rows **P3** stored. They are not kicked off. Wind for A11 is already in the warehouse. **A10** and **P3** are Done. The day-chart grid unit sits on A5. A13 did not change `analytics.php`.
 
 **Related:** A3 removed Hall of Fame UI. A4 is new Top-N. A7 decides fate of leftover `top_records` singles table.
 
@@ -110,6 +111,35 @@
 > 1: when download and restore: ask for admin pw
 > 2: yes, p1-sync should also pull the db
 
+### 2026-10-27 — A8 / A9 kickoff answers
+
+Questions were: (1) zoom (2) X-axis when the window is not full (3) gap rule (4) titles (5) browser file (6) restore swap (7) when the synctool pulls.
+
+> use sqlite backup, which will have a timestamp in the name, sync that to the PC with the synctool, delete the bak from synology
+
+> 1B
+> 2A
+> 3B
+> 4A
+> 5A
+> 6A + ask very specifically whether the user is sure to restore and that eveyrthing currently iin the DB will be destroyed
+> 7A
+
+### 2026-10-27 — A9 filename + who creates it
+
+> 1: timestamped copy - all copies remain (pull only)
+> 2: backup is created by PHP, then sync copies all .bak (filename meter_history.db.<timestamp>.bak eg meter_history.db.261027-083600.bak
+
+### 2026-10-27 — A9 download is the encrypted zip
+
+> well, as with budget, that bak must be zipped and encrypted with the DB_BACKUP_ENCRYPTION_KEY in .env - that zipped and encrypted file must be downloaded, not the actual backup - the bacup is deleted, ony the zipped/encrypted file is downloaded
+
+### 2026-10-27 — A9 no synctool pull
+
+> well, actually, the synctool will never pull that backup
+> since: button click -> sql backup -> zip -> encrypt -> download -> bak & encrypted files on source are deleted -> nothing to sync by tool
+> confirm
+
 ---
 
 ## A4 — Top-N days / months / years + graphs
@@ -137,6 +167,8 @@ Best/worst yield rankings (20 days, 10 months, 10 years) in `top_periods` via `-
 **Status:** open (not kicked off)  
 **Scope (placement):** Chart series beside PV: power from grid + net/home usage, in the spirit of [`HomeWizard-graph.jpg`](HomeWizard-graph.jpg).  
 **Locks:** Which page (`index` live vs `analytics` intraday vs both), exact series definitions (P1 channels), resolution — kickoff.
+
+**From A13 (2026-10-27):** `analytics.php` stays in this phase. Open here: a grid day-chart in kWh per quarter, or in average kW. A13 does not add that chart.
 
 ---
 
@@ -197,46 +229,35 @@ SQLite in `meter_history.db` (web user and poller can both open it). PHP does no
 
 ## A8 — Live chart time axis + zoom
 
-**Status:** open (not kicked off)  
-**Size:** **M**  
-**Scope (placement):** Live dashboard chart on `index.php`. Today the solar title is `Solar & Consumption Profile (Last 2 Hours)` (no-solar fallback: `Power History (Last 2 Hours)`).
+**Status:** **Done** 2026-10-27  
+**Product:** [`docs/architecture.md`](../architecture.md) (live chart on `index.php`).
 
-Operator request, not locked:
+### Done summary
 
-- X-axis to scale. Default view is the last 2 hours. A missing reading is a gap: no line drawn across it.
-- Viewport is not fixed at 2 hours. Zoom in and out, up to **1 week of 1-minute data**.
-- Remove ` (Last 2 Hours)` from the title.
+The live power chart uses a clock window of 1-minute `readings`. Presets are 15 min, 1 h, 2 h, 6 h, 24 h, and 7 d, ending at now. Default is the last 2 hours. Drag zoom keeps that range across the 60-second reload, from 15 minutes through 7 days. A 3-minute step stays drawn. A longer step is a gap. Titles are `Solar & Consumption Profile` and `Power History`. Series are unchanged. This is not A5.
 
-**Not A5.** A5 adds series (grid import / home usage). A8 changes the time axis of the chart that already exists.
+### DoD
 
-**Locks (kickoff):** zoom control, what “to scale” means when the window is not full, whether the no-solar title drops the same suffix, where the 1-minute series is read from.
+- [x] Chart window, presets, drag zoom, gaps, titles
+- [x] Product docs
+- [x] Operator close
 
 ---
 
 ## A9 — Full DB download + restore
 
-**Status:** open (not kicked off). **Depends on A6.**  
-**Size:** **L**  
-**Where:** controls on the A6 admin page. Id **A9** on letter **A** (same detail file).
+**Status:** **Done** 2026-10-27  
+**Product:** [`docs/architecture.md`](../architecture.md) (Settings backup) · [`docs/deploy.md`](../deploy.md)
 
-### Locked (2026-10-25)
+### Done summary
 
-- Download and restore. No wipe.
-- Dump is every table in `meter_history.db`, including future settings rows and reversible device passwords.
-- Same working shape as budget Home **Volledige back-up downloaden** / **Volledig herstellen**: browser file is the encrypted backup; restore replaces the live database from an upload. Budget’s admin wipe is out.
-- `DB_BACKUP_ENCRYPTION_KEY` lives only in `.env` on the host. Not user-configurable. Not in git. `p1-sync` already excludes `.env*`.
-- **Download and restore each ask for the admin password.** A wrong password rejects the action. There is no standing session (same gate as an A6 settings save).
-- **No extra plain SQL files** on the host. The live `meter_history.db` is the only plain copy. Budget’s pre-restore `budget-backup-*.sql` is not copied.
-- **`p1-sync` pulls the live DB** from the Synology app directory to the PC source tree (`config.source` / `meter_history.db`, already gitignored). The OneDrive target stays `helpers/` only and does not receive the DB.
-- The existing PC → NAS `/MIR` **keeps excluding** `meter_history.db*` (and the `-wal` / `-shm` sidecars). That job stays a push. Including the DB in the mirror would copy PC → NAS and can delete or overwrite the live file.
+Settings downloads and restores an encrypted copy of the whole database. `db_backup.py` does the SQLite online backup, the zip, and AES-256-GCM. PHP checks the admin password and the restore confirm, then sends the file or swaps the database. The browser file is `meter_history.db.<yymmdd-HHMMSS>.backup`. Plain and encrypted files are deleted on the server. `p1-sync` does not pull them. PHP `zip` is not used.
 
-### Verified (sync tool today)
+### DoD
 
-`helpers/p1-sync.ps1` mirrors **PC → target** (`robocopy /MIR`). Shared excludes include `meter_history.db*` and `.env*`. The pull above is new work in this phase. It does not exist in the script yet.
-
-### Still open
-
-None for placement. Kickoff still has to say how the pull takes a consistent snapshot while `logger.py` is writing.
+- [x] Download and restore
+- [x] Product docs
+- [x] Operator close
 
 ---
 
@@ -305,9 +326,57 @@ Not part of P3. P3 stores gas for the configured gas EAN and does not put it on 
 
 Not part of P3. P3 does not write the monthly peak into `capacity_peak_w` and does not add it to the live card. This phase decides where the monthly kW series is shown. No code until kickoff.
 
+**Beside A13:** A13 is period import/export kWh on summary and top-n. This phase is the monthly peak kW (`piekvermogen` in `fluvius_interval`). Different unit, different store. A13 does not draw the peak.
+
 ### Verbatim — 2026-10-26
 
 > Q4: also another phase: triage
+
+---
+
+## A13 — Grid import / export mode
+
+**Status:** **Done** 2026-10-27
+**Product:** [`docs/architecture.md`](../architecture.md) (UI map: `summary.php`, `topn.php`)
+
+### Done summary
+
+Solar yield stays the default on `summary.php` and `topn.php`. Grid mode is grouped bars: import, export, and net. A second switch shows all three, import/export only, or net only. Top-N grid ranks are the two ends of import minus export. The open local day stays out of both day ranks. `analytics.php` is unchanged (**A5**). No shared series with **A12**.
+
+### DoD
+
+- [x] Switches, bars, rankings, links
+- [x] Product docs
+- [x] Operator close
+
+### Verbatim — 2026-10-27
+
+> ok, extend the analytics, summary and top-n tables with net export & import -- create a selection at the top, default = solar yield, other option = net import/export - the graphs should switch to those (2 lines in 1 graph) -- this is partly overlapping A5: check & give feedback - give proposals on how to structure this, based on industry standard
+
+> triage
+> Q1: top-n graphs for grid:
+> - highest net import days (how much is pulled/pushed to the grid)
+> - highest net export days (how much is pushed to the grid)
+> - same for months & years
+> is it an idea to create a new PHP file ? compare pros & cons
+> Q2: net analytics should only show day graph (selectable), not Two-Day Overlay and clear sky
+> re-assess
+
+> net
+
+> 1: same file, use selector
+> 2: move this question to A5, so leave analytics out of A13
+>
+> what is the overlap with A12?
+
+> local day stays out
+
+> create clearly visible disctiontion: these are  just text labels - make switch, eg
+> also: net should be transformed to bars - also: add net bar (yellow)
+
+> add checkboxes: show/hide import&export and show/hide net - mutually exclusive - so actually 3 options: show all, show only import/export or show only net -- how should the  UI best be styled?
+
+> close phase
 
 ---
 

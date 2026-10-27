@@ -55,3 +55,6 @@ def top_gaps(table, n=10):
 top_gaps('inverter_history_5min')
 top_gaps('sensorbox_history_5min')
 "
+
+# copy table
+sqlite3 meter_history.db ".backup 'meter_history.db.bak'"

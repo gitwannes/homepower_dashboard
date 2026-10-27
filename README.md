@@ -36,11 +36,11 @@ Never put real LAN IPs or site nicknames in committed files.
 | File | Role |
 |---|---|
 | `logger.py` | 1-minute poll / hot DB writer |
-| `index.php` | Live dashboard |
-| `settings.php` | Admin password and site configuration |
+| `index.php` | Live dashboard. Power chart is a clock window (default last 2 hours, presets through 7 days) |
+| `settings.php` | Admin password, site configuration, encrypted database download and restore |
 | `analytics.php` | Exploration: intraday, two-day compare, clear-sky envelope; **Generate table** for today |
-| `summary.php` | All years / week / month / year (`daily_history` / `monthly_history`) |
-| `topn.php` | Best/worst yield Top-N (days/months/years); click-through to period views |
+| `summary.php` | All years / week / month / year. Solar yield (default) or grid import, export, and net |
+| `topn.php` | Best/worst solar yield, or highest net import / net export. Click-through to the period view |
 | `importer.py` / `import_dashboard.php` | WebBox Mean XML and daily archives → staging tables |
 | `fluvius_import.py` | Fluvius CSV in `import_queue/fluvius/` → `fluvius_interval` (Settings EANs only) |
 | `rollup.py` | Warehouse: `-consolidate`, nightly `-daily`, rare `-buildall` (includes Fluvius electricity backfill) |

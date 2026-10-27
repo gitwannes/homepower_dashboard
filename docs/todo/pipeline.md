@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-26 (**P3 Done**; **A11** / **A12** not kicked off)
+**Last updated:** 2026-10-27 (**A13** closed)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -39,6 +39,9 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **A6** | Settings page (`settings.php`, `app_settings`) — **2026-10-26** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **A10** | Warehouse rebuild: `-buildall` refills `history_5min` from `readings` and WebBox staging; `-aggregate5min` and `-today` removed — **2026-10-26** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **P3** | Fluvius manual CSV into `fluvius_interval`; electricity quarter backfill on `-buildall` / `-daily`. NAS CSV import smoked; `-buildall` not run — **2026-10-26** — [`phaseP-portals.md`](phaseP-portals.md) · [`architecture.md`](../architecture.md) |
+| **A8** | Live chart clock window, presets through 7 days, drag zoom, gaps — **2026-10-27** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
+| **A9** | Settings encrypted database download and restore (`db_backup.py`); no synctool pull — **2026-10-27** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
+| **A13** | Grid import/export mode on summary and top-n. Analytics stays in A5 — **2026-10-27** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 
 ---
 
@@ -50,10 +53,8 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | 2 | open | S | **A7** | `top_records`: drop or change (assess at kickoff) | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 3 | open | L | **P1** | Sunny Portal one-time history — kickoff, paid API out, not locked | [`phaseP-portals.md`](phaseP-portals.md) |
 | 4 | open | L | **P2** | SMA portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
-| 5 | open | M | **A8** | Live Solar & Consumption chart: scaled X-axis (no line across gaps), zoom to 1 week of 1-minute data, drop "(Last 2 Hours)" | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 6 | open | L | **A9** | Full DB download + restore on the A6 page (admin password); no wipe; `p1-sync` pulls `meter_history.db` to the PC | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 7 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 8 | open | S | **A12** | Historical monthly Fluvius peak on a page. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 5 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 6 | open | S | **A12** | Historical monthly Fluvius peak on a page. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
 
 ---
 

@@ -4,6 +4,7 @@
  * Period summaries (all-years / ISO week / month / year) from daily_history / monthly_history.
  * Prev/next arrows wrap within available data periods (not used on All years).
  * (Day mode removed: a single daily_history bar is not useful; use analytics intraday for one day.)
+ * metric=grid draws grouped bars: import, export, and net (yellow). Default metric is solar yield.
  */
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
@@ -78,6 +79,53 @@ function summary_iso_week_dates(string $weekLabel): array
     return $out;
 }
 
+/**
+ * solar or grid. Any other value stays on solar yield.
+ */
+function summary_metric(): string
+{
+    $metric = isset($_GET['metric']) ? (string)$_GET['metric'] : 'solar';
+    return $metric === 'grid' ? 'grid' : 'solar';
+}
+
+/**
+ * Round one kWh register. Null stays null so a line chart can leave a gap.
+ *
+ * @param mixed $value
+ */
+function summary_kwh($value, int $digits): ?float
+{
+    if ($value === null || $value === '') {
+        return null;
+    }
+    return round((float)$value, $digits);
+}
+
+/**
+ * Add a register into a running total. A null addend leaves the total unchanged.
+ */
+function summary_add(?float $sum, ?float $add): ?float
+{
+    if ($add === null) {
+        return $sum;
+    }
+    if ($sum === null) {
+        return $add;
+    }
+    return $sum + $add;
+}
+
+/**
+ * Net import for a period. Unknown on either side stays unknown.
+ */
+function summary_net(?float $importKwh, ?float $exportKwh): ?float
+{
+    if ($importKwh === null || $exportKwh === null) {
+        return null;
+    }
+    return round($importKwh - $exportKwh, 3);
+}
+
 if (isset($_GET['ajax'])) {
     header('Content-Type: application/json');
     if (!file_exists($dbFile)) {
@@ -100,6 +148,39 @@ if (isset($_GET['ajax'])) {
         if ($action === 'week' && isset($_GET['week'])) {
             $week = (string)$_GET['week'];
             $days = summary_iso_week_dates($week);
+            if (summary_metric() === 'grid') {
+                // Seven slots, including days with no row. A missing register is a gap.
+                $categories = [];
+                $import = [];
+                $export = [];
+                $importSum = null;
+                $exportSum = null;
+                $stmt = $pdo->prepare(
+                    'SELECT grid_import_kwh, grid_export_kwh FROM daily_history WHERE date = ?'
+                );
+                foreach ($days as $d) {
+                    $stmt->execute([$d]);
+                    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+                    $categories[] = $d;
+                    $imp = $row ? summary_kwh($row['grid_import_kwh'], 3) : null;
+                    $exp = $row ? summary_kwh($row['grid_export_kwh'], 3) : null;
+                    $import[] = $imp;
+                    $export[] = $exp;
+                    $importSum = summary_add($importSum, $imp);
+                    $exportSum = summary_add($exportSum, $exp);
+                }
+                echo json_encode([
+                    'period' => $week,
+                    'label' => $week . ' (Mon-Sun)',
+                    'categories' => $categories,
+                    'import' => $import,
+                    'export' => $export,
+                    'import_kwh' => $importSum === null ? null : round($importSum, 3),
+                    'export_kwh' => $exportSum === null ? null : round($exportSum, 3),
+                    'net_kwh' => summary_net($importSum, $exportSum),
+                ]);
+                exit;
+            }
             $categories = [];
             $yield = [];
             $peak = [];
@@ -130,6 +211,38 @@ if (isset($_GET['ajax'])) {
             $month = (string)$_GET['month']; // YYYY-MM
             if (!preg_match('/^\d{4}-\d{2}$/', $month)) {
                 echo json_encode(['error' => 'Invalid month']);
+                exit;
+            }
+            if (summary_metric() === 'grid') {
+                $categories = [];
+                $import = [];
+                $export = [];
+                $importSum = null;
+                $exportSum = null;
+                $gridStmt = $pdo->prepare(
+                    "SELECT date, grid_import_kwh, grid_export_kwh FROM daily_history
+                     WHERE date LIKE ? ORDER BY date ASC"
+                );
+                $gridStmt->execute([$month . '%']);
+                while ($row = $gridStmt->fetch(PDO::FETCH_ASSOC)) {
+                    $categories[] = $row['date'];
+                    $imp = summary_kwh($row['grid_import_kwh'], 3);
+                    $exp = summary_kwh($row['grid_export_kwh'], 3);
+                    $import[] = $imp;
+                    $export[] = $exp;
+                    $importSum = summary_add($importSum, $imp);
+                    $exportSum = summary_add($exportSum, $exp);
+                }
+                echo json_encode([
+                    'period' => $month,
+                    'label' => $month,
+                    'categories' => $categories,
+                    'import' => $import,
+                    'export' => $export,
+                    'import_kwh' => $importSum === null ? null : round($importSum, 3),
+                    'export_kwh' => $exportSum === null ? null : round($exportSum, 3),
+                    'net_kwh' => summary_net($importSum, $exportSum),
+                ]);
                 exit;
             }
             $stmt = $pdo->prepare(
@@ -181,6 +294,67 @@ if (isset($_GET['ajax'])) {
 
         // --- All years: one bar per calendar year + flat PVGIS year baseline ---
         if ($action === 'all') {
+            if (summary_metric() === 'grid') {
+                $categories = [];
+                $import = [];
+                $export = [];
+                $importSum = null;
+                $exportSum = null;
+                $rows = [];
+                try {
+                    $rows = $pdo->query(
+                        "SELECT substr(year_month, 1, 4) AS y,
+                                SUM(total_import_kwh) AS imp,
+                                SUM(total_export_kwh) AS exp
+                         FROM monthly_history
+                         GROUP BY y
+                         ORDER BY y ASC"
+                    )->fetchAll(PDO::FETCH_ASSOC);
+                } catch (Exception $e) {
+                    $rows = [];
+                }
+                if (count($rows) === 0) {
+                    try {
+                        $rows = $pdo->query(
+                            "SELECT substr(date, 1, 4) AS y,
+                                    SUM(grid_import_kwh) AS imp,
+                                    SUM(grid_export_kwh) AS exp
+                             FROM daily_history
+                             GROUP BY y
+                             ORDER BY y ASC"
+                        )->fetchAll(PDO::FETCH_ASSOC);
+                    } catch (Exception $e) {
+                        $rows = [];
+                    }
+                }
+                foreach ($rows as $row) {
+                    if (!$row['y']) {
+                        continue;
+                    }
+                    $imp = summary_kwh($row['imp'], 3);
+                    $exp = summary_kwh($row['exp'], 3);
+                    if ($imp === null && $exp === null) {
+                        continue;
+                    }
+                    $categories[] = (string)$row['y'];
+                    $import[] = $imp;
+                    $export[] = $exp;
+                    $importSum = summary_add($importSum, $imp);
+                    $exportSum = summary_add($exportSum, $exp);
+                }
+                echo json_encode([
+                    'period' => 'all',
+                    'label' => 'All years',
+                    'categories' => $categories,
+                    'import' => $import,
+                    'export' => $export,
+                    'import_kwh' => $importSum === null ? null : round($importSum, 3),
+                    'export_kwh' => $exportSum === null ? null : round($exportSum, 3),
+                    'net_kwh' => summary_net($importSum, $exportSum),
+                    'years' => count($categories),
+                ]);
+                exit;
+            }
             $pvgisYear = 0.0;
             try {
                 $pvgisYear = (float)$pdo->query(
@@ -243,6 +417,69 @@ if (isset($_GET['ajax'])) {
             $year = (string)$_GET['year'];
             if (!preg_match('/^\d{4}$/', $year)) {
                 echo json_encode(['error' => 'Invalid year']);
+                exit;
+            }
+            if (summary_metric() === 'grid') {
+                $categories = [];
+                $import = [];
+                $export = [];
+                $importSum = null;
+                $exportSum = null;
+                $fromMonthly = false;
+                try {
+                    $stmt = $pdo->prepare(
+                        "SELECT year_month, total_import_kwh, total_export_kwh
+                         FROM monthly_history
+                         WHERE year_month LIKE ?
+                         ORDER BY year_month ASC"
+                    );
+                    $stmt->execute([$year . '%']);
+                    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                    if (count($rows) > 0) {
+                        $fromMonthly = true;
+                        foreach ($rows as $row) {
+                            $categories[] = $row['year_month'];
+                            $imp = summary_kwh($row['total_import_kwh'], 3);
+                            $exp = summary_kwh($row['total_export_kwh'], 3);
+                            $import[] = $imp;
+                            $export[] = $exp;
+                            $importSum = summary_add($importSum, $imp);
+                            $exportSum = summary_add($exportSum, $exp);
+                        }
+                    }
+                } catch (Exception $e) {
+                }
+                if (!$fromMonthly) {
+                    $stmt = $pdo->prepare(
+                        "SELECT substr(date, 1, 7) AS ym,
+                                SUM(grid_import_kwh) AS imp,
+                                SUM(grid_export_kwh) AS exp
+                         FROM daily_history
+                         WHERE date LIKE ?
+                         GROUP BY ym
+                         ORDER BY ym ASC"
+                    );
+                    $stmt->execute([$year . '%']);
+                    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                        $categories[] = $row['ym'];
+                        $imp = summary_kwh($row['imp'], 3);
+                        $exp = summary_kwh($row['exp'], 3);
+                        $import[] = $imp;
+                        $export[] = $exp;
+                        $importSum = summary_add($importSum, $imp);
+                        $exportSum = summary_add($exportSum, $exp);
+                    }
+                }
+                echo json_encode([
+                    'period' => $year,
+                    'label' => $year,
+                    'categories' => $categories,
+                    'import' => $import,
+                    'export' => $export,
+                    'import_kwh' => $importSum === null ? null : round($importSum, 3),
+                    'export_kwh' => $exportSum === null ? null : round($exportSum, 3),
+                    'net_kwh' => summary_net($importSum, $exportSum),
+                ]);
                 exit;
             }
             $categories = [];
@@ -342,6 +579,33 @@ if (isset($_GET['ajax'])) {
             @apply text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white
                    text-slate-600 hover:bg-slate-50 hover:text-emerald-700 transition-colors cursor-pointer;
         }
+        .metric-switch {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px;
+            border: 2px solid #0f172a;
+            border-radius: 999px;
+            background: #e2e8f0;
+        }
+        .metric-switch button {
+            appearance: none;
+            -webkit-appearance: none;
+            margin: 0;
+            border: 0;
+            border-radius: 999px;
+            padding: 8px 18px;
+            font: 700 13px/1.2 system-ui, sans-serif;
+            color: #334155;
+            background: transparent;
+            cursor: pointer;
+        }
+        .metric-switch button.metric-on {
+            background: #0f172a;
+            color: #ffffff;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
+        }
+        .is-hidden { display: none !important; }
     </style>
 </head>
 <body class="p-4 md:p-8">
@@ -355,7 +619,7 @@ if (isset($_GET['ajax'])) {
             </a>
             <div>
                 <h1 class="text-2xl font-black text-slate-900 tracking-tight">Energy Summary</h1>
-                <p class="text-xs text-slate-400 mt-0.5">All years, week, month, and year from daily rollups</p>
+                <p id="summary-blurb" class="text-xs text-slate-400 mt-0.5">All years, week, month, and year from daily rollups</p>
             </div>
         </div>
         <div class="flex flex-wrap items-center gap-2">
@@ -365,12 +629,24 @@ if (isset($_GET['ajax'])) {
             <a href="analytics.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                 <i data-lucide="line-chart" class="w-3.5 h-3.5 text-indigo-600"></i> Analytics
             </a>
-            <a href="topn.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
+            <a id="nav-topn" href="topn.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                 <i data-lucide="trophy" class="w-3.5 h-3.5 text-amber-500"></i> Top-N
             </a>
             <?= hp_nav_settings() ?>
         </div>
     </header>
+
+    <div class="flex flex-wrap items-center gap-3">
+        <div class="metric-switch" role="group" aria-label="Summary metric">
+            <button type="button" id="metric-solar" class="metric-on" aria-pressed="true" onclick="setMetric('solar')">Solar yield</button>
+            <button type="button" id="metric-grid" aria-pressed="false" onclick="setMetric('grid')">Grid import / export</button>
+        </div>
+        <div id="bars-wrap" class="metric-switch is-hidden" role="group" aria-label="Grid bars">
+            <button type="button" id="bars-all" class="metric-on" aria-pressed="true" onclick="setBars('all')">All</button>
+            <button type="button" id="bars-registers" aria-pressed="false" onclick="setBars('registers')">Import / export</button>
+            <button type="button" id="bars-net" aria-pressed="false" onclick="setBars('net')">Net</button>
+        </div>
+    </div>
 
     <div id="summary-warning" class="hidden text-xs text-amber-600 bg-amber-50 border border-amber-200 p-3 rounded-xl">
         No daily rollups yet. Run <code>python3 rollup.py -buildall</code> (or <code>-daily</code>) first.
@@ -381,7 +657,7 @@ if (isset($_GET['ajax'])) {
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
             <div>
                 <h2 class="text-lg font-bold text-slate-900">All years</h2>
-                <p class="text-xs text-slate-400">Lifetime yield per calendar year vs PVGIS annual baseline</p>
+                <p id="all-blurb" class="text-xs text-slate-400">Lifetime yield per calendar year vs PVGIS annual baseline</p>
             </div>
         </div>
         <div id="all-stats" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3 text-sm"></div>
@@ -462,6 +738,11 @@ if (isset($_GET['ajax'])) {
     let current = { week: null, month: null, year: null };
     /** @type {{all: any, week: any, month: any, year: any}} */
     let charts = { all: null, week: null, month: null, year: null };
+    /** @type {'solar'|'grid'} */
+    let metric = 'solar';
+    /** @type {'all'|'registers'|'net'} */
+    let bars = 'all';
+    let loadGen = 0;
 
     const baseChartOptions = {
         chart: { toolbar: { show: true }, zoom: { enabled: false }, animations: { enabled: false } },
@@ -576,10 +857,150 @@ if (isset($_GET['ajax'])) {
         setYearStyleChart('year', '#chart-year', data, 'PVGIS expected');
     }
 
-    async function loadAllYears() {
-        const res = await fetch('summary.php?ajax=all');
+    /**
+     * @param {number|null|undefined} value
+     * @returns {string}
+     */
+    function fmtKwh(value) {
+        if (value == null || Number.isNaN(Number(value))) return '-';
+        return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 3 })} kWh`;
+    }
+
+    function metricQuery() {
+        return metric === 'grid' ? '&metric=grid' : '';
+    }
+
+    function paintMetricSwitch() {
+        const solarBtn = document.getElementById('metric-solar');
+        const gridBtn = document.getElementById('metric-grid');
+        solarBtn.classList.toggle('metric-on', metric === 'solar');
+        gridBtn.classList.toggle('metric-on', metric === 'grid');
+        solarBtn.setAttribute('aria-pressed', metric === 'solar' ? 'true' : 'false');
+        gridBtn.setAttribute('aria-pressed', metric === 'grid' ? 'true' : 'false');
+        const blurb = document.getElementById('summary-blurb');
+        const allBlurb = document.getElementById('all-blurb');
+        const topn = document.getElementById('nav-topn');
+        if (metric === 'grid') {
+            blurb.textContent = 'Import, export, and net (yellow) bars for all years, week, month, and year';
+            allBlurb.textContent = 'Import, export, and net (yellow) per calendar year';
+            topn.href = 'topn.php?metric=grid' + (bars === 'all' ? '' : '&bars=' + encodeURIComponent(bars));
+        } else {
+            blurb.textContent = 'All years, week, month, and year from daily rollups';
+            allBlurb.textContent = 'Lifetime yield per calendar year vs PVGIS annual baseline';
+            topn.href = 'topn.php' + (bars === 'all' ? '' : '?bars=' + encodeURIComponent(bars));
+        }
+        paintBars();
+    }
+
+    function paintBars() {
+        const wrap = document.getElementById('bars-wrap');
+        wrap.classList.toggle('is-hidden', metric !== 'grid');
+        ['all', 'registers', 'net'].forEach((id) => {
+            const btn = document.getElementById('bars-' + id);
+            const on = bars === id;
+            btn.classList.toggle('metric-on', on);
+            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+    }
+
+    function writeViewUrl() {
+        const url = new URL(window.location.href);
+        if (metric === 'grid') url.searchParams.set('metric', 'grid');
+        else url.searchParams.delete('metric');
+        if (bars === 'all') url.searchParams.delete('bars');
+        else url.searchParams.set('bars', bars);
+        history.replaceState(null, '', url);
+    }
+
+    /**
+     * Net import for one category. Unknown on either register stays a gap.
+     *
+     * @param {Array<number|null>} importData
+     * @param {Array<number|null>} exportData
+     * @returns {Array<number|null>}
+     */
+    function netPoints(importData, exportData) {
+        return importData.map((imp, i) => {
+            const exp = exportData[i];
+            if (imp == null || exp == null) return null;
+            return Math.round((Number(imp) - Number(exp)) * 1000) / 1000;
+        });
+    }
+
+    /**
+     * One of three mutually exclusive bar sets.
+     *
+     * @param {Array<number|null>} importData
+     * @param {Array<number|null>} exportData
+     * @returns {{series: Array<{name: string, data: Array<number|null>}>, colors: string[]}}
+     */
+    function gridSeries(importData, exportData) {
+        const all = [
+            { name: 'Import (kWh)', data: importData, color: '#2563eb' },
+            { name: 'Export (kWh)', data: exportData, color: '#10b981' },
+            { name: 'Net (kWh)', data: netPoints(importData, exportData), color: '#eab308' }
+        ];
+        const picked = bars === 'registers' ? all.slice(0, 2) : (bars === 'net' ? all.slice(2) : all);
+        return {
+            series: picked.map((item) => ({ name: item.name, data: item.data })),
+            colors: picked.map((item) => item.color)
+        };
+    }
+
+    function setGridBars(chartKey, hostSel, categories, importData, exportData) {
+        const host = document.querySelector(hostSel);
+        if (charts[chartKey]) { charts[chartKey].destroy(); charts[chartKey] = null; }
+        const picked = gridSeries(importData, exportData);
+        charts[chartKey] = new ApexCharts(host, {
+            ...baseChartOptions,
+            series: picked.series,
+            chart: { ...baseChartOptions.chart, type: 'bar', height: 320, toolbar: { show: false } },
+            colors: picked.colors,
+            plotOptions: { bar: { borderRadius: 3, columnWidth: '72%' } },
+            xaxis: { ...baseChartOptions.xaxis, categories: categories },
+            yaxis: {
+                ...baseChartOptions.yaxis,
+                title: { text: 'kWh', style: { color: '#94a3b8', fontSize: '10px' } }
+            },
+            tooltip: {
+                shared: true,
+                intersect: false,
+                y: {
+                    formatter: (val) => (val == null || Number.isNaN(Number(val)) ? '-' : fmtKwh(val))
+                }
+            }
+        });
+        charts[chartKey].render();
+    }
+
+    function clearChart(chartKey) {
+        if (charts[chartKey]) {
+            charts[chartKey].destroy();
+            charts[chartKey] = null;
+        }
+    }
+
+    async function loadAllYears(gen) {
+        const res = await fetch('summary.php?ajax=all' + metricQuery());
         const data = await res.json();
-        if (data.error || !(data.categories || []).length) return;
+        if (gen !== loadGen) return;
+        if (data.error || !(data.categories || []).length) {
+            clearChart('all');
+            if (metric === 'grid') {
+                renderStats('all-stats', [{ label: 'Grid', value: 'No import / export' }]);
+            }
+            return;
+        }
+        if (metric === 'grid') {
+            renderStats('all-stats', [
+                { label: 'Import', value: fmtKwh(data.import_kwh) },
+                { label: 'Export', value: fmtKwh(data.export_kwh) },
+                { label: 'Net import', value: fmtKwh(data.net_kwh) },
+                { label: 'Years', value: String(data.years) }
+            ]);
+            setGridBars('all', '#chart-all', data.categories, data.import, data.export);
+            return;
+        }
         const avg = data.years > 0 ? data.total_kwh / data.years : 0;
         renderStats('all-stats', [
             { label: 'Lifetime', value: `${Number(data.total_kwh).toLocaleString()} kWh` },
@@ -595,20 +1016,35 @@ if (isset($_GET['ajax'])) {
         setYearStyleChart('all', '#chart-all', data, 'PVGIS year baseline');
     }
 
-    async function loadSection(mode) {
+    async function loadSection(mode, gen) {
         const key = current[mode];
         if (!key) return;
+        const ticket = gen == null ? loadGen : gen;
         document.getElementById(mode + '-label').textContent = key;
 
         let url = '';
         if (mode === 'week') url = `summary.php?ajax=week&week=${encodeURIComponent(key)}`;
         if (mode === 'month') url = `summary.php?ajax=month&month=${encodeURIComponent(key)}`;
         if (mode === 'year') url = `summary.php?ajax=year&year=${encodeURIComponent(key)}`;
+        url += metricQuery();
 
         const res = await fetch(url);
         const data = await res.json();
+        if (ticket !== loadGen) return;
         if (data.error) return;
         document.getElementById(mode + '-label').textContent = data.label || key;
+
+        if (metric === 'grid') {
+            const countLabel = mode === 'year' ? 'Months' : 'Days';
+            renderStats(mode + '-stats', [
+                { label: 'Import', value: fmtKwh(data.import_kwh) },
+                { label: 'Export', value: fmtKwh(data.export_kwh) },
+                { label: 'Net import', value: fmtKwh(data.net_kwh) },
+                { label: countLabel, value: String((data.categories || []).length) }
+            ]);
+            setGridBars(mode, '#chart-' + mode, data.categories || [], data.import || [], data.export || []);
+            return;
+        }
 
         if (mode === 'week' || mode === 'month') {
             const stats = [
@@ -642,7 +1078,41 @@ if (isset($_GET['ajax'])) {
         setYearChart(data);
     }
 
+    async function reloadCharts() {
+        const gen = ++loadGen;
+        await loadAllYears(gen);
+        if (gen !== loadGen) return;
+        if (current.week) await loadSection('week', gen);
+        if (gen !== loadGen) return;
+        if (current.month) await loadSection('month', gen);
+        if (gen !== loadGen) return;
+        if (current.year) await loadSection('year', gen);
+    }
+
+    function setMetric(next) {
+        const chosen = next === 'grid' ? 'grid' : 'solar';
+        if (chosen === metric) return;
+        metric = chosen;
+        writeViewUrl();
+        paintMetricSwitch();
+        reloadCharts();
+    }
+
+    function setBars(next) {
+        const chosen = next === 'registers' || next === 'net' ? next : 'all';
+        if (chosen === bars) return;
+        bars = chosen;
+        writeViewUrl();
+        paintBars();
+        reloadCharts();
+    }
+
     document.addEventListener('DOMContentLoaded', async () => {
+        const params0 = new URLSearchParams(window.location.search);
+        metric = params0.get('metric') === 'grid' ? 'grid' : 'solar';
+        const bars0 = params0.get('bars');
+        bars = bars0 === 'registers' || bars0 === 'net' ? bars0 : 'all';
+        paintMetricSwitch();
         const res = await fetch('summary.php?ajax=meta');
         periods = await res.json();
         if (periods.error || (!periods.weeks.length && !periods.months.length && !periods.years.length)) {
@@ -665,10 +1135,7 @@ if (isset($_GET['ajax'])) {
             current.year = qYear;
         }
 
-        await loadAllYears();
-        if (current.week) await loadSection('week');
-        if (current.month) await loadSection('month');
-        if (current.year) await loadSection('year');
+        await reloadCharts();
 
         if (qMonth || qYear) {
             const el = document.getElementById(qMonth ? 'chart-month' : 'chart-year');

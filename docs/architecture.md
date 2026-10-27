@@ -2,7 +2,7 @@
 # Architecture
 
 **Status:** Migrated into this repo (2026-10-22). Phase A warehouse + UI Done.  
-**Last updated:** 2026-10-26 (P3 closed: Fluvius CSV import and electricity backfill)  
+**Last updated:** 2026-10-27 (A9 encrypted backup closed)  
 **Delivery archives:** [`docs/todo/_archive/phaseM-migration.md`](todo/_archive/phaseM-migration.md) · [`docs/todo/_archive/phaseA-aggregation.md`](todo/_archive/phaseA-aggregation.md) (A0–A3)
 
 ## What this is
@@ -66,17 +66,23 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 | Night / shoulder | Defaults: drop PAC when the hour is `>= 22` or `< 5`; shoulder `>= 20` or `< 6` when radiation is `<= 5` W/m². |
 | Apply | Titles on the next page load. Plant limits and monthly kWh when `rollup.py -buildall` runs. No rebuild button. `importer.py` inserts an `expected_monthly` row only when that month and inclination are missing. |
 
-`DB_BACKUP_ENCRYPTION_KEY` is not a setting. It stays in `.env`. Download and restore of the database is **A9**, not this page.
+`DB_BACKUP_ENCRYPTION_KEY` is not a setting. It stays in `.env`. An empty key refuses both download and restore. Settings asks for the admin password on both. Restore also requires an explicit confirm that everything currently in the database will be destroyed. There is no stay-logged-in session.
+
+`db_backup.py` makes a SQLite online backup, zips that file, and encrypts the zip (PBKDF2-SHA256, 100000 iterations, AES-256-GCM, salt + IV + ciphertext + tag). PHP checks the password and the confirm, starts Python, sends the file or swaps the database, and deletes the temp files. The key is not a command argument. The browser file is `meter_history.db.<yymmdd-HHMMSS>.backup` (Europe/Brussels). The zip member is `meter_history.db.<stamp>.bak`. After the download is sent, the server deletes the plain backup and the encrypted file. `p1-sync` does not pull those files.
+
+Restore accepts only that encrypted file. `PRAGMA integrity_check` must be `ok`, then the live database is replaced and `-wal` / `-shm` are deleted. A failed check keeps the live database. One in-flight poll may fail. Runtime requirements are in [`deploy.md`](deploy.md).
+
+The live chart on `index.php` reads `readings` for a clock window. Presets are 15 min, 1 h, 2 h, 6 h, 24 h, and 7 d, ending at now. The default is the last 2 hours. Drag zoom keeps that range across the 60-second reload, between 15 minutes and 7 days. A step longer than 3 minutes is a gap.
 
 ## UI map
 
 | Page | Role |
 |---|---|
-| `index.php` | Live dashboard |
+| `index.php` | Live dashboard. The power chart is a clock window of 1-minute `readings` (default last 2 hours, presets through 7 days, drag zoom). A step longer than 3 minutes is a gap. |
 | `analytics.php` | Exploration: daily 5-min curve (`history_5min`), two-day overlay, clear-sky envelope. **Generate table** (today only) downsamples today’s `readings` → `history_5min`. Deep link: `?date=YYYY-MM-DD`. |
-| `summary.php` | Period bars: **All years**, week, month, year (from `daily_history` / `monthly_history` + PVGIS). Deep link: `?month=YYYY-MM`, `?year=YYYY`. |
-| `topn.php` | Best/worst yield rankings (20 days, 10 months, 10 years) from `top_periods`; click bar → analytics/summary. Worst **days** exclude yield ≤ 0 and the current calendar day. |
-| `settings.php` | First open creates the admin password (entered twice) when none is stored. After that, graph pages open with no login session. The page edits devices, titles, 12 monthly expected kWh (inclination 30 only; irradiance stays the seed), max inverter AC, the night/shoulder gates, and the optional Fluvius electricity and gas EANs. |
+| `summary.php` | Period charts: **All years**, week, month, year. Segmented switch: **Solar yield** (default) or **Grid import / export** (`?metric=grid`). Solar uses `solar_yield_kwh` / `total_solar_kwh` plus PVGIS. Grid uses grouped bars from `grid_import_kwh` / `grid_export_kwh` and the monthly `total_import_kwh` / `total_export_kwh`: import, export, and net (import minus export). A missing register is a gap. A second switch, only in grid mode, is **All** (default), **Import / export** (`bars=registers`), or **Net** (`bars=net`). Deep link: `?month=YYYY-MM`, `?year=YYYY`. |
+| `topn.php` | Same two switches. Solar: best/worst yield (20 days, 10 months, 10 years) from `top_periods`; day click → analytics, month/year → summary. Worst **days** exclude yield ≤ 0 and the current calendar day. Grid: highest net import (import minus export) and highest net export (export minus import), same limits, read from `daily_history` / `monthly_history`. Both day lists omit the local day still in progress. Each card shows import, export, and the ranking net, filtered by the bars switch. A grid day click opens that month on summary; a month or year click opens summary. The link keeps `metric` and `bars`. |
+| `settings.php` | First open creates the admin password (entered twice) when none is stored. After that, graph pages open with no login session. The page edits devices, titles, 12 monthly expected kWh (inclination 30 only; irradiance stays the seed), max inverter AC, the night/shoulder gates, and the optional Fluvius electricity and gas EANs. Download and restore of the encrypted database backup ask for the admin password. Restore asks for an explicit confirm that everything currently in the database will be destroyed. |
 
 ## Rollup CLI (operator)
 
