@@ -151,7 +151,7 @@ def init_analytical_db(conn: sqlite3.Connection) -> None:
             )
         """)
 
-        # 5. Hall of Fame (All-time records) — legacy singles; fate = A7
+        # 5. All-time singles (A7) — shown on topn.php; rebuilt by -buildall / -buildalltoprecords
         conn.execute("""
             CREATE TABLE IF NOT EXISTS top_records (
                 record_id TEXT PRIMARY KEY,
@@ -518,36 +518,182 @@ def build_clear_sky_envelopes(conn: sqlite3.Connection, step: int = 4) -> None:
     )
 
 
+# All-time singles on topn.php (A7). direction: max = higher wins, min = lower wins.
+# kind daily = daily_history column; peak = history_5min PAC surge.
+TOP_RECORD_DEFS: Tuple[Tuple[str, str, str, str, Optional[str]], ...] = (
+    ("best_day_kwh", "max", "All-time highest daily generation (kWh)", "daily", "solar_yield_kwh"),
+    ("peak_surge_w", "max", "All-time instantaneous solar AC surge peak (W)", "peak", None),
+    ("max_wind_ms", "max", "Maximum recorded wind gust (m/s)", "daily", "wind_gust_max_ms"),
+    ("max_temp_c", "max", "Highest recorded ambient temperature (C)", "daily", "temp_ambient_max"),
+    ("min_temp_c", "min", "Lowest recorded ambient temperature (C)", "daily", "temp_ambient_min"),
+    ("max_sun_hours", "max", "Most sun-hours in a single day", "daily", "sun_hours"),
+    ("max_module_temp_c", "max", "Highest recorded module temperature (C)", "daily", "temp_module_max"),
+    (
+        "best_self_consumption_kwh",
+        "max",
+        "Highest daily self-consumption (kWh)",
+        "daily",
+        "self_consumption_kwh",
+    ),
+)
+
+
+def _top_record_stricter(direction: str, candidate: float, current: Optional[float]) -> bool:
+    """True when candidate should replace current (or when there is no current row)."""
+    if current is None:
+        return True
+    if direction == "min":
+        return candidate < current
+    return candidate > current
+
+
+def _peak_surge_candidate(
+    conn: sqlite3.Connection,
+    day_lo: Optional[str] = None,
+    day_hi: Optional[str] = None,
+) -> Optional[Tuple[str, float]]:
+    """Best PAC surge day + watts; optional inclusive calendar-day window on timestamp date."""
+    pac_expr = "COALESCE(solar_power_max_w, solar_power_w)"
+    where = sql_pac_plausible(f"COALESCE(solar_power_max_w, solar_power_w, 0)")
+    params: Tuple[object, ...] = ()
+    if day_lo is not None and day_hi is not None:
+        where = f"{where} AND substr(timestamp, 1, 10) >= ? AND substr(timestamp, 1, 10) <= ?"
+        params = (day_lo, day_hi)
+    row = conn.execute(
+        f"""
+        SELECT substr(timestamp, 1, 10) AS d, {pac_expr} AS val
+        FROM history_5min
+        WHERE {where}
+        ORDER BY val DESC
+        LIMIT 1
+        """,
+        params,
+    ).fetchone()
+    if not row or row[1] is None:
+        return None
+    return (str(row[0]), float(row[1]))
+
+
+def _daily_extreme_candidate(
+    conn: sqlite3.Connection,
+    column: str,
+    direction: str,
+    day_lo: Optional[str] = None,
+    day_hi: Optional[str] = None,
+) -> Optional[Tuple[str, float]]:
+    """Best day for one daily_history column; optional inclusive date window."""
+    order = "ASC" if direction == "min" else "DESC"
+    where = f"{column} IS NOT NULL"
+    params: Tuple[object, ...] = ()
+    if day_lo is not None and day_hi is not None:
+        where = f"{where} AND date >= ? AND date <= ?"
+        params = (day_lo, day_hi)
+    row = conn.execute(
+        f"""
+        SELECT date, {column} AS val
+        FROM daily_history
+        WHERE {where}
+        ORDER BY val {order}, date ASC
+        LIMIT 1
+        """,
+        params,
+    ).fetchone()
+    if not row or row[1] is None:
+        return None
+    return (str(row[0]), float(row[1]))
+
+
+def _top_record_candidate(
+    conn: sqlite3.Connection,
+    record_id: str,
+    direction: str,
+    kind: str,
+    column: Optional[str],
+    day_lo: Optional[str] = None,
+    day_hi: Optional[str] = None,
+) -> Optional[Tuple[str, float]]:
+    """Resolve one extreme; window None = all history."""
+    if kind == "peak":
+        return _peak_surge_candidate(conn, day_lo, day_hi)
+    if kind == "daily" and column:
+        return _daily_extreme_candidate(conn, column, direction, day_lo, day_hi)
+    return None
+
+
 def build_top_records(conn: sqlite3.Connection, step: int = 5) -> None:
-    """Calculates Hall of Fame extremes across all 17 years."""
+    """Full rewrite of all-time singles from daily_history / history_5min."""
     start_time = time.time()
-    
+    inserted = 0
+
     with conn:
         conn.execute("DELETE FROM top_records;")
-        
-        queries = [
-            ("best_day_kwh", "SELECT date, solar_yield_kwh FROM daily_history ORDER BY solar_yield_kwh DESC LIMIT 1", "All-time highest daily generation (kWh)"),
-            (
-                "peak_surge_w",
-                f"""SELECT substr(timestamp, 1, 10),
-                           COALESCE(solar_power_max_w, solar_power_w) AS val
-                    FROM history_5min
-                    WHERE {sql_pac_plausible("COALESCE(solar_power_max_w, solar_power_w, 0)")}
-                    ORDER BY val DESC LIMIT 1""",
-                "All-time instantaneous solar AC surge peak (W)",
-            ),
-            ("max_wind_ms", "SELECT date, wind_gust_max_ms FROM daily_history ORDER BY wind_gust_max_ms DESC LIMIT 1", "Maximum recorded wind gust (m/s)"),
-            ("max_temp_c", "SELECT date, temp_ambient_max FROM daily_history ORDER BY temp_ambient_max DESC LIMIT 1", "Highest recorded ambient temperature (°C)"),
-            ("min_temp_c", "SELECT date, temp_ambient_min FROM daily_history WHERE temp_ambient_min IS NOT NULL ORDER BY temp_ambient_min ASC LIMIT 1", "Lowest recorded ambient temperature (°C)")
-        ]
-        
-        for record_id, sql, desc in queries:
-            row = conn.execute(sql).fetchone()
-            if row and row[1] is not None:
-                conn.execute("INSERT INTO top_records VALUES (?, ?, ?, ?)", (record_id, row[1], row[0], desc))
-                
+        for record_id, direction, desc, kind, column in TOP_RECORD_DEFS:
+            cand = _top_record_candidate(conn, record_id, direction, kind, column)
+            if cand is None:
+                continue
+            record_date, record_value = cand
+            conn.execute(
+                "INSERT INTO top_records (record_id, record_value, record_date, description) "
+                "VALUES (?, ?, ?, ?)",
+                (record_id, record_value, record_date, desc),
+            )
+            inserted += 1
+
     duration = time.time() - start_time
-    _status_line(step, "top_records: updated", duration)
+    _status_line(step, f"top_records: full rewrite; {inserted} rows", duration)
+
+
+def refresh_top_records_from_recent(
+    conn: sqlite3.Connection,
+    day_lo: str,
+    day_hi: str,
+    step: int = 5,
+) -> None:
+    """
+    Beat path for -daily: replace a top_records row only when a candidate in
+    [day_lo, day_hi] is a stricter extreme than the stored value.
+    """
+    start_time = time.time()
+    replaced = 0
+    checked = 0
+
+    with conn:
+        for record_id, direction, desc, kind, column in TOP_RECORD_DEFS:
+            cand = _top_record_candidate(
+                conn, record_id, direction, kind, column, day_lo, day_hi
+            )
+            checked += 1
+            if cand is None:
+                continue
+            record_date, record_value = cand
+            existing = conn.execute(
+                "SELECT record_value FROM top_records WHERE record_id = ?",
+                (record_id,),
+            ).fetchone()
+            current_val: Optional[float] = (
+                float(existing[0]) if existing and existing[0] is not None else None
+            )
+            if not _top_record_stricter(direction, record_value, current_val):
+                continue
+            conn.execute(
+                """
+                INSERT INTO top_records (record_id, record_value, record_date, description)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(record_id) DO UPDATE SET
+                    record_value = excluded.record_value,
+                    record_date = excluded.record_date,
+                    description = excluded.description
+                """,
+                (record_id, record_value, record_date, desc),
+            )
+            replaced += 1
+
+    duration = time.time() - start_time
+    _status_line(
+        step,
+        f"top_records: beat check {day_lo}..{day_hi}; replaced {replaced}/{checked}",
+        duration,
+    )
 
 
 def build_top_periods(conn: sqlite3.Connection, step: int = 6) -> None:
@@ -764,6 +910,11 @@ if __name__ == '__main__':
             # Step 2: Bridge raw staging into consolidated master
             consolidate_historical_webbox(conn, step=1)
 
+        # Must be before -buildall: that flag is a prefix of -buildalltoprecords.
+        elif '-buildalltoprecords' in args:
+            build_top_records(conn, step=1)
+            print("=== SUCCESS: top_records rebuilt; open topn.php ===")
+
         elif '-buildall' in args:
             # Refuse before DELETE. A missing readings table would empty the chart
             # and then have nothing to refill it from.
@@ -798,12 +949,13 @@ if __name__ == '__main__':
             build_daily_history(conn, days_back=3, step=2)
             build_monthly_history(conn, step=3)
             build_top_periods(conn, step=4)
+            # Beat check uses the same calendar span as the Fluvius stitch (last 2 days back).
+            refresh_top_records_from_recent(conn, stitch_lo, stitch_hi, step=5)
 
         elif '-today' in args:
             sys.stderr.write(
                 "rollup.py -today was removed. "
-                "Generate table in analytics downsamples today into history_5min. "
-                "Nightly -daily refreshes daily_history and top_periods.\n"
+                "Nightly -daily refreshes history_5min, daily_history, top_periods, and top_records.\n"
             )
             exit_code = 2
 
@@ -824,6 +976,7 @@ if __name__ == '__main__':
             print("Usage:")
             print("  python3 rollup.py -consolidate  (Snaps and merges raw staging into history_5min)")
             print("  python3 rollup.py -buildall     (Rebuild history_5min from readings + staging, then all analytical tables)")
+            print("  python3 rollup.py -buildalltoprecords (Full rewrite of top_records only)")
             print("  python3 rollup.py -daily        (Nightly: last 2 local days of readings, last 3 local days of daily_history)")
             print("  python3 rollup.py -purge_derived (Dev tool: deletes all analytical data safely to restart tests)")
 

@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4**, **A6**, **A8**, **A9**, **A10**, and **A13 Done**; A5, A7, A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-27 (A13 closed)  
+**Status:** **A4**, **A6**, **A8**, **A9**, **A10**, and **A13 Done**; **A7** coding; A5, A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-27 (A7 coding on `feature/a7-top-records`)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py` · `settings.php`
 
 ---
@@ -14,7 +14,7 @@
 | **A4** | Done | Top-N tables (days / months / years) + graphs |
 | **A5** | open | Multi-series power graph (PV + grid import + home usage) — ref image |
 | **A6** | Done | Settings page (`settings.php`). Product: [`docs/architecture.md`](../architecture.md) |
-| **A7** | open | `top_records`: drop or change (assess at kickoff) |
+| **A7** | coding | `top_records` on `topn.php` + `-daily` beat + `-buildalltoprecords` |
 | **A8** | Done | Live chart clock window. Product: [`docs/architecture.md`](../architecture.md) |
 | **A9** | Done | Settings encrypted backup download + restore. Product: [`docs/architecture.md`](../architecture.md) |
 | **A10** | Done | Warehouse rebuild. Product: [`docs/architecture.md`](../architecture.md) (Rollup CLI) |
@@ -24,7 +24,7 @@
 
 **Parallel:** A5 and A7 are independent of **P1–P2**. **A8**, **A9**, and **A13** are Done. **A11** and **A12** read Fluvius rows **P3** stored. They are not kicked off. Wind for A11 is already in the warehouse. **A10** and **P3** are Done. The day-chart grid unit sits on A5. A13 did not change `analytics.php`.
 
-**Related:** A3 removed Hall of Fame UI. A4 is new Top-N. A7 decides fate of leftover `top_records` singles table.
+**Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 keeps `top_records` singles on `topn.php`.
 
 ---
 
@@ -214,16 +214,57 @@ SQLite in `meter_history.db` (web user and poller can both open it). PHP does no
 
 ---
 
-## A7 — `top_records`: drop or change
+## A7 — `top_records` on Top-N
 
-**Status:** open (not kicked off)  
-**Scope (placement):** Decide whether to **drop** `top_records` (+ stop `build_top_records` in rollup) or **change** it (new purpose / UI).  
-**Context:** Single-row extremes (best day, peak surge, wind, temps). Unused in UI since A3. A4 covers Top-N yield lists instead.  
-**Locks:** drop vs redesign — kickoff.
+**Status:** coding (branch `feature/a7-top-records`)  
+**Product:** [`docs/architecture.md`](../architecture.md) (`topn.php`, Rollup CLI)  
+**Scope:** Keep `top_records` as all-time singles; show them on `topn.php`; refresh extremes on `-daily`; add `-buildalltoprecords`.
 
-### Verbatim
+### Locks (operator 2026-10-27)
+
+| # | Lock |
+|---|---|
+| 1 | **Keep** `top_records`. UI: fold a records table into **`topn.php`**. |
+| 2 | **Record ids (eight):** `best_day_kwh`, `peak_surge_w`, `max_wind_ms`, `max_temp_c`, `min_temp_c`, `max_sun_hours`, `max_module_temp_c`, `best_self_consumption_kwh`. |
+| 3 | **Conditional rows:** wind / ambient min-max / module temp / self-consumption — show only when the warehouse has usable values for that metric. Hide the row when absent. |
+| 4 | **Out of A7 record set:** `max_radiation_wm2`, daily `solar_peak_w` as a separate single. Yield month/year and grid Top-N stay A4/A13. |
+| 5 | **Links:** every row with a `record_date` links to **analytics for that day**. |
+| 6 | **`-buildall`:** still full warehouse rebuild, including a full rewrite of `top_records`. |
+| 7 | **`-buildalltoprecords`:** full rewrite of `top_records` only. |
+| 8 | **`-daily`:** after downsample + `daily_history` refresh, beat-check candidates in the Fluvius stitch calendar span; replace only on a **stricter extreme**. |
+
+### Done summary (code on branch)
+
+Eight all-time singles in `top_records`. `-buildall` and `-buildalltoprecords` full rewrite; `-daily` stricter-extreme beat. `topn.php` shows an All-time records table above the rankings; missing sensorbox/self-consumption rows stay hidden; every dated row opens `analytics.php?date=`.
+
+### DoD
+
+- [x] Schema + `build_top_records` covers the eight ids; conditional insert when source null
+- [x] `-daily` beat path; `-buildalltoprecords`; `-buildall` still builds tops
+- [x] `topn.php` table + analytics day links; hide empty sensorbox/grid rows
+- [x] Product docs (`architecture.md` / roadmap)
+- [ ] Operator close
+
+### Verbatim — 2026-10-23 (triage origin)
 
 > 7B + add to triage to either drop or change
+
+### Verbatim — 2026-10-27 (kickoff)
+
+> -daily should refresh: check if last 2 days readings are higher than what is in the table already and if it is: replace
+> add switch -buildalltoprecords so that we don't have to rebuild all, only this
+> keep top, create table with these records + if it is power: link to analytics that day
+
+> 1: fold into topn
+> of course, only show top wind/temp if sensorbox/tables have them
+> 2: also best_day_kwh
+> 3: yes, stricter extreme
+> 4: ok
+> 5: both: buildall  does all, buildalltoprecords  only toprecords
+> 6: list all best x - and propose others if any
+
+> Current five + max_sun_hours + max_module_temp_c + (if available) + best_self_consumption_kwh
+> link all to analytics that day
 
 ---
 

@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-27 (**A13** closed)
+**Last updated:** 2026-10-27 (**A7** coding on `feature/a7-top-records`)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -50,7 +50,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
 | 1 | open | M | **A5** | Multi-series power graph (PV + grid import + home usage); ref `docs/todo/HomeWizard-graph.jpg` | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 2 | open | S | **A7** | `top_records`: drop or change (assess at kickoff) | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 2 | coding | S | **A7** | `top_records` on `topn.php` + `-daily` beat + `-buildalltoprecords` | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 3 | open | L | **P1** | Sunny Portal one-time history — kickoff, paid API out, not locked | [`phaseP-portals.md`](phaseP-portals.md) |
 | 4 | open | L | **P2** | SMA portal ingest — source TBD at kickoff | [`phaseP-portals.md`](phaseP-portals.md) |
 | 5 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
