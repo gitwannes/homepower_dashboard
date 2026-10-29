@@ -12,7 +12,7 @@
 
 The file holds **`DB_BACKUP_ENCRYPTION_KEY` only**. Device addresses, device passwords, titles, plant limits, and Sunny Portal credentials are on the **Settings** page (`settings.php`) and stored in `meter_history.db`. Nothing else is read from `.env`.
 
-The first browser open asks for an admin password (enter it twice) when none is stored. A new install with no imported P1 address then shows Settings and stays there until that page is saved.
+The first browser open asks for an admin password (enter it twice) when none is stored. A new install with no imported P1 address then shows Settings and stays there until that page is saved. After admin exists, Settings config starts locked until **Unlock settings** (timed window; see [`architecture.md`](architecture.md)).
 
 Use [`.env.example`](../.env.example) as the key list.
 

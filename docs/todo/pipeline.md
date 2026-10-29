@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-29 (**A18** closed)
+**Last updated:** 2026-10-29 (**A20** closed)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -53,6 +53,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **A17** | Per-phase W on `history_5min` via downsample — **2026-10-29** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **A19** | Analytics explorer: calendar-day **Today** preset (default) — **2026-10-29** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **A18** | UI: Phases view on index + analytics; CSV phase cols — **2026-10-29** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
+| **A20** | Settings locked-by-default; Unlock timed window; Save-if-dirty; CSV outside admin pane — **2026-10-29** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 
 ---
 
@@ -62,11 +63,10 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 |---|---|---|---|---|---|
 | 1 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 2 | open | M | **A14** | Virtual kWh meters from Settings (bias to import / export / PV) | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 3 | open | S | **A15** | Settings save: probe every filled integration; fail → modal, stay on page | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 4 | open | S | **A20** | Settings locked-by-default; Unlock then Save-if-dirty; CSV while locked. Kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 5 | open | M | **W1** | WanOS: this app pushes on `-daily` and when raw readings are opened | [`phaseW-wanos.md`](phaseW-wanos.md) |
-| 6 | open | S | **Ops5** | `meter_history.db` → Synology Hyper Backup (roadmap Phase 4) | [`roadmap.md`](../roadmap.md) |
-| 7 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
+| 3 | open | M | **A15** | Settings save: probe + `*_active` (P1/SMA/WebBox/Portal); after A20. Kickoff almost locked | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 4 | open | M | **W1** | WanOS: this app pushes on `-daily` and when raw readings are opened | [`phaseW-wanos.md`](phaseW-wanos.md) |
+| 5 | open | M | **Ops5** | Daily DB dump to Settings Synology path; `powerbackup-YYMMDD-HHMMSS.sql.zip`; keep last 14 (replaces Hyper Backup) | [`roadmap.md`](../roadmap.md) |
+| 6 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
 
 ---
 
@@ -76,7 +76,7 @@ Open Ops rows are also in **Sequence** (same ids). Done Ops stay in **Done** onl
 
 | Id | Status | What |
 |---|---|---|
-| **Ops5** | open | `meter_history.db` → Synology Hyper Backup (roadmap Phase 4) |
+| **Ops5** | open | Daily dump → Settings Synology path; `powerbackup-YYMMDD-HHMMSS.sql.zip`; rotate keep 14 (not Hyper Backup) |
 | **Ops7** | open | `notifier.py` (roadmap Phase 3) |
 
 ---

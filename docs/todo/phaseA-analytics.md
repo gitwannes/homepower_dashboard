@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4**-**A13**, **A16**, **A17**, **A18**, **A19 Done**; **A20** kicked off; **A11**, **A14**, **A15** queued. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-29 (**A18** closed)  
+**Status:** **A4**-**A13**, **A16**-**A20 Done**; **A15** kicked off; **A11**, **A14** queued. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-29 (**A20** closed)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py`
 
 ---
@@ -23,14 +23,14 @@
 | **A12** | Done | Capacity peak on summary + top-n. Product: [`docs/architecture.md`](../architecture.md) |
 | **A13** | Done | Grid import/export on summary and top-n. Product: [`docs/architecture.md`](../architecture.md) |
 | **A14** | open | Virtual kWh meters from Settings (bias to import / export / PV) |
-| **A15** | open | Settings save: probe every filled integration; fail -> modal, stay on page. Kicked off |
+| **A15** | open | Settings save: probe + `*_active` flags (after A20). Kickoff almost locked |
 | **A16** | Done | Per-phase W on `readings` + logger. Product: [`docs/architecture.md`](../architecture.md) |
 | **A17** | Done | Rollup: per-phase W into `history_5min`. Product: [`docs/architecture.md`](../architecture.md) |
 | **A18** | Done | UI: Phases view + Sum mountain; CSV phase cols. Product: [`docs/architecture.md`](../architecture.md) |
 | **A19** | Done | Analytics explorer: calendar-day **Today** preset (default). Product: [`docs/architecture.md`](../architecture.md) |
-| **A20** | open | Settings locked-by-default / Unlock then Save-if-dirty. Kicked off |
+| **A20** | Done | Settings locked-by-default / Unlock timed window. Product: [`docs/architecture.md`](../architecture.md) |
 
-**Parallel:** **A17**/**A18**/**A19** closed. **A15** / **A20** kicked off (both Settings Save). **A11** Fluvius gas / wind. **A14** Settings-adjacent.
+**Parallel:** **A20** Done (unlock UX). **A15** kicked off (probe on Save; after A20). **A11** Fluvius gas / wind. **A14** Settings-adjacent.
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
@@ -111,6 +111,12 @@ Placed: **A16**. Kickoff locks below. Open Qs in the A16 section.
 > Task Scheduler: daily 00:05 rollup.py -daily = done: update docs
 
 Placed: **A14** virtual kWh meters; **A15** Settings save probe. **Ops5** Hyper Backup; **Ops6** Done; **Ops7** `notifier.py`. **W1** WanOS push ? [`phaseW-wanos.md`](phaseW-wanos.md). Operator confirmed 2026-10-28 (W1 / Ops / rest ok).
+
+### 2026-10-29 ? triage (Ops5 daily backup; fold)
+
+> triage: daily backup, keep only last 14: rotate - in settings: (synology) path for backup save - filename: powerbackup-timestamp.sql.zip timestamp = YYMMDD-HHMMSS
+
+Operator: fold into **Ops5** (replaces Hyper Backup scope). Detail: [`roadmap.md`](../roadmap.md) Phase 4. Encryption vs plain zip left for kickoff.
 
 ### 2026-10-23 - triage (three items)
 
@@ -326,7 +332,7 @@ Analytics owns the power explorer: rolling presets 15 m-7 d, **Reset view**, pan
 | 4 / 4a | Mixed resolution per bucket; **V — visible only**. |
 | 5 | Classic and Exchange share windows / pan / deep links. |
 | 6 | Deep link `range`, `from`/`to`; `view=balance|classic` (Exchange default omits `view`). |
-| 7 | Telemetry table off index; 1-min CSV on Settings beside backup. |
+| 7 | Telemetry table off index; 1-min CSV on Settings beside backup (A20 later moved CSV to Readings export, no password). |
 | 8 | Not in scope: dropping `history_5min` / `readings`; overlay/envelope changes. |
 
 ### Verbatim — 2026-10-27
@@ -367,16 +373,10 @@ Analytics owns the power explorer: rolling presets 15 m-7 d, **Reset view**, pan
   - Deep night: hour `>= 22` or `< 5` (PAC dropped).
   - Shoulder: hour `>= 20` or `< 6`, and only when `solar_radiation <= 5` W/m² (PAC dropped).
   - Radiation floor default `5` W/m² (`PAC_RAD_FLOOR`).
-- **Admin password.** If none is stored (today’s host: `.env` present, no admin), the first open of any page asks to create one (enter + confirm) and does not continue until it is set. After it exists, graph pages open without asking again. There is no standing login session.
-- **New install (no settings yet):** admin password first, then the configuration page. `.env` on that machine holds `DB_BACKUP_ENCRYPTION_KEY` only. The live dashboard waits until that page has been saved (`P1_IP` required, same as today).
-- **Current host (`.env` imported):** admin password first, then the dashboard. The configuration page is available; it is not forced.
-- **Every settings save** requires the admin password. Save opens a modal; a wrong password rejects the save. Covers IPs, titles, monthly kWh, max AC, night/shoulder gates, and device passwords.
-- **Device passwords** (`SMA_PASSWORD`, `SUNNYWEBBOX_PASSWORD`). The real value is never in the HTML. No right-click menu.
-  - **Unset:** the field is directly editable. Save still requires the admin password.
-  - **Set:** the field shows stars and is not editable. An **Edit** control beside the field opens a modal that asks for the admin password. If it matches, that field becomes editable and empty (the stored secret is not shown). Stars left untouched keep the stored password. **Edit, leave empty, Save: do not change the password.** The following Save still asks for the admin password once for the whole form.
-- **Change admin password** is a separate control on the configuration page. It opens its own modal: current password, new password, new password again, then Enter submits. The two new values must match. A wrong current password rejects the change. This modal does not go through the settings Save gate.
+- **Admin password (A6):** first open creates it (enter + confirm). Graph pages have no standing login session. **Unlock / Save / device-password Edit UX was replaced by A20** - current rules: [`docs/architecture.md`](../architecture.md) (Settings).
+- **New install / current host:** admin first; new install without P1 stays on Settings until saved. `.env` holds `DB_BACKUP_ENCRYPTION_KEY` only.
 
-`settings.php` configures devices, titles, 12 monthly expected kWh, max inverter AC (spike cap × 1.05), and the night/shoulder gates. Values live in `app_settings`. The admin password is created on first open (entered twice) and required on every save. Device passwords stay masked. `DB_BACKUP_ENCRYPTION_KEY` stays in `.env`. An existing `.env` is imported once when `app_settings` is empty. Plant changes apply on `rollup.py -buildall`.
+`settings.php` configures devices, titles, 12 monthly expected kWh, max inverter AC (spike cap x 1.05), and the night/shoulder gates. Values live in `app_settings`. Device passwords stay masked. `DB_BACKUP_ENCRYPTION_KEY` stays in `.env`. Plant changes apply on `rollup.py -buildall`. Page lock/unlock: **A20**.
 
 
 ### DoD
@@ -463,7 +463,7 @@ The live power chart uses a clock window of 1-minute `readings`. Presets are 15 
 
 ### Done summary
 
-Settings downloads and restores an encrypted copy of the whole database. `db_backup.py` does the SQLite online backup, the zip, and AES-256-GCM. PHP checks the admin password and the restore confirm, then sends the file or swaps the database. The browser file is `meter_history.db.<yymmdd-HHMMSS>.backup`. Plain and encrypted files are deleted on the server. `p1-sync` does not pull them. PHP `zip` is not used.
+Settings downloads and restores an encrypted copy of the whole database. `db_backup.py` does the SQLite online backup, the zip, and AES-256-GCM. Browser file `meter_history.db.<yymmdd-HHMMSS>.backup`. Plain and encrypted files are deleted on the server. `p1-sync` does not pull them. PHP `zip` is not used. **Auth UX after A20:** backup download needs Unlock (no second password); restore always asks admin password + destroy confirm. Product: [`docs/architecture.md`](../architecture.md).
 
 ### DoD
 
@@ -818,13 +818,94 @@ Configure virtual kWh meters on the Settings page with a bias toward import / ex
 
 ## A15 - Settings save probe integrations
 
-**Status:** open (triaged 2026-10-28, not kicked off)
-**Size:** **S**
-**Depends on:** Settings (**A6** Done); existing powertests probe path is a candidate reuse at kickoff
+**Status:** open (kickoff 2026-10-29; awaiting confirm on consumer + post-save UX proposals)
+**Size:** **M** (Save probe + `*_active` + logger / portal / dashboard consumers)
+**Depends on:** Settings (**A6** Done); **A20** Done.
+**Prereqs:** **A6** / **A20** Done - ok.
 
 ### Placement
 
-On Settings save, probe every filled integration. On failure: modal and stay on the page (do not keep the bad save as committed config - exact fail/rollback rule at kickoff).
+On Settings Save, probe every filled live integration. Partial fill blocks save. Fail/offline: still save credentials, set inactive. Active only after successful probe. Fluvius is CSV-only (not an active integration).
+
+### Verified (code / product docs)
+
+- Save writes `app_settings`; no probe; no `*_active` keys in `SETTING_DEFAULTS`.
+- Live integrations on Settings: P1, SMA, WebBox, Sunny Portal. Fluvius EANs filter CSV only.
+- `logger.py`: polls when IP set (P1 required for a successful poll cycle; SMA/WebBox optional).
+- `sunnyportal_pull.py`: uses portal settings; no active gate.
+- `need_config` boot mode: empty `p1_ip` only (`site_settings.php` / `site_config.has_p1`).
+- `powertests.py`: P1/SMA/WebBox stdout probes; `[ OFFLINE ]` vs `[FAIL]`.
+
+### Kickoff locks (operator 2026-10-29)
+
+| # | Lock |
+|---|---|
+| 1 | Probe on Save when filled: **P1, SMA, WebBox, Sunny Portal**. **Fluvius is not** an active integration (one-time CSV upload) - no probe, no `*_active`. |
+| 2 | Partial fill (e.g. user without password): warn, **block save**. |
+| 3 | Probe fail: **save** config, set integration **inactive**. Active only after successful test. |
+| 4 | Offline (e.g. SMA/WebBox night): warn, save, **do not enable**. |
+| 5 | Ship after **A20** (Done). |
+| 6 | Structured shared probe helpers (ok/fail/offline + message); Settings Save + `powertests.py` both use them. No stdout scrape. |
+| 7 | Active keys: one `*_active` (0/1) per live integration: `p1_active`, `sma_active`, `sunnywebbox_active`, `sunnyportal_active`. |
+| 8 | **P1 inactive:** dashboard opens as normal (`ready`, not `need_config`); **clear error**; graph for that period **empty**. |
+| 9 | **Every Save** re-probes all filled live integrations (including title-only edits). |
+| 10 | **Clear all fields** for an integration: force inactive, no probe. |
+| 11 | **Existing DBs:** missing flags -> treat as **active** if that integration looks filled. Next Settings Save probes and sets active/inactive from results. |
+| 12 | **Consumers / post-save UX:** pending operator confirm on proposals below. |
+
+### Proposal - consumers (confirm)
+
+| Integration | When inactive |
+|---|---|
+| **P1** | `logger` skips P1 poll (no new readings from P1). Index/analytics: clear error + empty graph for the live/window that needs P1. `need_config` only when `p1_ip` empty - not when inactive. |
+| **SMA** | `logger` skips SMA. |
+| **WebBox** | `logger` skips WebBox. |
+| **Sunny Portal** | `sunnyportal_pull` refuses new pulls (clear console/UI message). Rollup empty-fill from existing `sunnyportal_pv_5min` still runs. |
+| **Fluvius** | N/A - no flag; import/stitch unchanged. |
+| **powertests** | Ignores active flags (diagnose stored config anytime). |
+
+### Proposal - post-save UX (confirm)
+
+A20 already reloads Settings locked after Save. Fit:
+
+1. Persist settings + active flags (after probes).
+2. Reload locked Settings (A20).
+3. If any probed integration is inactive after this Save: **one dismissible modal** listing each fail/offline reason (saved but not enabled). Optional small status chips on the form when locked.
+4. If all probed OK (or nothing to probe): existing short "saved" notice only.
+
+### Open questions
+
+1. Confirm **consumer** proposal above (or amend)?
+2. Confirm **post-save UX** proposal above (or amend)?
+
+### DoD (draft until consumer/UX confirm)
+
+- [ ] Partial fill blocks save; clear fields -> inactive
+- [ ] Save re-probes filled P1/SMA/WebBox/Sunny Portal; success -> active; fail/offline -> inactive + warn
+- [ ] Fluvius unchanged (no active/probe)
+- [ ] Consumers honor inactive per confirmed table; grandfather missing flags as active until next Save
+- [ ] Post-save UX per confirmed proposal; product docs on close-out
+
+### Verbatim - 2026-10-29 (kickoff round 2)
+
+> 1: fluvius: is not active integration, this is a one-time csv upload
+> 2: yes
+> 3: give proposal and info
+> 4: give clear error on dashboard, show as normal but with empty graph for that period
+> 5: re-probe on save
+> 6: yes
+> 7: active, if config page & save: then probe first, then active/inactive
+> 8: give proposal
+> 9: ok
+
+### Verbatim - 2026-10-29 (kickoff answers)
+
+> 1: if filled in, they must be tested, so all
+> 2: if partial fill (eg only username but no pw: give warning, don't allow to save)
+> 3: if fail: save but disable integration: so additional lock in DB: integration active - only active after successfull test
+> 4: warn, then save, but don't enable
+> 5: first A20
+> 6: ??
 
 ### Verbatim - 2026-10-28
 
@@ -834,49 +915,45 @@ On Settings save, probe every filled integration. On failure: modal and stay on 
 
 ## A20 - Settings locked-by-default / Unlock then Save-if-dirty
 
-**Status:** open (kickoff locked 2026-10-29; waiting `implement`)
+**Status:** Done (2026-10-29)
 **Size:** **S**
-**Depends on:** Settings (**A6** Done). Related: **A9** backup; **A15** still on Save after unlock (probe).
-**Prereqs:** **A6** Done - ok. No blockers.
+**Depends on:** Settings (**A6** Done). Related: **A9** backup; **A15** probes on Save after this ship.
+**Product:** [`docs/architecture.md`](../architecture.md) (Settings unlock UX)
 
 ### Placement
 
-Affinity **A**. New UX on `settings.php`: page starts locked; Unlock asks admin password; then fields (incl. DB backup) enable; primary button becomes Save only when the form is dirty. **1-min CSV** usable while locked, outside the admin pane. Does not reopen Done **A6** - supersedes parts of A6 UX at ship after kickoff locks.
+Affinity **A**. Page starts locked; Unlock asks admin password; timed edit window; Save only when dirty. CSV outside admin pane.
 
-### Verified (code / product docs)
-
-- Save, backup download, backup restore, and **1-min CSV** all currently ask admin password via the gate modal (`settings.php` + [`architecture.md`](../architecture.md)).
-- Device secrets: stars when set; **Edit** verifies admin then clears the field for a new value.
-- Change admin password: separate modal (current + new + new); not via Save.
-- No stay-logged-in session today. `verify_admin` JSON exists for Edit.
-- First-run create-admin and need-config flows stay out of this unlock UX (page is not the normal locked form until admin exists).
-
-### Kickoff locks (operator 2026-10-29)
+### Kickoff locks (operator 2026-10-29) - shipped
 
 | # | Lock |
 |---|---|
-| 1 | Unlock window duration is a **named constant / variable** (default **5 minutes** from unlock) so the operator can change it without hunting magic numbers. On expiry: if form **not dirty** -> re-lock. If **dirty** -> modal **Save** or **Cancel**. Choosing **Save** asks admin password (timeout path). Cancel discards edits and re-locks. Reload or leave Settings ends unlock immediately. |
-| 2 | **Within** the unlock window: **Save does not ask** admin password again (UX). Server still receives the unlock password from page JS memory so crafted POSTs without a prior unlock do not save. |
-| 3 | **Change admin password:** control **disabled until unlock**. Inside the unlock window, no extra unlock/gate ask (change form still collects current + new + new). |
-| 4 | **1-min CSV:** **no password** (UI + server). Move the control out of the admin/config pane (readings export, available while locked). |
-| 5 | **Device passwords after unlock:** keep **Edit**; inside the unlock window Edit does **not** ask admin. Edit still clears the field for replace; empty+untouched keeps the stored secret; stored value never shown. |
-| 6 | **Backup download** while unlocked: **no password** (UI + server; control disabled until unlock). **Restore:** **always** admin password (+ existing destroy-confirm). |
-| 7 | **After successful Save:** **re-lock** (clear dirty / end unlock window). |
-
-### Open questions
-
-None. Ready for `implement`.
+| 1 | Unlock window: `HP_SETTINGS_UNLOCK_SECONDS` (default 300). Expiry: clean re-lock; dirty Save/Cancel (Save asks pw). Reload/leave ends unlock. |
+| 2 | Within window: Save no second modal; JS still posts unlock password. |
+| 3 | Change admin disabled until unlock; no extra gate in window. |
+| 4 | 1-min CSV: no password; Readings export pane. |
+| 5 | Device password **Edit** kept; no admin ask in window. |
+| 6 | Backup download: no pw when unlocked. Restore: always pw + confirm. |
+| 7 | After successful Save: page reload locked. |
 
 ### DoD
 
-- [ ] Settings loads locked: config fields + backup download/restore + change-admin disabled; CSV outside admin pane, no password
-- [ ] Unlock -> timed window (named variable, default 5 min); Save only when dirty; within window Save without pw; after Save re-lock
-- [ ] Timer expiry: clean re-lock, or dirty Save/Cancel modal (Save asks pw)
-- [ ] Device-password Edit kept; no admin ask inside unlock window
-- [ ] Backup download: no pw when unlocked; restore always pw + confirm
-- [ ] Wrong unlock pw stays locked
-- [ ] A6 first-run / need-config unchanged; product docs on close-out
-- [ ] No A15 probe work in this ship
+- [x] Settings loads locked; CSV outside admin pane, no password
+- [x] Unlock timed window; Save when dirty; within window Save without modal; after Save re-lock
+- [x] Timer expiry: clean re-lock or dirty Save/Cancel (Save asks pw)
+- [x] Device-password Edit; no admin ask inside unlock window
+- [x] Backup download no pw when unlocked; restore always pw + confirm
+- [x] Wrong unlock pw stays locked
+- [x] A6 first-run / need-config unchanged; product docs updated
+- [x] No A15 probe work in this ship
+
+### Shipped summary
+
+`settings.php` locks config + backup + change-admin until Unlock. Window length `HP_SETTINGS_UNLOCK_SECONDS` (default 300). Within the window: Save without a second modal (password still posted from JS); device **Edit** without admin re-ask. Timer expiry: clean re-lock or dirty Save/Cancel. After Save the page reloads locked. CSV is a separate Readings export with no password. Backup download: unlock only; restore: always pw + confirm. Product: [`docs/architecture.md`](../architecture.md).
+
+### Verbatim - 2026-10-29 (close)
+
+> close A20
 
 ### Verbatim - 2026-10-29 (device pw + confirm)
 

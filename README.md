@@ -37,7 +37,7 @@ Never put real LAN IPs or site nicknames in committed files.
 |---|---|
 | `logger.py` | 1-minute poll / hot DB writer |
 | `index.php` | Live dashboard. 2-hour pulse; Exchange / Balance / Classic (Exchange default) |
-| `settings.php` | Admin password, site configuration, encrypted DB backup/restore, 1-min CSV download |
+| `settings.php` | Admin password; locked config until Unlock; encrypted DB backup/restore; 1-min CSV (no password) |
 | `analytics.php` | Explorer (Today default + rolling presets, day pan, mixed 1/5-min, Exchange default), two-day compare, clear-sky envelope |
 | `summary.php` | Week / month / year / All years (last). Solar yield (default), grid import/export/net, or Capacity peak |
 | `topn.php` | Best/worst solar yield, grid net ranks, or highest Capacity peak months; metric-filtered all-time records |

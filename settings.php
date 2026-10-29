@@ -1,13 +1,17 @@
 <?php
 # --- file: settings.php ---
 /**
- * First-run admin password and the site configuration page (A6).
+ * First-run admin password and the site configuration page (A6 / A20).
  * Device passwords are never written into the HTML.
  * A9 database download and restore are on this page.
+ * A20: page starts locked; Unlock opens a timed edit window.
  */
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
 require_once __DIR__ . '/db_backup.php';
+
+/** How long Settings stays unlocked after a correct admin password (seconds). */
+const HP_SETTINGS_UNLOCK_SECONDS = 300;
 
 $boot = hp_boot();
 $pdo = $boot['pdo'];
@@ -93,10 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($boot['mode'] === 'need_admin') {
                 throw new RuntimeException('Set an admin password first.');
             }
-            $adminPassword = isset($_POST['admin_password']) ? (string)$_POST['admin_password'] : '';
-            if (!hp_admin_ok($pdo, $adminPassword)) {
-                throw new RuntimeException('Admin password is wrong. Nothing was downloaded.');
-            }
+            // A20: 1-min CSV has no admin password (readings export, outside the locked pane).
             @set_time_limit(0);
             header('Content-Type: text/csv; charset=UTF-8');
             header('Pragma: no-cache');
@@ -189,10 +190,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($boot['mode'] === 'need_admin') {
                 throw new RuntimeException('Set an admin password first.');
             }
-            $adminPassword = isset($_POST['admin_password']) ? (string)$_POST['admin_password'] : '';
-            if (!hp_admin_ok($pdo, $adminPassword)) {
-                throw new RuntimeException('Admin password is wrong. Nothing was downloaded.');
-            }
+            // A20: backup download has no admin password (UI keeps the control disabled until unlock).
             if (hp_backup_encryption_key() === '') {
                 throw new RuntimeException('DB_BACKUP_ENCRYPTION_KEY is missing from .env.');
             }
@@ -469,9 +467,15 @@ function hp_field(array $settings, string $key): string
             <?php if ($boot['mode'] === 'ready'): ?>
                 <a href="index.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200">Live Dashboard</a>
             <?php endif; ?>
-            <button type="button" id="openAdminChange" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200">Change admin password</button>
+            <button type="button" id="openAdminChange" disabled class="js-lock-ctrl inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 disabled:opacity-50 disabled:cursor-not-allowed">Change admin password</button>
         </div>
     </header>
+
+    <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-3 shadow-sm">
+        <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Readings export</h2>
+        <p class="text-xs text-slate-500">Download all 1-min samples in CSV (full <code>readings</code> table). No admin password.</p>
+        <button type="button" id="downloadReadingsCsv" class="px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold">Download 1-min CSV</button>
+    </section>
 
     <?php if ($boot['mode'] === 'need_config'): ?>
         <p class="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-xl p-3">Save a P1 address before the dashboard opens.</p>
@@ -490,32 +494,32 @@ function hp_field(array $settings, string $key): string
         <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
             <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Devices</h2>
             <label class="block text-sm font-semibold">P1 address
-                <input name="p1_ip" required value="<?= hp_h(hp_field($settings, 'p1_ip')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <input name="p1_ip" required disabled value="<?= hp_h(hp_field($settings, 'p1_ip')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <label class="block text-sm font-semibold">SMA address
-                <input name="sma_ip" value="<?= hp_h(hp_field($settings, 'sma_ip')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <input name="sma_ip" disabled value="<?= hp_h(hp_field($settings, 'sma_ip')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <label class="block text-sm font-semibold">SMA user
-                <input name="sma_user" value="<?= hp_h(hp_field($settings, 'sma_user')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <input name="sma_user" disabled value="<?= hp_h(hp_field($settings, 'sma_user')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <div class="block text-sm font-semibold">SMA password
                 <div class="mt-1 flex gap-2">
-                    <input type="password" name="sma_password" id="sma_password" autocomplete="new-password" <?= $smaSet ? 'disabled' : '' ?> placeholder="<?= $smaSet ? '********' : '' ?>" class="flex-1 border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                    <input type="password" name="sma_password" id="sma_password" autocomplete="new-password" disabled data-secret-set="<?= $smaSet ? '1' : '0' ?>" placeholder="<?= $smaSet ? '********' : '' ?>" class="js-lock-field flex-1 border border-slate-200 rounded-xl px-3 py-2 font-normal">
                     <input type="hidden" name="sma_password_touched" id="sma_password_touched" value="0">
                     <?php if ($smaSet): ?>
-                        <button type="button" class="js-edit-pw px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold" data-target="sma_password">Edit</button>
+                        <button type="button" disabled class="js-edit-pw js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed" data-target="sma_password">Edit</button>
                     <?php endif; ?>
                 </div>
             </div>
             <label class="block text-sm font-semibold">Sunny WebBox address
-                <input name="sunnywebbox_ip" value="<?= hp_h(hp_field($settings, 'sunnywebbox_ip')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <input name="sunnywebbox_ip" disabled value="<?= hp_h(hp_field($settings, 'sunnywebbox_ip')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <div class="block text-sm font-semibold">Sunny WebBox password
                 <div class="mt-1 flex gap-2">
-                    <input type="password" name="sunnywebbox_password" id="sunnywebbox_password" autocomplete="new-password" <?= $webboxSet ? 'disabled' : '' ?> placeholder="<?= $webboxSet ? '********' : '' ?>" class="flex-1 border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                    <input type="password" name="sunnywebbox_password" id="sunnywebbox_password" autocomplete="new-password" disabled data-secret-set="<?= $webboxSet ? '1' : '0' ?>" placeholder="<?= $webboxSet ? '********' : '' ?>" class="js-lock-field flex-1 border border-slate-200 rounded-xl px-3 py-2 font-normal">
                     <input type="hidden" name="sunnywebbox_password_touched" id="sunnywebbox_password_touched" value="0">
                     <?php if ($webboxSet): ?>
-                        <button type="button" class="js-edit-pw px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold" data-target="sunnywebbox_password">Edit</button>
+                        <button type="button" disabled class="js-edit-pw js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed" data-target="sunnywebbox_password">Edit</button>
                     <?php endif; ?>
                 </div>
             </div>
@@ -525,22 +529,22 @@ function hp_field(array $settings, string $key): string
             <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Sunny Portal</h2>
             <p class="text-xs text-slate-500">Optional. The one-time pull reads these. An empty timezone uses Europe/Paris. The password is never shown.</p>
             <label class="block text-sm font-semibold">Sunny Portal user
-                <input name="sunnyportal_user" value="<?= hp_h(hp_field($settings, 'sunnyportal_user')) ?>" autocomplete="off" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <input name="sunnyportal_user" disabled value="<?= hp_h(hp_field($settings, 'sunnyportal_user')) ?>" autocomplete="off" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <div class="block text-sm font-semibold">Sunny Portal password
                 <div class="mt-1 flex gap-2">
-                    <input type="password" name="sunnyportal_password" id="sunnyportal_password" autocomplete="new-password" <?= $portalSet ? 'disabled' : '' ?> placeholder="<?= $portalSet ? '********' : '' ?>" class="flex-1 border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                    <input type="password" name="sunnyportal_password" id="sunnyportal_password" autocomplete="new-password" disabled data-secret-set="<?= $portalSet ? '1' : '0' ?>" placeholder="<?= $portalSet ? '********' : '' ?>" class="js-lock-field flex-1 border border-slate-200 rounded-xl px-3 py-2 font-normal">
                     <input type="hidden" name="sunnyportal_password_touched" id="sunnyportal_password_touched" value="0">
                     <?php if ($portalSet): ?>
-                        <button type="button" class="js-edit-pw px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold" data-target="sunnyportal_password">Edit</button>
+                        <button type="button" disabled class="js-edit-pw js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed" data-target="sunnyportal_password">Edit</button>
                     <?php endif; ?>
                 </div>
             </div>
             <label class="block text-sm font-semibold">Sunny Portal plant id
-                <input name="sunnyportal_plant_id" value="<?= hp_h(hp_field($settings, 'sunnyportal_plant_id')) ?>" autocomplete="off" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <input name="sunnyportal_plant_id" disabled value="<?= hp_h(hp_field($settings, 'sunnyportal_plant_id')) ?>" autocomplete="off" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <label class="block text-sm font-semibold">Sunny Portal timezone
-                <input name="sunnyportal_timezone" value="<?= hp_h(hp_field($settings, 'sunnyportal_timezone')) ?>" placeholder="Europe/Paris" autocomplete="off" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <input name="sunnyportal_timezone" disabled value="<?= hp_h(hp_field($settings, 'sunnyportal_timezone')) ?>" placeholder="Europe/Paris" autocomplete="off" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
         </section>
 
@@ -548,10 +552,10 @@ function hp_field(array $settings, string $key): string
             <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Fluvius</h2>
             <p class="text-xs text-slate-500">Optional. The CSV import keeps rows for these EANs only. There is no import button. Put the files in import_queue/fluvius/ and run python3 fluvius_import.py. Grid backfill runs on rollup.py -buildall and -daily.</p>
             <label class="block text-sm font-semibold">Electricity EAN
-                <input name="fluvius_ean_electricity" inputmode="numeric" autocomplete="off" value="<?= hp_h(hp_field($settings, 'fluvius_ean_electricity')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <input name="fluvius_ean_electricity" inputmode="numeric" autocomplete="off" disabled value="<?= hp_h(hp_field($settings, 'fluvius_ean_electricity')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <label class="block text-sm font-semibold">Gas EAN
-                <input name="fluvius_ean_gas" inputmode="numeric" autocomplete="off" value="<?= hp_h(hp_field($settings, 'fluvius_ean_gas')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <input name="fluvius_ean_gas" inputmode="numeric" autocomplete="off" disabled value="<?= hp_h(hp_field($settings, 'fluvius_ean_gas')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
         </section>
 
@@ -559,31 +563,31 @@ function hp_field(array $settings, string $key): string
             <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Plant</h2>
             <p class="text-xs text-slate-500">Spike rejection uses max inverter AC × 1.05. Current cap: <span id="pacCap"><?= hp_h((string)round($capW)) ?></span> W.</p>
             <label class="block text-sm font-semibold">Max inverter AC (W)
-                <input type="number" min="1" step="1" name="max_inverter_ac_w" id="max_inverter_ac_w" value="<?= hp_h(hp_field($settings, 'max_inverter_ac_w')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <input type="number" min="1" step="1" name="max_inverter_ac_w" id="max_inverter_ac_w" disabled value="<?= hp_h(hp_field($settings, 'max_inverter_ac_w')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <p class="text-xs text-slate-500">Deep night drops PAC when the hour is &gt;= start or &lt; end. 22 and 5 means 22:00 through 05:00. Shoulder uses the same rule, and only when radiation is at or under the floor.</p>
             <div class="grid grid-cols-2 gap-3">
                 <label class="block text-sm font-semibold">Deep night start
-                    <input type="number" min="0" max="23" step="1" name="pac_night_start" value="<?= hp_h(hp_field($settings, 'pac_night_start')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                    <input type="number" min="0" max="23" step="1" name="pac_night_start" disabled value="<?= hp_h(hp_field($settings, 'pac_night_start')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
                 </label>
                 <label class="block text-sm font-semibold">Deep night end
-                    <input type="number" min="0" max="23" step="1" name="pac_night_end" value="<?= hp_h(hp_field($settings, 'pac_night_end')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                    <input type="number" min="0" max="23" step="1" name="pac_night_end" disabled value="<?= hp_h(hp_field($settings, 'pac_night_end')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
                 </label>
                 <label class="block text-sm font-semibold">Shoulder start
-                    <input type="number" min="0" max="23" step="1" name="pac_shoulder_start" value="<?= hp_h(hp_field($settings, 'pac_shoulder_start')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                    <input type="number" min="0" max="23" step="1" name="pac_shoulder_start" disabled value="<?= hp_h(hp_field($settings, 'pac_shoulder_start')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
                 </label>
                 <label class="block text-sm font-semibold">Shoulder end
-                    <input type="number" min="0" max="23" step="1" name="pac_shoulder_end" value="<?= hp_h(hp_field($settings, 'pac_shoulder_end')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                    <input type="number" min="0" max="23" step="1" name="pac_shoulder_end" disabled value="<?= hp_h(hp_field($settings, 'pac_shoulder_end')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
                 </label>
             </div>
             <label class="block text-sm font-semibold">Radiation floor (W/m²)
-                <input type="number" min="0" step="0.1" name="pac_rad_floor" value="<?= hp_h(hp_field($settings, 'pac_rad_floor')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <input type="number" min="0" step="0.1" name="pac_rad_floor" disabled value="<?= hp_h(hp_field($settings, 'pac_rad_floor')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <h3 class="text-sm font-semibold pt-2">Expected generation (kWh per month)</h3>
             <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <?php for ($month = 1; $month <= 12; $month++): ?>
                     <label class="block text-xs font-semibold text-slate-600"><?= hp_h($monthNames[$month]) ?>
-                        <input type="number" min="0" step="0.1" name="exp_kwh_<?= $month ?>" value="<?= hp_h((string)$monthly[$month]) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-normal">
+                        <input type="number" min="0" step="0.1" name="exp_kwh_<?= $month ?>" disabled value="<?= hp_h((string)$monthly[$month]) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-normal">
                     </label>
                 <?php endfor; ?>
             </div>
@@ -593,39 +597,33 @@ function hp_field(array $settings, string $key): string
         <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
             <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Appearance</h2>
             <label class="block text-sm font-semibold">Site title
-                <input name="site_title" value="<?= hp_h(hp_field($settings, 'site_title')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <input name="site_title" disabled value="<?= hp_h(hp_field($settings, 'site_title')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <label class="block text-sm font-semibold">Tagline
-                <input name="site_tagline" value="<?= hp_h(hp_field($settings, 'site_tagline')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <input name="site_tagline" disabled value="<?= hp_h(hp_field($settings, 'site_tagline')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <label class="block text-sm font-semibold">Page title
-                <input name="site_page_title" value="<?= hp_h(hp_field($settings, 'site_page_title')) ?>" class="mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <input name="site_page_title" disabled value="<?= hp_h(hp_field($settings, 'site_page_title')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <p class="text-xs text-slate-500">Titles apply on the next page load.</p>
         </section>
 
-        <button type="button" id="saveSettings" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">Save settings</button>
+        <button type="button" id="primarySettingsAction" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">Unlock settings</button>
     </form>
 
     <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-3 shadow-sm">
         <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Database backup</h2>
-        <p class="text-xs text-slate-500">Download is an encrypted copy of the whole database. The plain backup and the encrypted file are deleted on the server after the download. Restore replaces the live database.</p>
+        <p class="text-xs text-slate-500">Download is an encrypted copy of the whole database. The plain backup and the encrypted file are deleted on the server after the download. Restore replaces the live database. Unlock Settings before download or restore. Restore always asks for the admin password.</p>
         <div class="flex flex-wrap gap-2">
-            <button type="button" id="downloadBackup" class="px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold">Download full backup</button>
-            <button type="button" id="openRestore" class="px-4 py-2 rounded-xl border border-rose-200 text-rose-700 text-sm font-semibold">Restore full backup</button>
-        </div>
-        <div class="border-t border-slate-100 pt-3 space-y-2">
-            <p class="text-xs text-slate-500">Download all 1-min samples in CSV (full <code>readings</code> table).</p>
-            <button type="button" id="downloadReadingsCsv" class="px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold">Download 1-min CSV</button>
+            <button type="button" id="downloadBackup" disabled class="js-lock-ctrl px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed">Download full backup</button>
+            <button type="button" id="openRestore" disabled class="js-lock-ctrl px-4 py-2 rounded-xl border border-rose-200 text-rose-700 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed">Restore full backup</button>
         </div>
     </section>
     <form id="backupDownloadForm" method="post" class="hidden">
         <input type="hidden" name="action" value="backup_download">
-        <input type="hidden" name="admin_password" id="backupDownloadPassword" value="">
     </form>
     <form id="readingsCsvForm" method="post" class="hidden">
         <input type="hidden" name="action" value="readings_csv">
-        <input type="hidden" name="admin_password" id="readingsCsvPassword" value="">
     </form>
 
     <div id="gateModal" class="fixed inset-0 bg-slate-900/40 items-center justify-center p-4" style="display:none">
@@ -684,14 +682,43 @@ function hp_field(array $settings, string $key): string
         </form>
     </div>
 
+    <div id="timeoutModal" class="fixed inset-0 bg-slate-900/40 items-center justify-center p-4" style="display:none">
+        <div class="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-sm space-y-3 shadow-lg">
+            <h2 class="text-lg font-bold">Unlock time expired</h2>
+            <p class="text-sm text-slate-700">You still have unsaved changes. Save them (admin password required) or cancel and discard.</p>
+            <div class="flex justify-end gap-2">
+                <button type="button" id="timeoutCancel" class="px-3 py-2 rounded-xl border border-slate-200 text-sm">Cancel</button>
+                <button type="button" id="timeoutSave" class="px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">Save</button>
+            </div>
+        </div>
+    </div>
+
     <script>
     (function () {
+        /**
+         * Unlock window length in milliseconds.
+         * Sourced from PHP HP_SETTINGS_UNLOCK_SECONDS (default 300 = 5 minutes).
+         * Change that PHP constant to adjust how long Settings stays unlocked.
+         */
+        var HP_SETTINGS_UNLOCK_MS = <?= (int)HP_SETTINGS_UNLOCK_SECONDS ?> * 1000;
+
+        var form = document.getElementById('settingsForm');
+        var primaryBtn = document.getElementById('primarySettingsAction');
+        var adminPasswordField = document.getElementById('admin_password');
         var gateModal = document.getElementById('gateModal');
         var gateForm = document.getElementById('gateForm');
         var gateTitle = document.getElementById('gateTitle');
         var gatePassword = document.getElementById('gatePassword');
         var gateError = document.getElementById('gateError');
+        var timeoutModal = document.getElementById('timeoutModal');
+        var restoreModal = document.getElementById('restoreModal');
+        var adminModal = document.getElementById('adminModal');
         var gateCallback = null;
+        var unlocked = false;
+        var unlockPassword = '';
+        var unlockTimer = null;
+        var baseline = '';
+        var secretBaseline = {};
 
         function openGate(title, callback) {
             gateCallback = callback;
@@ -709,6 +736,171 @@ function hp_field(array $settings, string $key): string
             gatePassword.value = '';
         }
 
+        function verifyAdmin(password) {
+            var body = new URLSearchParams();
+            body.set('action', 'verify_admin');
+            body.set('admin_password', password);
+            return fetch('settings.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: body.toString()
+            }).then(function (response) {
+                return response.json();
+            }).then(function (data) {
+                return !!(data && data.ok);
+            });
+        }
+
+        function snapshotForm() {
+            var data = new FormData(form);
+            var parts = [];
+            data.forEach(function (value, key) {
+                if (key === 'admin_password') {
+                    return;
+                }
+                parts.push(key + '=' + String(value));
+            });
+            parts.sort();
+            return parts.join('&');
+        }
+
+        function captureSecretBaseline() {
+            secretBaseline = {};
+            Array.prototype.forEach.call(document.querySelectorAll('input[data-secret-set]'), function (input) {
+                secretBaseline[input.id] = {
+                    set: input.getAttribute('data-secret-set') === '1',
+                    touched: document.getElementById(input.id + '_touched').value,
+                    value: input.value,
+                    placeholder: input.placeholder,
+                    disabled: true
+                };
+            });
+        }
+
+        function isDirty() {
+            if (!unlocked) {
+                return false;
+            }
+            return snapshotForm() !== baseline;
+        }
+
+        function setControlsEnabled(enabled) {
+            Array.prototype.forEach.call(document.querySelectorAll('.js-lock-ctrl'), function (el) {
+                el.disabled = !enabled;
+            });
+            Array.prototype.forEach.call(document.querySelectorAll('.js-lock-field'), function (el) {
+                if (el.getAttribute('data-secret-set') === '1') {
+                    // Set secrets stay masked until Edit; Edit button is a js-lock-ctrl.
+                    el.disabled = true;
+                    return;
+                }
+                if (el.hasAttribute('data-secret-set') && el.getAttribute('data-secret-set') === '0') {
+                    el.disabled = !enabled;
+                    return;
+                }
+                el.disabled = !enabled;
+            });
+            // After unlock, a secret that was already opened for edit stays editable.
+            if (enabled) {
+                Array.prototype.forEach.call(document.querySelectorAll('input[data-secret-set="1"]'), function (input) {
+                    var touched = document.getElementById(input.id + '_touched');
+                    if (touched && touched.value === '1') {
+                        input.disabled = false;
+                    }
+                });
+            }
+        }
+
+        function refreshPrimaryButton() {
+            if (!unlocked) {
+                primaryBtn.style.display = '';
+                primaryBtn.textContent = 'Unlock settings';
+                primaryBtn.disabled = false;
+                return;
+            }
+            if (isDirty()) {
+                primaryBtn.style.display = '';
+                primaryBtn.textContent = 'Save settings';
+                primaryBtn.disabled = false;
+                return;
+            }
+            primaryBtn.style.display = 'none';
+        }
+
+        function clearUnlockTimer() {
+            if (unlockTimer !== null) {
+                clearTimeout(unlockTimer);
+                unlockTimer = null;
+            }
+        }
+
+        function lockPage() {
+            clearUnlockTimer();
+            unlocked = false;
+            unlockPassword = '';
+            adminPasswordField.value = '';
+            timeoutModal.style.display = 'none';
+            setControlsEnabled(false);
+            // Restore secret fields to the loaded baseline (discard in-page edits).
+            Object.keys(secretBaseline).forEach(function (id) {
+                var input = document.getElementById(id);
+                var state = secretBaseline[id];
+                if (!input || !state) {
+                    return;
+                }
+                input.value = state.value;
+                input.placeholder = state.placeholder;
+                input.disabled = true;
+                document.getElementById(id + '_touched').value = '0';
+            });
+            form.reset();
+            // reset() restores HTML defaults; re-apply locked disabled state.
+            setControlsEnabled(false);
+            baseline = '';
+            refreshPrimaryButton();
+        }
+
+        function startUnlockWindow(password) {
+            unlocked = true;
+            unlockPassword = password;
+            setControlsEnabled(true);
+            baseline = snapshotForm();
+            captureSecretBaseline();
+            clearUnlockTimer();
+            unlockTimer = setTimeout(onUnlockExpired, HP_SETTINGS_UNLOCK_MS);
+            refreshPrimaryButton();
+        }
+
+        function onUnlockExpired() {
+            unlockTimer = null;
+            if (!unlocked) {
+                return;
+            }
+            if (!isDirty()) {
+                lockPage();
+                return;
+            }
+            // End the silent-save window; further Save must ask for the password.
+            unlockPassword = '';
+            timeoutModal.style.display = 'flex';
+        }
+
+        function enableFieldsForSubmit() {
+            Array.prototype.forEach.call(form.querySelectorAll('input, select, textarea'), function (el) {
+                if (el.type === 'hidden') {
+                    return;
+                }
+                el.disabled = false;
+            });
+        }
+
+        function submitSave(password) {
+            clearUnlockTimer();
+            adminPasswordField.value = password;
+            enableFieldsForSubmit();
+            form.submit();
+        }
+
         document.getElementById('gateCancel').addEventListener('click', closeGate);
         gateForm.addEventListener('submit', function (event) {
             event.preventDefault();
@@ -717,74 +909,113 @@ function hp_field(array $settings, string $key): string
             }
         });
 
-        document.getElementById('saveSettings').addEventListener('click', function () {
+        primaryBtn.addEventListener('click', function () {
+            if (!unlocked) {
+                openGate('Enter the admin password to unlock settings', function (password) {
+                    verifyAdmin(password).then(function (ok) {
+                        if (!ok) {
+                            gateError.textContent = 'Wrong admin password.';
+                            gateError.classList.remove('hidden');
+                            return;
+                        }
+                        closeGate();
+                        startUnlockWindow(password);
+                    }).catch(function () {
+                        gateError.textContent = 'Could not check the admin password.';
+                        gateError.classList.remove('hidden');
+                    });
+                });
+                return;
+            }
+            if (!isDirty()) {
+                return;
+            }
+            if (unlockPassword !== '') {
+                submitSave(unlockPassword);
+                return;
+            }
             openGate('Enter the admin password to save', function (password) {
-                document.getElementById('admin_password').value = password;
-                closeGate();
-                document.getElementById('settingsForm').submit();
+                verifyAdmin(password).then(function (ok) {
+                    if (!ok) {
+                        gateError.textContent = 'Wrong admin password.';
+                        gateError.classList.remove('hidden');
+                        return;
+                    }
+                    closeGate();
+                    submitSave(password);
+                }).catch(function () {
+                    gateError.textContent = 'Could not check the admin password.';
+                    gateError.classList.remove('hidden');
+                });
             });
         });
 
+        form.addEventListener('input', refreshPrimaryButton);
+        form.addEventListener('change', refreshPrimaryButton);
+
         document.getElementById('downloadBackup').addEventListener('click', function () {
-            openGate('Enter the admin password to download the backup', function (password) {
-                document.getElementById('backupDownloadPassword').value = password;
-                closeGate();
-                document.getElementById('backupDownloadForm').submit();
-            });
+            if (!unlocked) {
+                return;
+            }
+            document.getElementById('backupDownloadForm').submit();
         });
 
         document.getElementById('downloadReadingsCsv').addEventListener('click', function () {
-            openGate('Enter the admin password to download the 1-min CSV', function (password) {
-                document.getElementById('readingsCsvPassword').value = password;
-                closeGate();
-                document.getElementById('readingsCsvForm').submit();
-            });
+            document.getElementById('readingsCsvForm').submit();
         });
 
-        var restoreModal = document.getElementById('restoreModal');
         document.getElementById('openRestore').addEventListener('click', function () {
+            if (!unlocked) {
+                return;
+            }
             restoreModal.style.display = 'flex';
         });
         document.getElementById('restoreCancel').addEventListener('click', function () {
             restoreModal.style.display = 'none';
         });
 
-        Array.prototype.forEach.call(document.querySelectorAll('.js-edit-pw'), function (button) {
-            button.addEventListener('click', function () {
-                var targetId = button.getAttribute('data-target');
-                openGate('Enter the admin password to edit this field', function (password) {
-                    var body = new URLSearchParams();
-                    body.set('action', 'verify_admin');
-                    body.set('admin_password', password);
-                    fetch('settings.php', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                        body: body.toString()
-                    }).then(function (response) {
-                        return response.json();
-                    }).then(function (data) {
-                        if (!data.ok) {
-                            gateError.textContent = 'Wrong admin password.';
-                            gateError.classList.remove('hidden');
-                            return;
-                        }
-                        var input = document.getElementById(targetId);
-                        input.disabled = false;
-                        input.value = '';
-                        input.placeholder = 'New password';
-                        document.getElementById(targetId + '_touched').value = '1';
-                        closeGate();
-                        input.focus();
-                    }).catch(function () {
-                        gateError.textContent = 'Could not check the admin password.';
+        document.getElementById('timeoutCancel').addEventListener('click', function () {
+            timeoutModal.style.display = 'none';
+            lockPage();
+        });
+        document.getElementById('timeoutSave').addEventListener('click', function () {
+            timeoutModal.style.display = 'none';
+            openGate('Enter the admin password to save', function (password) {
+                verifyAdmin(password).then(function (ok) {
+                    if (!ok) {
+                        gateError.textContent = 'Wrong admin password.';
                         gateError.classList.remove('hidden');
-                    });
+                        return;
+                    }
+                    closeGate();
+                    submitSave(password);
+                }).catch(function () {
+                    gateError.textContent = 'Could not check the admin password.';
+                    gateError.classList.remove('hidden');
                 });
             });
         });
 
-        var adminModal = document.getElementById('adminModal');
+        Array.prototype.forEach.call(document.querySelectorAll('.js-edit-pw'), function (button) {
+            button.addEventListener('click', function () {
+                if (!unlocked) {
+                    return;
+                }
+                var targetId = button.getAttribute('data-target');
+                var input = document.getElementById(targetId);
+                input.disabled = false;
+                input.value = '';
+                input.placeholder = 'New password';
+                document.getElementById(targetId + '_touched').value = '1';
+                refreshPrimaryButton();
+                input.focus();
+            });
+        });
+
         document.getElementById('openAdminChange').addEventListener('click', function () {
+            if (!unlocked) {
+                return;
+            }
             adminModal.style.display = 'flex';
         });
         document.getElementById('adminCancel').addEventListener('click', function () {
@@ -796,12 +1027,15 @@ function hp_field(array $settings, string $key): string
         function refreshCap() {
             var watts = parseFloat(maxInput.value);
             if (!isFinite(watts) || watts <= 0) {
-                capNode.textContent = '—';
+                capNode.textContent = '-';
                 return;
             }
             capNode.textContent = String(Math.round(watts * 1.05));
         }
         maxInput.addEventListener('input', refreshCap);
+
+        // Page load: locked. Successful save redirects here already locked.
+        refreshPrimaryButton();
     }());
     </script>
 <?php endif; ?>

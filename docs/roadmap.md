@@ -87,7 +87,7 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
       - **A13 Done:** the same page ranks highest net import and highest net export from `daily_history` / `monthly_history` (20 days, 10 months, 10 years). Both day lists omit today. No second ranking table.
       - **A7 Done:** all-time singles on `topn.php` (`top_records`); `-daily` beat + `-buildalltoprecords`.
       - **A12 Done:** Capacity peak ranks (top 10 months); records filtered by metric (yield / peak; wind waits for A11).
-- [x] Settings (`settings.php`): admin password on first open; devices, titles, monthly expected kWh, spike cap, and night gates in `meter_history.db`. Encrypted full-database download and restore (`db_backup.py`). See [`architecture.md`](architecture.md).
+- [x] Settings (`settings.php`): admin password on first open; locked-by-default Unlock window; devices, titles, monthly expected kWh, spike cap, and night gates in `meter_history.db`. Encrypted full-database download and restore (`db_backup.py`); 1-min CSV export without password. See [`architecture.md`](architecture.md).
 - [x] Verify analytics / summary with populated rollups (A2/A3 + operator smoke).
 
 ---
@@ -106,7 +106,11 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 - [x] Implement live hardware diagnostic utility (`powertests.py` & `powertests.php`). It reads site settings from `meter_history.db` and probes P1, SMA, and WebBox. It does not write telemetry.
 - [ ] Implement `readings` hot-buffer retention strategy:
       - Once 1-minute data is downsampled and aggregated, prune `readings` to 30–90 rolling days to keep hot queries lightweight while preserving permanent history in `history_5min`.
-- [ ] Integrate `meter_history.db` into Synology Hyper Backup for offsite snapshot protection.
+- [ ] **Ops5** — Daily DB backup to a Synology path from Settings (not Hyper Backup):
+      - Filename `powerbackup-YYMMDD-HHMMSS.sql.zip` (Europe/Brussels stamp).
+      - Keep only the last 14 files in that path (rotate).
+      - Task Scheduler daily job (time TBD at kickoff).
+      - Encryption vs plain zip: open until kickoff.
 - [ ] Configure Synology DSM Task Scheduler:
       - [x] Every 1 minute: `run_python.sh logger.py -poll` (Live P1 + Inverter ingestion).
       - [x] Daily at 00:05: `run_python.sh rollup.py -daily` (Locks in yesterday's daily aggregates).
