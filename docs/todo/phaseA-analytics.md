@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4**-**A13**, **A15**-**A20 Done**; **A14** kickoff locked; **A11**, **A21** queued. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-29 (**A14** kickoff locked)  
+**Status:** **A4**-**A20 Done** (incl. **A14**); **A11**, **A21** queued. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-29 (**A14** Done)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py`
 
 ---
@@ -22,7 +22,7 @@
 | **A11** | open | Historical gas, wind, and similar series on the pages. Not P3. Not kicked off |
 | **A12** | Done | Capacity peak on summary + top-n. Product: [`docs/architecture.md`](../architecture.md) |
 | **A13** | Done | Grid import/export on summary and top-n. Product: [`docs/architecture.md`](../architecture.md) |
-| **A14** | open | Virtual kWh meters: Settings + calc + debug page. Kickoff locked |
+| **A14** | Done | Virtual kWh meters: Settings + calc + debug. Product: [`docs/architecture.md`](../architecture.md) |
 | **A15** | Done | Settings save: probe + `*_active`; homepage errors; unlock stay on fail. Product: [`docs/architecture.md`](../architecture.md) |
 | **A16** | Done | Per-phase W on `readings` + logger. Product: [`docs/architecture.md`](../architecture.md) |
 | **A17** | Done | Rollup: per-phase W into `history_5min`. Product: [`docs/architecture.md`](../architecture.md) |
@@ -31,7 +31,7 @@
 | **A20** | Done | Settings locked-by-default / Unlock timed window. Product: [`docs/architecture.md`](../architecture.md) |
 | **A21** | open | UI: virtual meters on Raw Meter Registers (+ further pages). After A14 |
 
-**Parallel:** **A15**/**A20** Done. **A11** Fluvius gas / wind. **A14** / **A21** virtual meters.
+**Parallel:** **A14**/**A15**/**A20** Done. **A11** Fluvius gas / wind. **A21** Raw Meter Registers for virtual meters.
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
@@ -835,10 +835,10 @@ Calendar-day **Today** preset (chip after 24 h, before 7 d) is the explorer defa
 
 ## A14 - Virtual kWh meters from Settings
 
-**Status:** open (kickoff locked 2026-10-29; waiting `implement`)
+**Status:** Done (2026-10-29)
 **Size:** **M**
 **Depends on:** Settings (**A6** Done). Index **Raw Meter Registers** display = **A21**.
-**Prereqs:** **A6** Done - ok. Sequence vs **A11** / **A15**: leave as-is.
+**Product:** [`docs/architecture.md`](../architecture.md) (Virtual kWh meters)
 
 ### Placement
 
@@ -848,7 +848,7 @@ Virtual kWh meters: Settings CRUD + live check, shared calc, PHP debug page (rea
 
 `V(t) = (S0 + C) + p * (S(t) - S0)`
 
-- `S(t)` = current source lifetime kWh (from **last `readings` row** for P1 / SMA / WebBox fields)
+- `S(t)` = current source lifetime kWh (P1 from last `readings`; SMA/WebBox from `latest_state`)
 - `S0` = frozen on **first save** of that meter only
 - **Re-bias** button: set `S0` to current source reading; **C** and factor unchanged; **confirmation modal** required
 - `C` = bias kWh (may be negative)
@@ -861,7 +861,7 @@ Virtual kWh meters: Settings CRUD + live check, shared calc, PHP debug page (rea
 | # | Lock |
 |---|---|
 | 1 | Formula above; percent factor with max 4 decimals; `p = percent/100`. |
-| 2 | Sources when present on last `readings` row: **P1 import**, **P1 export**, **P1 net**, **SMA total**, **WebBox total**. Omit unavailable from picker. First save requires a readable `S0`. |
+| 2 | Sources: **P1 import/export/net** from last `readings`; **SMA/WebBox total** from `latest_state`. Omit unavailable. First save requires readable `S0`. |
 | 3 | Settings (Unlock / A20): **Add virtual kWh meter**; edit + delete; fields **name**, **source**, **bias**, **factor %**; live **source** + **virtual** readings for check; checkbox **show in Raw Meter Registers** (flag only; index UI = A21); **Re-bias on current reading** + confirm modal. |
 | 4 | PHP debug page `virtual_meters_debug.php`: Unlock-gated like Settings; **read-only** (no config). Show whatever is useful to troubleshoot: meter id/name, source key, `S`, `S0`, `C`, percent, `p`, `V`, delta `(S-S0)`, formula line, reading timestamp, raw-registers flag. Link from Settings virtual-meters section. |
 | 5 | Storage: table `virtual_kwh_meters` (not purgeable derived). Shared calc helper used by Settings + debug (+ A21 later). |
@@ -870,15 +870,15 @@ Virtual kWh meters: Settings CRUD + live check, shared calc, PHP debug page (rea
 
 ### Open questions
 
-None - kickoff locked.
+None - shipped.
 
 ### DoD
 
-- [ ] `virtual_kwh_meters` + shared calc (`V` from formula)
-- [ ] Settings: add / edit / delete; live source + virtual; Re-bias + confirm; raw-registers checkbox stored
-- [ ] `virtual_meters_debug.php` Unlock read-only troubleshooting
-- [ ] No index Raw Meter Registers wiring (A21); no warehouse writes
-- [ ] Product docs (`architecture.md`) match; phase pointers
+- [x] `virtual_kwh_meters` + shared calc (`V` from formula)
+- [x] Settings: add / edit / delete; live source + virtual; Re-bias + confirm; raw-registers checkbox stored
+- [x] `virtual_meters_debug.php` Unlock read-only troubleshooting
+- [x] No index Raw Meter Registers wiring (A21); no warehouse writes
+- [x] Product docs (`architecture.md`) match; phase pointers
 
 ### Verbatim - 2026-10-28
 

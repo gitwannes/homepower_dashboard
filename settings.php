@@ -6,6 +6,7 @@
  * A9 database download and restore are on this page.
  * A20: page starts locked; Unlock opens a timed edit window.
  * A15: Save probes filled integrations and writes *_active flags.
+ * A14: virtual kWh meters (CRUD + Re-bias; index Raw Registers = A21).
  */
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
@@ -16,9 +17,22 @@ const HP_SETTINGS_UNLOCK_SECONDS = 300;
 
 $boot = hp_boot();
 $pdo = $boot['pdo'];
+hp_vm_ensure_schema($pdo);
 $error = '';
 $notice = '';
 $posted = null;
+
+/**
+ * JSON response helper for virtual-meter AJAX actions.
+ *
+ * @param array<string, mixed> $payload
+ */
+function hp_vm_json_exit(array $payload): void
+{
+    header('Content-Type: application/json; charset=UTF-8');
+    echo json_encode($payload);
+    exit;
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = isset($_POST['action']) ? (string)$_POST['action'] : '';
@@ -28,6 +42,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $password = isset($_POST['admin_password']) ? (string)$_POST['admin_password'] : '';
         echo json_encode(['ok' => hp_admin_ok($pdo, $password)]);
         exit;
+    }
+
+    // A14: virtual kWh meter mutations (Unlock window client-side; admin password required).
+    if (in_array($action, ['vm_create', 'vm_update', 'vm_delete', 'vm_rebias'], true)) {
+        $adminPassword = isset($_POST['admin_password']) ? (string)$_POST['admin_password'] : '';
+        if ($boot['mode'] === 'need_admin') {
+            hp_vm_json_exit(['ok' => false, 'error' => 'Set an admin password first.']);
+        }
+        if (!hp_admin_ok($pdo, $adminPassword)) {
+            hp_vm_json_exit(['ok' => false, 'error' => 'Admin password is wrong.']);
+        }
+        if ($action === 'vm_create') {
+            $result = hp_vm_create($pdo, $_POST);
+            hp_vm_json_exit([
+                'ok' => $result['ok'],
+                'error' => $result['error'],
+                'id' => $result['id'],
+                'meters' => hp_vm_list_evaluated($pdo),
+                'sources' => hp_vm_available_sources($pdo),
+            ]);
+        }
+        if ($action === 'vm_update') {
+            $id = isset($_POST['id']) ? (int)$_POST['id'] : 0;
+            $result = hp_vm_update($pdo, $id, $_POST);
+            hp_vm_json_exit([
+                'ok' => $result['ok'],
+                'error' => $result['error'],
+                'meters' => hp_vm_list_evaluated($pdo),
+                'sources' => hp_vm_available_sources($pdo),
+            ]);
+        }
+        if ($action === 'vm_delete') {
+            $id = isset($_POST['id']) ? (int)$_POST['id'] : 0;
+            $result = hp_vm_delete($pdo, $id);
+            hp_vm_json_exit([
+                'ok' => $result['ok'],
+                'error' => $result['error'],
+                'meters' => hp_vm_list_evaluated($pdo),
+                'sources' => hp_vm_available_sources($pdo),
+            ]);
+        }
+        // vm_rebias
+        $id = isset($_POST['id']) ? (int)$_POST['id'] : 0;
+        $result = hp_vm_rebias($pdo, $id);
+        hp_vm_json_exit([
+            'ok' => $result['ok'],
+            'error' => $result['error'],
+            's0' => $result['s0'],
+            'meters' => hp_vm_list_evaluated($pdo),
+            'sources' => hp_vm_available_sources($pdo),
+        ]);
     }
 
     if ($action === 'create_admin') {
@@ -456,7 +521,11 @@ function hp_settings_from_post(array $stored): array
     $settings = [
         'p1_ip' => $p1,
         'sma_ip' => $text('sma_ip'),
-        'sma_user' => $text('sma_user'),
+        // sma_user is not on the Settings form (removed from UI). SMA WebConnect login
+        // does not take a free-text username: the stored value only selects role
+        // "istl"/"installer" vs default "usr" (see logger.fetch_sma /
+        // integration_probes.probe_sma). Keep whatever is already in the DB for now.
+        'sma_user' => isset($stored['sma_user']) ? (string)$stored['sma_user'] : '',
         'sma_password' => $smaPassword,
         'sunnywebbox_ip' => $text('sunnywebbox_ip'),
         'sunnywebbox_password' => $wbPassword,
@@ -509,6 +578,10 @@ function hp_integration_chip_html(string $state): string
     }
     return '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-slate-50 text-slate-500 border border-slate-200">Not configured</span>';
 }
+
+$vmMetersEval = hp_vm_list_evaluated($pdo);
+$vmSourcesAvail = hp_vm_available_sources($pdo);
+$vmSourceLabels = hp_vm_source_labels();
 
 $chipP1 = hp_integration_chip_state($settings, $stored, 'p1');
 $chipSma = hp_integration_chip_state($settings, $stored, 'sma');
@@ -597,9 +670,6 @@ $integrationLabels = hp_integration_labels();
             </div>
             <label class="block text-sm font-semibold">SMA address
                 <input name="sma_ip" disabled value="<?= hp_h(hp_field($settings, 'sma_ip')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
-            </label>
-            <label class="block text-sm font-semibold">SMA user
-                <input name="sma_user" disabled value="<?= hp_h(hp_field($settings, 'sma_user')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <div class="block text-sm font-semibold">SMA password
                 <div class="mt-1 flex gap-2 flex-wrap">
@@ -705,6 +775,17 @@ $integrationLabels = hp_integration_labels();
                 <?php endfor; ?>
             </div>
             <p class="text-xs text-slate-500">Summary year / all-years PVGIS curve reads these values live (all zero = no curve). Monthly <code>target_pct</code> in the DB updates after <code>python3 rollup.py -buildall</code> or <code>-daily</code>.</p>
+        </section>
+
+        <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm" id="virtualMetersSection">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Virtual kWh meters</h2>
+                <a id="vmDebugLink" data-href="virtual_meters_debug.php" class="js-lock-link text-xs font-semibold text-indigo-600 hover:underline pointer-events-none opacity-50 cursor-not-allowed" tabindex="-1" aria-disabled="true">Debug page</a>
+            </div>
+            <p class="text-xs text-slate-500">Each meter tracks a source lifetime kWh with bias and a percent of new energy after the first-save anchor (<code>S0</code>). Formula: <code>V = (S0 + C) + p * (S - S0)</code> with <code>p = percent/100</code>. Saves here use the admin password and do not run integration probes. Raw Meter Registers display is A21 (checkbox stores the flag only).</p>
+            <p id="vmError" class="hidden text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-3"></p>
+            <div id="vmList" class="space-y-4"></div>
+            <button type="button" id="vmAddBtn" disabled class="js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed">Add virtual kWh meter</button>
         </section>
 
         <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
@@ -836,6 +917,25 @@ $integrationLabels = hp_integration_labels();
             </div>
         </div>
     </div>
+
+    <div id="vmRebiasModal" class="fixed inset-0 bg-slate-900/40 items-center justify-center p-4" style="display:none; z-index:60">
+        <div class="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-sm space-y-3 shadow-lg">
+            <h2 class="text-lg font-bold">Re-bias on current reading?</h2>
+            <p id="vmRebiasText" class="text-sm text-slate-700">This sets S0 to the current source reading. Bias and factor stay the same. The virtual reading will jump to S0 + bias.</p>
+            <div class="flex justify-end gap-2">
+                <button type="button" id="vmRebiasCancel" class="px-3 py-2 rounded-xl border border-slate-200 text-sm">Cancel</button>
+                <button type="button" id="vmRebiasConfirm" class="px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">Re-bias</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    window.HP_VM_BOOT = <?= json_encode([
+        'meters' => $vmMetersEval,
+        'sources' => $vmSourcesAvail,
+        'labels' => $vmSourceLabels,
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+    </script>
 
     <script>
     (function () {
@@ -976,6 +1076,25 @@ $integrationLabels = hp_integration_labels();
         function setControlsEnabled(enabled) {
             Array.prototype.forEach.call(document.querySelectorAll('.js-lock-ctrl'), function (el) {
                 el.disabled = !enabled;
+            });
+            // Virtual meter Save depends on dirty state, not unlock alone.
+            if (typeof vmRefreshSaveButtons === 'function') {
+                vmRefreshSaveButtons();
+            }
+            // Unlock-only links (e.g. virtual meters debug): strip href while locked.
+            Array.prototype.forEach.call(document.querySelectorAll('.js-lock-link'), function (el) {
+                var target = el.getAttribute('data-href') || '';
+                if (enabled && target !== '') {
+                    el.setAttribute('href', target);
+                    el.classList.remove('pointer-events-none', 'opacity-50', 'cursor-not-allowed');
+                    el.removeAttribute('aria-disabled');
+                    el.setAttribute('tabindex', '0');
+                } else {
+                    el.removeAttribute('href');
+                    el.classList.add('pointer-events-none', 'opacity-50', 'cursor-not-allowed');
+                    el.setAttribute('aria-disabled', 'true');
+                    el.setAttribute('tabindex', '-1');
+                }
             });
             Array.prototype.forEach.call(document.querySelectorAll('.js-lock-field'), function (el) {
                 if (el.getAttribute('data-secret-set') === '1') {
@@ -1311,6 +1430,361 @@ $integrationLabels = hp_integration_labels();
                 }
             });
         }
+
+        // --- A14 virtual kWh meters ---
+        var vmBoot = window.HP_VM_BOOT || { meters: [], sources: [], labels: {} };
+        var vmMeters = Array.isArray(vmBoot.meters) ? vmBoot.meters.slice() : [];
+        var vmSources = Array.isArray(vmBoot.sources) ? vmBoot.sources.slice() : [];
+        var vmLabels = vmBoot.labels || {};
+        var vmListEl = document.getElementById('vmList');
+        var vmErrorEl = document.getElementById('vmError');
+        var vmAddBtn = document.getElementById('vmAddBtn');
+        var vmRebiasModal = document.getElementById('vmRebiasModal');
+        var vmRebiasPendingId = 0;
+        var vmDraftSeq = 0;
+
+        function vmShowError(message) {
+            if (!vmErrorEl) {
+                return;
+            }
+            vmErrorEl.textContent = message || '';
+            if (message) {
+                vmErrorEl.classList.remove('hidden');
+            } else {
+                vmErrorEl.classList.add('hidden');
+            }
+        }
+
+        function vmFmt(n, digits) {
+            if (n === null || n === undefined || !isFinite(Number(n))) {
+                return '-';
+            }
+            return Number(n).toLocaleString('en-GB', {
+                minimumFractionDigits: digits,
+                maximumFractionDigits: digits
+            });
+        }
+
+        function vmSourceOptionsHtml(selected, includeMissing) {
+            var html = '';
+            var seen = {};
+            vmSources.forEach(function (s) {
+                seen[s.source] = true;
+                html += '<option value="' + s.source + '"' + (s.source === selected ? ' selected' : '') + '>'
+                    + s.label + ' (' + vmFmt(s.value, 3) + ' kWh)</option>';
+            });
+            if (includeMissing && selected && !seen[selected]) {
+                var lab = vmLabels[selected] || selected;
+                html += '<option value="' + selected + '" selected>' + lab + ' (unavailable now)</option>';
+            }
+            return html;
+        }
+
+        function vmCardHtml(meter, isDraft) {
+            var id = isDraft ? ('draft-' + meter._draft) : String(meter.id);
+            var name = meter.name || '';
+            var source = meter.source || (vmSources[0] ? vmSources[0].source : '');
+            var bias = meter.bias_kwh != null ? meter.bias_kwh : 0;
+            var factor = meter.factor_percent != null ? meter.factor_percent : 100;
+            var showRaw = Number(meter.show_in_raw_registers) === 1;
+            var sourceOk = meter.source_ok !== false;
+            var sTxt = sourceOk ? vmFmt(meter.S, 3) + ' kWh' : 'unavailable';
+            var vTxt = (meter.V !== null && meter.V !== undefined) ? vmFmt(meter.V, 3) + ' kWh' : '-';
+            var s0Txt = isDraft ? '(set on first save)' : vmFmt(meter.S0 != null ? meter.S0 : meter.s0_kwh, 3) + ' kWh';
+            var title = isDraft ? 'New virtual meter' : ('Meter #' + meter.id);
+            return ''
+                + '<div class="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50/40" data-vm-id="' + id + '" data-vm-draft="' + (isDraft ? '1' : '0') + '">'
+                + '<div class="flex flex-wrap items-center justify-between gap-2">'
+                + '<h3 class="text-sm font-bold text-slate-800">' + title + '</h3>'
+                + (isDraft ? '' : '<span class="text-[11px] text-slate-500">S0 ' + s0Txt + '</span>')
+                + '</div>'
+                + '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">'
+                + '<label class="block text-xs font-semibold text-slate-600">Name'
+                + '<input type="text" data-vm-field="name" disabled value="' + String(name).replace(/"/g, '&quot;') + '" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-normal">'
+                + '</label>'
+                + '<label class="block text-xs font-semibold text-slate-600">Source'
+                + '<select data-vm-field="source" disabled class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-normal">'
+                + vmSourceOptionsHtml(source, !isDraft)
+                + '</select></label>'
+                + '<label class="block text-xs font-semibold text-slate-600">Bias C (kWh)'
+                + '<input type="number" step="any" data-vm-field="bias_kwh" disabled value="' + bias + '" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-normal">'
+                + '</label>'
+                + '<label class="block text-xs font-semibold text-slate-600">Factor % (max 4 decimals)'
+                + '<input type="number" step="0.0001" data-vm-field="factor_percent" disabled value="' + factor + '" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 text-sm font-normal">'
+                + '</label>'
+                + '</div>'
+                + '<label class="inline-flex items-center gap-2 text-xs font-semibold text-slate-700">'
+                + '<input type="checkbox" data-vm-field="show_in_raw_registers" disabled class="js-lock-field" ' + (showRaw ? 'checked' : '') + '>'
+                + 'Show in Raw Meter Registers (flag; UI in A21)</label>'
+                + '<div class="text-xs text-slate-600 space-y-0.5">'
+                + '<div>Source reading S: <strong class="font-mono">' + sTxt + '</strong>'
+                + (meter.source_detail ? ' <span class="text-slate-400">(' + meter.source_detail + ')</span>' : '')
+                + '</div>'
+                + '<div>Virtual reading V: <strong class="font-mono">' + vTxt + '</strong></div>'
+                + '</div>'
+                + '<div class="flex flex-wrap gap-2">'
+                // Save is not js-lock-ctrl: enabled only when unlocked AND (draft or dirty).
+                + '<button type="button" data-vm-act="save" disabled class="js-vm-save px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed">Save meter</button>'
+                + (isDraft
+                    ? '<button type="button" data-vm-act="cancel-draft" disabled class="js-lock-ctrl px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50">Cancel</button>'
+                    : '<button type="button" data-vm-act="rebias" disabled class="js-lock-ctrl px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50">Re-bias on current reading</button>'
+                      + '<button type="button" data-vm-act="delete" disabled class="js-lock-ctrl px-3 py-1.5 rounded-xl border border-rose-200 text-rose-700 text-xs font-semibold disabled:opacity-50">Delete</button>')
+                + '</div></div>';
+        }
+
+        function vmSnapshotFields(fields) {
+            return [
+                fields.name || '',
+                fields.source || '',
+                String(fields.bias_kwh != null ? fields.bias_kwh : '0'),
+                String(fields.factor_percent != null ? fields.factor_percent : '100'),
+                fields.show_in_raw_registers ? '1' : '0'
+            ].join('\n');
+        }
+
+        function vmReadCard(card) {
+            var nameEl = card.querySelector('[data-vm-field="name"]');
+            var sourceEl = card.querySelector('[data-vm-field="source"]');
+            var biasEl = card.querySelector('[data-vm-field="bias_kwh"]');
+            var factorEl = card.querySelector('[data-vm-field="factor_percent"]');
+            var showEl = card.querySelector('[data-vm-field="show_in_raw_registers"]');
+            return {
+                name: nameEl ? nameEl.value : '',
+                source: sourceEl ? sourceEl.value : '',
+                bias_kwh: biasEl ? biasEl.value : '0',
+                factor_percent: factorEl ? factorEl.value : '100',
+                show_in_raw_registers: showEl && showEl.checked ? '1' : ''
+            };
+        }
+
+        function vmCardIsDirty(card) {
+            if (card.getAttribute('data-vm-draft') === '1') {
+                return true;
+            }
+            var baseline = card.getAttribute('data-vm-baseline') || '';
+            return vmSnapshotFields(vmReadCard(card)) !== baseline;
+        }
+
+        function vmRefreshSaveButtons() {
+            if (!vmListEl) {
+                return;
+            }
+            Array.prototype.forEach.call(vmListEl.querySelectorAll('[data-vm-id]'), function (card) {
+                var saveBtn = card.querySelector('.js-vm-save');
+                if (!saveBtn) {
+                    return;
+                }
+                // Drafts: Save while unlocked. Saved meters: only when dirty.
+                var allow = unlocked && vmCardIsDirty(card);
+                saveBtn.disabled = !allow;
+            });
+        }
+
+        function vmRender() {
+            if (!vmListEl) {
+                return;
+            }
+            var html = '';
+            vmMeters.forEach(function (m) {
+                html += vmCardHtml(m, !!m._draft);
+            });
+            if (!html) {
+                html = '<p class="text-xs text-slate-500">No virtual meters yet.</p>';
+            }
+            vmListEl.innerHTML = html;
+            // Capture clean baseline for each saved card.
+            Array.prototype.forEach.call(vmListEl.querySelectorAll('[data-vm-id][data-vm-draft="0"]'), function (card) {
+                card.setAttribute('data-vm-baseline', vmSnapshotFields(vmReadCard(card)));
+            });
+            setControlsEnabled(unlocked);
+            vmRefreshSaveButtons();
+        }
+
+        function vmPost(action, fields) {
+            var body = new URLSearchParams();
+            body.set('action', action);
+            body.set('admin_password', unlockPassword || '');
+            Object.keys(fields).forEach(function (key) {
+                body.set(key, fields[key]);
+            });
+            return fetch('settings.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: body.toString()
+            }).then(function (response) {
+                return response.json();
+            });
+        }
+
+        function vmApplyServer(data) {
+            if (data.sources) {
+                vmSources = data.sources;
+            }
+            if (data.meters) {
+                // Keep any unfinished drafts.
+                var drafts = vmMeters.filter(function (m) { return !!m._draft; });
+                vmMeters = data.meters.concat(drafts);
+            }
+            vmRender();
+        }
+
+        function vmWithPassword(thenFn) {
+            if (unlockPassword) {
+                thenFn();
+                return;
+            }
+            openGate('Admin password', function (password) {
+                verifyAdmin(password).then(function (ok) {
+                    if (!ok) {
+                        gateError.textContent = 'Wrong password.';
+                        gateError.classList.remove('hidden');
+                        return;
+                    }
+                    unlockPassword = password;
+                    adminPasswordField.value = password;
+                    closeGate();
+                    thenFn();
+                });
+            });
+        }
+
+        if (vmAddBtn) {
+            vmAddBtn.addEventListener('click', function () {
+                if (!unlocked) {
+                    return;
+                }
+                if (vmSources.length === 0) {
+                    vmShowError('No source lifetime readings available yet. Wait for a logger poll.');
+                    return;
+                }
+                vmDraftSeq += 1;
+                vmMeters.push({
+                    _draft: vmDraftSeq,
+                    name: '',
+                    source: vmSources[0].source,
+                    bias_kwh: 0,
+                    factor_percent: 100,
+                    show_in_raw_registers: 0,
+                    source_ok: true,
+                    S: vmSources[0].value,
+                    V: null,
+                    source_detail: vmSources[0].detail
+                });
+                vmShowError('');
+                vmRender();
+            });
+        }
+
+        if (vmListEl) {
+            vmListEl.addEventListener('input', function (ev) {
+                if (ev.target && ev.target.closest('[data-vm-field]')) {
+                    vmRefreshSaveButtons();
+                }
+            });
+            vmListEl.addEventListener('change', function (ev) {
+                if (ev.target && ev.target.closest('[data-vm-field]')) {
+                    vmRefreshSaveButtons();
+                }
+            });
+            vmListEl.addEventListener('click', function (ev) {
+                var btn = ev.target.closest('[data-vm-act]');
+                if (!btn || !unlocked) {
+                    return;
+                }
+                var card = btn.closest('[data-vm-id]');
+                if (!card) {
+                    return;
+                }
+                var act = btn.getAttribute('data-vm-act');
+                var idAttr = card.getAttribute('data-vm-id') || '';
+                var isDraft = card.getAttribute('data-vm-draft') === '1';
+
+                if (act === 'cancel-draft') {
+                    vmMeters = vmMeters.filter(function (m) {
+                        return !m._draft || ('draft-' + m._draft) !== idAttr;
+                    });
+                    vmRender();
+                    return;
+                }
+
+                if (act === 'save') {
+                    var fields = vmReadCard(card);
+                    vmWithPassword(function () {
+                        var action = isDraft ? 'vm_create' : 'vm_update';
+                        if (!isDraft) {
+                            fields.id = idAttr;
+                        }
+                        vmPost(action, fields).then(function (data) {
+                            if (!data || !data.ok) {
+                                vmShowError((data && data.error) ? data.error : 'Save failed.');
+                                return;
+                            }
+                            vmShowError('');
+                            // Drop matching draft after create.
+                            if (isDraft) {
+                                vmMeters = vmMeters.filter(function (m) {
+                                    return !m._draft || ('draft-' + m._draft) !== idAttr;
+                                });
+                            }
+                            vmApplyServer(data);
+                        }).catch(function () {
+                            vmShowError('Save failed (network).');
+                        });
+                    });
+                    return;
+                }
+
+                if (act === 'delete') {
+                    if (!window.confirm('Delete this virtual meter?')) {
+                        return;
+                    }
+                    vmWithPassword(function () {
+                        vmPost('vm_delete', { id: idAttr }).then(function (data) {
+                            if (!data || !data.ok) {
+                                vmShowError((data && data.error) ? data.error : 'Delete failed.');
+                                return;
+                            }
+                            vmShowError('');
+                            vmApplyServer(data);
+                        }).catch(function () {
+                            vmShowError('Delete failed (network).');
+                        });
+                    });
+                    return;
+                }
+
+                if (act === 'rebias') {
+                    vmRebiasPendingId = parseInt(idAttr, 10) || 0;
+                    vmRebiasModal.style.display = 'flex';
+                }
+            });
+        }
+
+        document.getElementById('vmRebiasCancel').addEventListener('click', function () {
+            vmRebiasPendingId = 0;
+            vmRebiasModal.style.display = 'none';
+        });
+        document.getElementById('vmRebiasConfirm').addEventListener('click', function () {
+            var id = vmRebiasPendingId;
+            vmRebiasModal.style.display = 'none';
+            if (!id) {
+                return;
+            }
+            vmWithPassword(function () {
+                vmPost('vm_rebias', { id: String(id) }).then(function (data) {
+                    if (!data || !data.ok) {
+                        vmShowError((data && data.error) ? data.error : 'Re-bias failed.');
+                        return;
+                    }
+                    vmShowError('');
+                    vmApplyServer(data);
+                }).catch(function () {
+                    vmShowError('Re-bias failed (network).');
+                });
+            });
+        });
+
+        vmRender();
 
         // Page load: locked. Successful save redirects here already locked.
         refreshPrimaryButton();

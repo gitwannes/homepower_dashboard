@@ -194,6 +194,9 @@ def fetch_sma(ip, user, password, last_state):
         return None, "SMA Inverter Error: Missing SMA_USER or SMA_PASSWORD in .env."
 
     ctx = ssl._create_unverified_context()
+    # SMA WebConnect has no free-text username. The settings "sma_user" value only
+    # selects login right: "istl" / "installer" -> installer; anything else -> "usr"
+    # (user). Empty defaults to usr at the call site. Not exposed on the Settings UI.
     user_right = "istl" if user.lower() in ("istl", "installer") else "usr"
     sid = None
 

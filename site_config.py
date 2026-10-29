@@ -24,6 +24,7 @@ DEFAULT_RAD_FLOOR = 5.0
 SETTING_DEFAULTS = {
     'p1_ip': '',
     'sma_ip': '',
+    # Not on Settings UI. WebConnect role only: istl/installer vs default usr.
     'sma_user': '',
     'sma_password': '',
     'sunnywebbox_ip': '',

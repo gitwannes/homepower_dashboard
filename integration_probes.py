@@ -59,6 +59,9 @@ def probe_sma(ip: str, user: str, password: str) -> ProbeResult:
         return _result("fail", "SMA password is missing.")
 
     ctx = ssl._create_unverified_context()
+    # No free-text username on WebConnect. "sma_user" only picks right:
+    # "istl"/"installer" -> installer; anything else (incl. empty) -> "usr".
+    # Settings UI no longer edits this field; kept in app_settings for now.
     right = "istl" if (user or "").strip().lower() in ("istl", "installer") else "usr"
     sid = None
     try:

@@ -5,6 +5,7 @@
  * Key names and the x1.05 spike rule match site_config.py.
  * DB_BACKUP_ENCRYPTION_KEY is never read or stored here.
  */
+require_once __DIR__ . '/virtual_meters.php';
 
 /**
  * Database path. Matches index.php. HP_DB_FILE is a local test override only.
@@ -120,6 +121,10 @@ function hp_ensure_schema(PDO $pdo): void
             UNIQUE(month, inclination)
         )'
     );
+    // A14 virtual meters (not a purgeable derived table).
+    if (function_exists('hp_vm_ensure_schema')) {
+        hp_vm_ensure_schema($pdo);
+    }
 }
 
 /**
@@ -516,13 +521,13 @@ function hp_integration_save_plan(array $settings): array
         $inactive[] = 'p1';
     }
 
+    // SMA "user" is not a form field: WebConnect uses role usr vs istl/installer only.
     $smaIp = trim((string)($settings['sma_ip'] ?? ''));
-    $smaUser = trim((string)($settings['sma_user'] ?? ''));
     $smaPw = (string)($settings['sma_password'] ?? '');
-    $smaAny = $smaIp !== '' || $smaUser !== '' || $smaPw !== '';
+    $smaAny = $smaIp !== '' || $smaPw !== '';
     if ($smaAny) {
         if ($smaIp === '' || $smaPw === '') {
-            $errors[] = 'SMA is partial: address and password are both required (or clear all SMA fields).';
+            $errors[] = 'SMA is partial: address and password are both required (or clear both).';
         } else {
             $probe[] = 'sma';
         }
