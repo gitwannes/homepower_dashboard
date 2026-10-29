@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # --- file: rollup.py ---
+import json
 import os
 import re
 import sys
 import sqlite3
 import time
 from datetime import datetime
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import fluvius_import
 import site_config
@@ -520,22 +521,45 @@ def build_clear_sky_envelopes(conn: sqlite3.Connection, step: int = 4) -> None:
     )
 
 
-# All-time singles on topn.php (A7). direction: max = higher wins, min = lower wins.
-# kind daily = daily_history column; peak = history_5min PAC surge.
+# All-time singles on topn.php (A7 / A12). direction: max = higher wins, min = lower wins.
+# kind daily = daily_history column; peak = history_5min PAC surge;
+# year_solar = sum of monthly/daily solar by calendar year;
+# fluvius_month_peak / fluvius_year_avg_peak = Capacity peak from fluvius_interval (+ live P1 open month).
 TOP_RECORD_DEFS: Tuple[Tuple[str, str, str, str, Optional[str]], ...] = (
     ("best_day_kwh", "max", "All-time highest daily generation (kWh)", "daily", "solar_yield_kwh"),
     ("peak_surge_w", "max", "All-time instantaneous solar AC surge peak (W)", "peak", None),
-    ("max_wind_ms", "max", "Maximum recorded wind gust (m/s)", "daily", "wind_gust_max_ms"),
-    ("max_temp_c", "max", "Highest recorded ambient temperature (C)", "daily", "temp_ambient_max"),
-    ("min_temp_c", "min", "Lowest recorded ambient temperature (C)", "daily", "temp_ambient_min"),
     ("max_sun_hours", "max", "Most sun-hours in a single day", "daily", "sun_hours"),
-    ("max_module_temp_c", "max", "Highest recorded module temperature (C)", "daily", "temp_module_max"),
     (
         "best_self_consumption_kwh",
         "max",
         "Highest daily self-consumption (kWh)",
         "daily",
         "self_consumption_kwh",
+    ),
+    (
+        "best_year_kwh",
+        "max",
+        "All-time highest year generation (kWh)",
+        "year_solar",
+        None,
+    ),
+    ("max_wind_ms", "max", "Maximum recorded wind gust (m/s)", "daily", "wind_gust_max_ms"),
+    ("max_temp_c", "max", "Highest recorded ambient temperature (C)", "daily", "temp_ambient_max"),
+    ("min_temp_c", "min", "Lowest recorded ambient temperature (C)", "daily", "temp_ambient_min"),
+    ("max_module_temp_c", "max", "Highest recorded module temperature (C)", "daily", "temp_module_max"),
+    (
+        "max_capacity_peak_kw",
+        "max",
+        "Highest Capacity peak month (kW)",
+        "fluvius_month_peak",
+        None,
+    ),
+    (
+        "best_year_avg_capacity_peak_kw",
+        "max",
+        "Year with highest average Capacity peak (kW)",
+        "fluvius_year_avg_peak",
+        None,
     ),
 )
 
@@ -605,6 +629,160 @@ def _daily_extreme_candidate(
     return (str(row[0]), float(row[1]))
 
 
+def _electricity_ean(conn: sqlite3.Connection) -> str:
+    """Digits-only Fluvius electricity EAN from Settings."""
+    settings = site_config.load_settings(conn)
+    return re.sub(r"\D", "", settings.get("fluvius_ean_electricity", "") or "")
+
+
+def _live_capacity_peak_kw(conn: sqlite3.Connection) -> Optional[Tuple[str, float]]:
+    """Open-month live P1 capacity peak as (YYYY-MM, kW), or None."""
+    row = conn.execute(
+        "SELECT data_json FROM latest_state WHERE id = 1"
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    try:
+        state = json.loads(str(row[0]))
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(state, dict):
+        return None
+    p1 = state.get("p1_data")
+    if not isinstance(p1, dict):
+        return None
+    watts = p1.get("montly_power_peak_w")
+    if watts is None:
+        return None
+    try:
+        w = float(watts)
+    except (TypeError, ValueError):
+        return None
+    if w <= 0:
+        return None
+    return (datetime.now().strftime("%Y-%m"), round(w / 1000.0, 3))
+
+
+def _capacity_peak_months_kw(conn: sqlite3.Connection) -> Dict[str, float]:
+    """Fluvius piekvermogen months (kW), open month replaced by live P1 when present."""
+    ean = _electricity_ean(conn)
+    by_month: Dict[str, float] = {}
+    if ean:
+        try:
+            rows = conn.execute(
+                """
+                SELECT substr(interval_start, 1, 7) AS ym, MAX(volume) AS peak_kw
+                FROM fluvius_interval
+                WHERE ean = ?
+                  AND register = 'piekvermogen'
+                  AND resolution = 'month'
+                GROUP BY ym
+                """,
+                (ean,),
+            ).fetchall()
+        except sqlite3.Error:
+            rows = []
+        for ym, peak_kw in rows:
+            if ym and peak_kw is not None:
+                by_month[str(ym)] = round(float(peak_kw), 3)
+    live = _live_capacity_peak_kw(conn)
+    if live is not None:
+        by_month[live[0]] = live[1]
+    return by_month
+
+
+def _year_solar_candidate(
+    conn: sqlite3.Connection,
+    day_lo: Optional[str] = None,
+    day_hi: Optional[str] = None,
+) -> Optional[Tuple[str, float]]:
+    """Calendar year with highest solar kWh. record_date is YYYY-01-01. Window filters months."""
+    where = "total_solar_kwh IS NOT NULL"
+    params: Tuple[object, ...] = ()
+    if day_lo is not None and day_hi is not None:
+        # Beat path: only years touched by the stitch span can improve.
+        where = (
+            f"{where} AND substr(year_month, 1, 4) >= ? AND substr(year_month, 1, 4) <= ?"
+        )
+        params = (day_lo[:4], day_hi[:4])
+    row = conn.execute(
+        f"""
+        SELECT substr(year_month, 1, 4) AS y, SUM(total_solar_kwh) AS tot
+        FROM monthly_history
+        WHERE {where}
+        GROUP BY y
+        ORDER BY tot DESC, y ASC
+        LIMIT 1
+        """,
+        params,
+    ).fetchone()
+    if row and row[1] is not None:
+        return (f"{row[0]}-01-01", round(float(row[1]), 1))
+    # Fallback: daily_history when monthly is empty
+    where_d = "solar_yield_kwh IS NOT NULL"
+    params_d: Tuple[object, ...] = ()
+    if day_lo is not None and day_hi is not None:
+        where_d = f"{where_d} AND substr(date, 1, 4) >= ? AND substr(date, 1, 4) <= ?"
+        params_d = (day_lo[:4], day_hi[:4])
+    row = conn.execute(
+        f"""
+        SELECT substr(date, 1, 4) AS y, SUM(solar_yield_kwh) AS tot
+        FROM daily_history
+        WHERE {where_d}
+        GROUP BY y
+        ORDER BY tot DESC, y ASC
+        LIMIT 1
+        """,
+        params_d,
+    ).fetchone()
+    if not row or row[1] is None:
+        return None
+    return (f"{row[0]}-01-01", round(float(row[1]), 1))
+
+
+def _fluvius_month_peak_candidate(
+    conn: sqlite3.Connection,
+    day_lo: Optional[str] = None,
+    day_hi: Optional[str] = None,
+) -> Optional[Tuple[str, float]]:
+    """Highest Capacity peak month. record_date is YYYY-MM-01."""
+    months = _capacity_peak_months_kw(conn)
+    if day_lo is not None and day_hi is not None:
+        lo_ym = day_lo[:7]
+        hi_ym = day_hi[:7]
+        months = {ym: kw for ym, kw in months.items() if lo_ym <= ym <= hi_ym}
+    if not months:
+        return None
+    best_ym = sorted(months.keys(), key=lambda ym: (-months[ym], ym))[0]
+    return (f"{best_ym}-01", months[best_ym])
+
+
+def _fluvius_year_avg_peak_candidate(
+    conn: sqlite3.Connection,
+    day_lo: Optional[str] = None,
+    day_hi: Optional[str] = None,
+) -> Optional[Tuple[str, float]]:
+    """Year whose monthly Capacity peaks have the highest average. record_date YYYY-01-01."""
+    months = _capacity_peak_months_kw(conn)
+    if day_lo is not None and day_hi is not None:
+        lo_y = day_lo[:4]
+        hi_y = day_hi[:4]
+        months = {ym: kw for ym, kw in months.items() if lo_y <= ym[:4] <= hi_y}
+    by_year: Dict[str, List[float]] = {}
+    for ym, kw in months.items():
+        y = ym[:4]
+        by_year.setdefault(y, []).append(kw)
+    if not by_year:
+        return None
+    ranked = sorted(
+        by_year.keys(),
+        key=lambda y: (-(sum(by_year[y]) / len(by_year[y])), y),
+    )
+    best_y = ranked[0]
+    avg = round(sum(by_year[best_y]) / len(by_year[best_y]), 3)
+    return (f"{best_y}-01-01", avg)
+
+
 def _top_record_candidate(
     conn: sqlite3.Connection,
     record_id: str,
@@ -619,6 +797,12 @@ def _top_record_candidate(
         return _peak_surge_candidate(conn, day_lo, day_hi)
     if kind == "daily" and column:
         return _daily_extreme_candidate(conn, column, direction, day_lo, day_hi)
+    if kind == "year_solar":
+        return _year_solar_candidate(conn, day_lo, day_hi)
+    if kind == "fluvius_month_peak":
+        return _fluvius_month_peak_candidate(conn, day_lo, day_hi)
+    if kind == "fluvius_year_avg_peak":
+        return _fluvius_year_avg_peak_candidate(conn, day_lo, day_hi)
     return None
 
 

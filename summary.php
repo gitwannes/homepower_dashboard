@@ -1,13 +1,15 @@
 <?php
 # --- file: summary.php ---
 /**
- * Period summaries (all-years / ISO week / month / year) from daily_history / monthly_history.
+ * Period summaries (week / month / year / all-years) from daily_history / monthly_history.
  * Prev/next arrows wrap within available data periods (not used on All years).
  * (Day mode removed: a single daily_history bar is not useful; use analytics intraday for one day.)
- * metric=grid draws grouped bars: import, export, and net (yellow). Default metric is solar yield.
+ * metric=grid: import, export, and net (yellow). metric=peak: Fluvius Capacity peak kW (A12).
+ * Default metric is solar yield. Chart order: week, month, year, then All years last.
  */
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
+require_once __DIR__ . '/capacity_peak.php';
 
 $hp = hp_boot();
 hp_require_ready($hp);
@@ -80,12 +82,24 @@ function summary_iso_week_dates(string $weekLabel): array
 }
 
 /**
- * solar or grid. Any other value stays on solar yield.
+ * solar, grid, or peak (Capacity peak). Any other value stays on solar yield.
  */
 function summary_metric(): string
 {
     $metric = isset($_GET['metric']) ? (string)$_GET['metric'] : 'solar';
-    return $metric === 'grid' ? 'grid' : 'solar';
+    if ($metric === 'grid' || $metric === 'peak') {
+        return $metric;
+    }
+    return 'solar';
+}
+
+/**
+ * All-years peak aggregation: max (default) or avg.
+ */
+function summary_peak_agg(): string
+{
+    $agg = isset($_GET['peak_agg']) ? (string)$_GET['peak_agg'] : 'max';
+    return $agg === 'avg' ? 'avg' : 'max';
 }
 
 /**
@@ -140,6 +154,9 @@ if (isset($_GET['ajax'])) {
 
         if ($action === 'meta') {
             $periods = summary_available_periods($pdo);
+            $peakMonths = capacity_peak_months_display($pdo);
+            $periods['peak_years'] = capacity_peak_years($peakMonths);
+            $periods['peak_month_count'] = count($peakMonths);
             echo json_encode($periods);
             exit;
         }
@@ -294,6 +311,37 @@ if (isset($_GET['ajax'])) {
 
         // --- All years: one bar per calendar year + flat PVGIS year baseline ---
         if ($action === 'all') {
+            if (summary_metric() === 'peak') {
+                $months = capacity_peak_months_display($pdo);
+                $agg = summary_peak_agg();
+                $payload = capacity_peak_all_years_payload($months, $agg);
+                // Y-axis always follows Max-mode bars so Average and Max share one scale.
+                $maxPayload = capacity_peak_all_years_payload($months, 'max');
+                $yMax = null;
+                foreach ($maxPayload['peaks'] as $pk) {
+                    if ($pk === null) {
+                        continue;
+                    }
+                    if ($yMax === null || $pk > $yMax) {
+                        $yMax = $pk;
+                    }
+                }
+                $live = capacity_peak_live_kw($pdo);
+                echo json_encode([
+                    'period' => 'all',
+                    'label' => 'All years',
+                    'metric' => 'peak',
+                    'peak_agg' => $agg,
+                    'categories' => $payload['categories'],
+                    'peaks' => $payload['peaks'],
+                    'years' => $payload['years'],
+                    'y_max_kw' => $yMax,
+                    'open_month' => date('Y-m'),
+                    'live_peak_kw' => $live,
+                    'unit' => 'kW',
+                ]);
+                exit;
+            }
             if (summary_metric() === 'grid') {
                 $categories = [];
                 $import = [];
@@ -417,6 +465,25 @@ if (isset($_GET['ajax'])) {
             $year = (string)$_GET['year'];
             if (!preg_match('/^\d{4}$/', $year)) {
                 echo json_encode(['error' => 'Invalid year']);
+                exit;
+            }
+            if (summary_metric() === 'peak') {
+                $months = capacity_peak_months_display($pdo);
+                $payload = capacity_peak_year_payload($months, $year);
+                $live = capacity_peak_live_kw($pdo);
+                echo json_encode([
+                    'period' => $year,
+                    'label' => $year,
+                    'metric' => 'peak',
+                    'categories' => $payload['categories'],
+                    'peaks' => $payload['peaks'],
+                    'max_kw' => $payload['max_kw'],
+                    'avg_kw' => $payload['avg_kw'],
+                    'months_with_data' => $payload['count'],
+                    'open_month' => date('Y-m'),
+                    'live_peak_kw' => $live,
+                    'unit' => 'kW',
+                ]);
                 exit;
             }
             if (summary_metric() === 'grid') {
@@ -641,6 +708,7 @@ if (isset($_GET['ajax'])) {
         <div class="metric-switch" role="group" aria-label="Summary metric">
             <button type="button" id="metric-solar" class="metric-on" aria-pressed="true" onclick="setMetric('solar')">Solar yield</button>
             <button type="button" id="metric-grid" aria-pressed="false" onclick="setMetric('grid')">Grid import / export</button>
+            <button type="button" id="metric-peak" aria-pressed="false" onclick="setMetric('peak')">Capacity peak</button>
         </div>
         <div id="bars-wrap" class="metric-switch is-hidden" role="group" aria-label="Grid bars">
             <button type="button" id="bars-all" class="metric-on" aria-pressed="true" onclick="setBars('all')">All</button>
@@ -653,20 +721,8 @@ if (isset($_GET['ajax'])) {
         No daily rollups yet. Run <code>python3 rollup.py -buildall</code> (or <code>-daily</code>) first.
     </div>
 
-    <!-- All years (multi-year overview; was on old analytics yearly tab, dropped in A3 split) -->
-    <div class="card border-t-4 border-t-indigo-500">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-            <div>
-                <h2 class="text-lg font-bold text-slate-900">All years</h2>
-                <p id="all-blurb" class="text-xs text-slate-400">Lifetime yield per calendar year vs PVGIS annual baseline</p>
-            </div>
-        </div>
-        <div id="all-stats" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3 text-sm"></div>
-        <div id="chart-all" class="w-full h-[320px]"></div>
-    </div>
-
-    <!-- Week -->
-    <div class="card border-t-4 border-t-emerald-500">
+    <!-- Week (hidden in Capacity peak mode) -->
+    <div id="card-week" class="card border-t-4 border-t-emerald-500">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
             <h2 class="text-lg font-bold text-slate-900">Week</h2>
             <div class="flex items-center gap-3">
@@ -686,8 +742,8 @@ if (isset($_GET['ajax'])) {
         <div id="chart-week" class="w-full h-[320px]"></div>
     </div>
 
-    <!-- Month -->
-    <div class="card border-t-4 border-t-teal-500">
+    <!-- Month (hidden in Capacity peak mode) -->
+    <div id="card-month" class="card border-t-4 border-t-teal-500">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
             <h2 class="text-lg font-bold text-slate-900">Month</h2>
             <div class="flex items-center gap-3">
@@ -708,7 +764,7 @@ if (isset($_GET['ajax'])) {
     </div>
 
     <!-- Year -->
-    <div class="card border-t-4 border-t-cyan-500">
+    <div id="card-year" class="card border-t-4 border-t-cyan-500">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
             <h2 class="text-lg font-bold text-slate-900">Year</h2>
             <div class="flex items-center gap-3">
@@ -728,21 +784,39 @@ if (isset($_GET['ajax'])) {
         <div id="chart-year" class="w-full h-[320px]"></div>
     </div>
 
+    <!-- All years last (every metric mode). Max/Average switch sits here in Capacity peak mode. -->
+    <div id="card-all" class="card border-t-4 border-t-indigo-500">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+            <div>
+                <h2 class="text-lg font-bold text-slate-900">All years</h2>
+                <p id="all-blurb" class="text-xs text-slate-400">Lifetime yield per calendar year vs PVGIS annual baseline</p>
+            </div>
+            <div id="peak-agg-wrap" class="metric-switch is-hidden" role="group" aria-label="Capacity peak year aggregation">
+                <button type="button" id="peak-agg-max" class="metric-on" aria-pressed="true" onclick="setPeakAgg('max')">Max</button>
+                <button type="button" id="peak-agg-avg" aria-pressed="false" onclick="setPeakAgg('avg')">Average</button>
+            </div>
+        </div>
+        <div id="all-stats" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3 text-sm"></div>
+        <div id="chart-all" class="w-full h-[320px]"></div>
+    </div>
+
 </div>
 
 <script>
     lucide.createIcons();
 
-    /** @type {{weeks: string[], months: string[], years: string[]}} */
-    let periods = { weeks: [], months: [], years: [] };
+    /** @type {{weeks: string[], months: string[], years: string[], peak_years?: string[], peak_month_count?: number}} */
+    let periods = { weeks: [], months: [], years: [], peak_years: [], peak_month_count: 0 };
     /** @type {{week: string|null, month: string|null, year: string|null}} */
     let current = { week: null, month: null, year: null };
     /** @type {{all: any, week: any, month: any, year: any}} */
     let charts = { all: null, week: null, month: null, year: null };
-    /** @type {'solar'|'grid'} */
+    /** @type {'solar'|'grid'|'peak'} */
     let metric = 'solar';
     /** @type {'all'|'registers'|'net'} */
     let bars = 'all';
+    /** @type {'max'|'avg'} */
+    let peakAgg = 'max';
     let loadGen = 0;
 
     const baseChartOptions = {
@@ -754,9 +828,123 @@ if (isset($_GET['ajax'])) {
     };
 
     function keysFor(mode) {
-        if (mode === 'week') return periods.weeks;
-        if (mode === 'month') return periods.months;
-        return periods.years;
+        if (mode === 'week') return (periods.weeks || []).map(String);
+        if (mode === 'month') return (periods.months || []).map(String);
+        if (mode === 'year' && metric === 'peak') {
+            return (Array.isArray(periods.peak_years) ? periods.peak_years : []).map(String);
+        }
+        return (periods.years || []).map(String);
+    }
+
+    /**
+     * Ensure a deep-linked year is selectable in the year nav (peak or solar/grid lists).
+     *
+     * @param {string} year
+     */
+    function ensureYearKey(year) {
+        const y = String(year);
+        if (!/^\d{4}$/.test(y)) return;
+        if (metric === 'peak') {
+            const list = Array.isArray(periods.peak_years) ? periods.peak_years.map(String) : [];
+            if (!list.includes(y)) {
+                list.push(y);
+                list.sort();
+                periods.peak_years = list;
+            }
+            return;
+        }
+        const list = Array.isArray(periods.years) ? periods.years.map(String) : [];
+        if (!list.includes(y)) {
+            list.push(y);
+            list.sort();
+            periods.years = list;
+        }
+    }
+
+    /**
+     * @param {string} ym YYYY-MM
+     */
+    function ensureMonthKey(ym) {
+        const key = String(ym);
+        if (!/^\d{4}-\d{2}$/.test(key)) return;
+        const list = Array.isArray(periods.months) ? periods.months.map(String) : [];
+        if (!list.includes(key)) {
+            list.push(key);
+            list.sort();
+            periods.months = list;
+        }
+    }
+
+    /**
+     * Monday (UTC) of ISO week YYYY-Www.
+     *
+     * @param {number} isoYear
+     * @param {number} isoWeek
+     * @returns {Date}
+     */
+    function isoWeekStartDate(isoYear, isoWeek) {
+        const d = new Date(Date.UTC(isoYear, 0, 4));
+        const dayNum = d.getUTCDay() || 7;
+        d.setUTCDate(d.getUTCDate() - dayNum + 1 + (isoWeek - 1) * 7);
+        return d;
+    }
+
+    /**
+     * @param {string} weekLabel
+     * @param {string} ym YYYY-MM
+     * @returns {boolean}
+     */
+    function weekOverlapsMonth(weekLabel, ym) {
+        const m = /^(\d{4})-W(\d{2})$/.exec(String(weekLabel));
+        if (!m) return false;
+        const start = isoWeekStartDate(Number(m[1]), Number(m[2]));
+        for (let i = 0; i < 7; i++) {
+            const day = new Date(start.getTime() + i * 86400000);
+            const key = day.getUTCFullYear() + '-' + String(day.getUTCMonth() + 1).padStart(2, '0');
+            if (key === ym) return true;
+        }
+        return false;
+    }
+
+    /**
+     * First ISO week of a calendar month: week containing day 1, else earliest
+     * available week that overlaps the month, else nearest week at or before day 1.
+     *
+     * @param {string} ym YYYY-MM
+     * @returns {string|null}
+     */
+    function firstWeekOfMonth(ym) {
+        const weeks = keysFor('week');
+        if (!weeks.length || !/^\d{4}-\d{2}$/.test(ym)) return null;
+        const y = Number(ym.slice(0, 4));
+        const mo = Number(ym.slice(5, 7));
+        const want = isoWeekKey(new Date(Date.UTC(y, mo - 1, 1)));
+        if (weeks.includes(want)) return want;
+        const overlapping = weeks.filter((w) => weekOverlapsMonth(w, ym));
+        if (overlapping.length) return overlapping[0];
+        let pick = weeks[0];
+        for (let i = 0; i < weeks.length; i++) {
+            if (weeks[i] <= want) pick = weeks[i];
+            else break;
+        }
+        return pick;
+    }
+
+    /**
+     * Deep link ?month=YYYY-MM drives month, year, and first week of that month.
+     *
+     * @param {string} ym
+     */
+    function applyMonthDeepLink(ym) {
+        const key = String(ym);
+        if (!/^\d{4}-\d{2}$/.test(key)) return;
+        ensureMonthKey(key);
+        current.month = key;
+        const year = key.slice(0, 4);
+        ensureYearKey(year);
+        current.year = year;
+        const week = firstWeekOfMonth(key);
+        if (week) current.week = week;
     }
 
     function stepSection(mode, delta) {
@@ -873,30 +1061,56 @@ if (isset($_GET['ajax'])) {
         return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 3 })} kWh`;
     }
 
+    /**
+     * @param {number|null|undefined} value
+     * @returns {string}
+     */
+    function fmtKw(value) {
+        if (value == null || Number.isNaN(Number(value))) return '-';
+        return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 3 })} kW`;
+    }
+
     function metricQuery() {
-        return metric === 'grid' ? '&metric=grid' : '';
+        if (metric === 'grid') return '&metric=grid';
+        if (metric === 'peak') {
+            const agg = peakAgg === 'avg' ? '&peak_agg=avg' : '';
+            return '&metric=peak' + agg;
+        }
+        return '';
     }
 
     function paintMetricSwitch() {
         const solarBtn = document.getElementById('metric-solar');
         const gridBtn = document.getElementById('metric-grid');
+        const peakBtn = document.getElementById('metric-peak');
         solarBtn.classList.toggle('metric-on', metric === 'solar');
         gridBtn.classList.toggle('metric-on', metric === 'grid');
+        peakBtn.classList.toggle('metric-on', metric === 'peak');
         solarBtn.setAttribute('aria-pressed', metric === 'solar' ? 'true' : 'false');
         gridBtn.setAttribute('aria-pressed', metric === 'grid' ? 'true' : 'false');
+        peakBtn.setAttribute('aria-pressed', metric === 'peak' ? 'true' : 'false');
+        document.getElementById('card-week').classList.toggle('is-hidden', metric === 'peak');
+        document.getElementById('card-month').classList.toggle('is-hidden', metric === 'peak');
         const blurb = document.getElementById('summary-blurb');
         const allBlurb = document.getElementById('all-blurb');
         const topn = document.getElementById('nav-topn');
         if (metric === 'grid') {
-            blurb.textContent = 'Import, export, and net (yellow) bars for all years, week, month, and year';
+            blurb.textContent = 'Import, export, and net (yellow) bars for week, month, year, and all years';
             allBlurb.textContent = 'Import, export, and net (yellow) per calendar year';
             topn.href = 'topn.php?metric=grid' + (bars === 'all' ? '' : '&bars=' + encodeURIComponent(bars));
+        } else if (metric === 'peak') {
+            blurb.textContent = 'Fluvius monthly Capacity peak (kW). Open month uses live P1. Year and all years only.';
+            allBlurb.textContent = peakAgg === 'avg'
+                ? 'Average monthly Capacity peak (kW) per calendar year'
+                : 'Max monthly Capacity peak (kW) per calendar year';
+            topn.href = 'topn.php?metric=peak';
         } else {
-            blurb.textContent = 'All years, week, month, and year from daily rollups';
+            blurb.textContent = 'Week, month, year, and all years from daily rollups';
             allBlurb.textContent = 'Lifetime yield per calendar year vs PVGIS annual baseline';
             topn.href = 'topn.php' + (bars === 'all' ? '' : '?bars=' + encodeURIComponent(bars));
         }
         paintBars();
+        paintPeakAgg();
     }
 
     function paintBars() {
@@ -910,12 +1124,25 @@ if (isset($_GET['ajax'])) {
         });
     }
 
+    function paintPeakAgg() {
+        const wrap = document.getElementById('peak-agg-wrap');
+        wrap.classList.toggle('is-hidden', metric !== 'peak');
+        ['max', 'avg'].forEach((id) => {
+            const btn = document.getElementById('peak-agg-' + id);
+            const on = peakAgg === id;
+            btn.classList.toggle('metric-on', on);
+            btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+    }
+
     function writeViewUrl() {
         const url = new URL(window.location.href);
-        if (metric === 'grid') url.searchParams.set('metric', 'grid');
+        if (metric === 'grid' || metric === 'peak') url.searchParams.set('metric', metric);
         else url.searchParams.delete('metric');
         if (bars === 'all') url.searchParams.delete('bars');
         else url.searchParams.set('bars', bars);
+        if (metric === 'peak' && peakAgg === 'avg') url.searchParams.set('peak_agg', 'avg');
+        else url.searchParams.delete('peak_agg');
         history.replaceState(null, '', url);
     }
 
@@ -980,6 +1207,45 @@ if (isset($_GET['ajax'])) {
         charts[chartKey].render();
     }
 
+    /**
+     * Capacity peak bars (kW). Null points stay gaps.
+     * Optional yMaxKw locks the Y scale (All years Max/Average share the Max-mode ceiling).
+     *
+     * @param {string} chartKey
+     * @param {string} hostSel
+     * @param {string[]} categories
+     * @param {Array<number|null>} peakData
+     * @param {number|null|undefined} yMaxKw
+     */
+    function setPeakBars(chartKey, hostSel, categories, peakData, yMaxKw) {
+        const host = document.querySelector(hostSel);
+        if (charts[chartKey]) { charts[chartKey].destroy(); charts[chartKey] = null; }
+        /** @type {Record<string, unknown>} */
+        const yaxis = {
+            ...baseChartOptions.yaxis,
+            min: 0,
+            title: { text: 'kW', style: { color: '#94a3b8', fontSize: '10px' } }
+        };
+        if (yMaxKw != null && Number(yMaxKw) > 0) {
+            yaxis.max = Number(yMaxKw);
+        }
+        charts[chartKey] = new ApexCharts(host, {
+            ...baseChartOptions,
+            series: [{ name: 'Capacity peak (kW)', data: peakData }],
+            chart: { ...baseChartOptions.chart, type: 'bar', height: 320, toolbar: { show: false } },
+            colors: ['#d97706'],
+            plotOptions: { bar: { borderRadius: 3, columnWidth: '72%' } },
+            xaxis: { ...baseChartOptions.xaxis, categories: categories },
+            yaxis: yaxis,
+            tooltip: {
+                y: {
+                    formatter: (val) => (val == null || Number.isNaN(Number(val)) ? '-' : fmtKw(val))
+                }
+            }
+        });
+        charts[chartKey].render();
+    }
+
     function clearChart(chartKey) {
         if (charts[chartKey]) {
             charts[chartKey].destroy();
@@ -995,7 +1261,22 @@ if (isset($_GET['ajax'])) {
             clearChart('all');
             if (metric === 'grid') {
                 renderStats('all-stats', [{ label: 'Grid', value: 'No import / export' }]);
+            } else if (metric === 'peak') {
+                renderStats('all-stats', [{ label: 'Capacity peak', value: 'No Fluvius months' }]);
             }
+            return;
+        }
+        if (metric === 'peak') {
+            const aggLabel = peakAgg === 'avg' ? 'Average' : 'Max';
+            const stats = [
+                { label: 'Years', value: String(data.years) },
+                { label: 'Aggregation', value: aggLabel }
+            ];
+            if (data.live_peak_kw != null) {
+                stats.push({ label: 'Open month (P1)', value: fmtKw(data.live_peak_kw) });
+            }
+            renderStats('all-stats', stats);
+            setPeakBars('all', '#chart-all', data.categories, data.peaks || [], data.y_max_kw);
             return;
         }
         if (metric === 'grid') {
@@ -1041,6 +1322,18 @@ if (isset($_GET['ajax'])) {
         if (ticket !== loadGen) return;
         if (data.error) return;
         document.getElementById(mode + '-label').textContent = data.label || key;
+
+        if (metric === 'peak') {
+            if (mode !== 'year') return;
+            renderStats('year-stats', [
+                { label: 'Max', value: fmtKw(data.max_kw) },
+                { label: 'Average', value: fmtKw(data.avg_kw) },
+                { label: 'Months', value: String(data.months_with_data || 0) },
+                { label: 'Open month (P1)', value: data.live_peak_kw != null ? fmtKw(data.live_peak_kw) : '-' }
+            ]);
+            setPeakBars('year', '#chart-year', data.categories || [], data.peaks || []);
+            return;
+        }
 
         if (metric === 'grid') {
             const countLabel = mode === 'year' ? 'Months' : 'Days';
@@ -1095,19 +1388,32 @@ if (isset($_GET['ajax'])) {
 
     async function reloadCharts() {
         const gen = ++loadGen;
-        await loadAllYears(gen);
-        if (gen !== loadGen) return;
-        if (current.week) await loadSection('week', gen);
-        if (gen !== loadGen) return;
-        if (current.month) await loadSection('month', gen);
-        if (gen !== loadGen) return;
+        if (metric !== 'peak') {
+            if (current.week) await loadSection('week', gen);
+            if (gen !== loadGen) return;
+            if (current.month) await loadSection('month', gen);
+            if (gen !== loadGen) return;
+        }
         if (current.year) await loadSection('year', gen);
+        if (gen !== loadGen) return;
+        await loadAllYears(gen);
     }
 
     function setMetric(next) {
-        const chosen = next === 'grid' ? 'grid' : 'solar';
+        const chosen = next === 'grid' || next === 'peak' ? next : 'solar';
         if (chosen === metric) return;
         metric = chosen;
+        if (metric === 'peak') {
+            const py = Array.isArray(periods.peak_years) ? periods.peak_years : [];
+            if (py.length) {
+                const want = String(new Date().getFullYear());
+                current.year = py.includes(want) ? want : py[py.length - 1];
+            } else {
+                current.year = null;
+            }
+        } else if (!current.year && periods.years.length) {
+            current.year = periods.years[periods.years.length - 1];
+        }
         writeViewUrl();
         paintMetricSwitch();
         reloadCharts();
@@ -1122,38 +1428,73 @@ if (isset($_GET['ajax'])) {
         reloadCharts();
     }
 
+    function setPeakAgg(next) {
+        const chosen = next === 'avg' ? 'avg' : 'max';
+        if (chosen === peakAgg) return;
+        peakAgg = chosen;
+        writeViewUrl();
+        paintPeakAgg();
+        const allBlurb = document.getElementById('all-blurb');
+        if (metric === 'peak') {
+            allBlurb.textContent = peakAgg === 'avg'
+                ? 'Average monthly Capacity peak (kW) per calendar year'
+                : 'Max monthly Capacity peak (kW) per calendar year';
+        }
+        const gen = ++loadGen;
+        loadAllYears(gen);
+    }
+
     document.addEventListener('DOMContentLoaded', async () => {
         const params0 = new URLSearchParams(window.location.search);
-        metric = params0.get('metric') === 'grid' ? 'grid' : 'solar';
+        const m0 = params0.get('metric');
+        metric = m0 === 'grid' || m0 === 'peak' ? m0 : 'solar';
         const bars0 = params0.get('bars');
         bars = bars0 === 'registers' || bars0 === 'net' ? bars0 : 'all';
+        peakAgg = params0.get('peak_agg') === 'avg' ? 'avg' : 'max';
         paintMetricSwitch();
         const res = await fetch('summary.php?ajax=meta');
         periods = await res.json();
-        if (periods.error || (!periods.weeks.length && !periods.months.length && !periods.years.length)) {
+        const hasRollups = !periods.error
+            && ((periods.weeks || []).length || (periods.months || []).length || (periods.years || []).length);
+        const hasPeak = (periods.peak_month_count || 0) > 0
+            || (Array.isArray(periods.peak_years) && periods.peak_years.length > 0);
+        if (metric === 'peak') {
+            if (!hasPeak) {
+                const warn = document.getElementById('summary-warning');
+                warn.innerHTML = 'No Fluvius Capacity peak months yet. Import a <code>piekvermogen</code> CSV (electricity EAN on Settings).';
+                warn.classList.remove('hidden');
+            }
+        } else if (!hasRollups) {
             document.getElementById('summary-warning').classList.remove('hidden');
             lucide.createIcons();
             return;
         }
         current.week = periods.weeks.length ? periods.weeks[periods.weeks.length - 1] : null;
         current.month = periods.months.length ? periods.months[periods.months.length - 1] : null;
-        current.year = periods.years.length ? periods.years[periods.years.length - 1] : null;
+        if (metric === 'peak') {
+            const py = Array.isArray(periods.peak_years) ? periods.peak_years : [];
+            current.year = py.length ? py[py.length - 1] : null;
+        } else {
+            current.year = periods.years.length ? periods.years[periods.years.length - 1] : null;
+        }
 
-        // Deep link from topn.php: ?month=YYYY-MM or ?year=YYYY
+        // Deep link: ?month=YYYY-MM sets week (1st of month) + month + year; ?year=YYYY sets year
         const params = new URLSearchParams(window.location.search);
         const qMonth = params.get('month');
         const qYear = params.get('year');
-        if (qMonth && periods.months.includes(qMonth)) {
-            current.month = qMonth;
-        }
-        if (qYear && periods.years.includes(qYear)) {
-            current.year = qYear;
+        if (qMonth && /^\d{4}-\d{2}$/.test(String(qMonth))) {
+            applyMonthDeepLink(String(qMonth));
+        } else if (qYear && /^\d{4}$/.test(String(qYear))) {
+            ensureYearKey(String(qYear));
+            current.year = String(qYear);
         }
 
         await reloadCharts();
 
         if (qMonth || qYear) {
-            const el = document.getElementById(qMonth ? 'chart-month' : 'chart-year');
+            const el = document.getElementById(
+                metric === 'peak' ? 'chart-year' : (qMonth ? 'chart-month' : 'chart-year')
+            );
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
         lucide.createIcons();

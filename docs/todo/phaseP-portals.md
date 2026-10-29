@@ -1,9 +1,9 @@
 # --- file: docs/todo/phaseP-portals.md ---
 # Phase P — Cloud / utility portal ingest
 
-**Status:** P3 Done. P2 closed as P1 duplicate. P1 **coding** 2026-10-27 (pull CLI + rollup wire + `.env` cleanup shipped; non-PV map after `-probe`).  
-**Last updated:** 2026-10-27 (P1 implement)  
-**Product pointers:** [`docs/architecture.md`](../architecture.md) · `logger.py` (local SMA/WebBox already — **not** this track)
+**Status:** **Done** (P1–P3). Ready for offline archive — operator moves this file.  
+**Last updated:** 2026-10-28 (P1 close)  
+**Product pointers:** [`docs/architecture.md`](../architecture.md) · [`docs/power-notes.md`](../power-notes.md) · [`docs/deploy.md`](../deploy.md)
 
 ---
 
@@ -17,13 +17,11 @@ Pull historical / periodic data from **cloud or utility portals** into the wareh
 
 | Id | Status | What |
 |---|---|---|
-| **P1** | coding | Sunny Portal / ennexOS cloud ingest (same as former P2) |
+| **P1** | Done | Sunny Portal / ennexOS PV pull + rollup empty-fill — **2026-10-28** |
 | **P2** | Done | Duplicate of P1 — closed 2026-10-27 |
-| **P3** | Done | Fluvius manual CSV into `fluvius_interval`. Product: [`docs/architecture.md`](../architecture.md) |
+| **P3** | Done | Fluvius manual CSV into `fluvius_interval` — **2026-10-26** |
 
-**Source / auth:** ennexOS via unpaid portal login (paid Monitoring API out). **Target tables / channel map:** see P1 locks; non-PV column map still open.
-
-**Depends on:** none across P1–P3 (P2 closed; P3 Done).
+**Product:** [`docs/architecture.md`](../architecture.md) (portal + Fluvius paragraphs, Rollup CLI).
 
 ---
 
@@ -133,12 +131,20 @@ Pull historical / periodic data from **cloud or utility portals** into the wareh
 > non-PV map after -probe: we 'll get to that once I do the probe
 > implement
 
+### 2026-10-28 — close
+
+> close phase
+
 ---
 
 ## P1 — Sunny Portal / ennexOS
 
-**Status:** coding 2026-10-27 — PV pull + empty-fill shipped; non-PV map waits on `-probe`  
+**Status:** **Done** 2026-10-28 (PV ship; non-PV after `-probe` out until re-triaged)  
 **Scope:** historical (+ on-demand gap) ingest from Sunny Portal powered by ennexOS (`https://ennexos.sunnyportal.com`; `https://portal.sma.energy/login` forwards there). Same surface as former **P2**. Live PV / grid / home stay on the P1 logger. Paid Monitoring API out. There is **one** portal, not two.
+
+### Done summary
+
+`sunnyportal_pull.py` (`-pullall` / `-lastdays -n` / `-probe`) writes never-purged `sunnyportal_pv_5min` from Settings credentials. `rollup.py -buildall` / `-daily` / `-buildallsunnyportal` empty-fill `history_5min.solar_power_w` only (new rows `data_source` `sunnyportal`). Dead `.env`→settings importers removed. Sofie portable ATTACH migration done. Product text: [`docs/architecture.md`](../architecture.md) · [`docs/power-notes.md`](../power-notes.md).
 
 ### Locks (operator 2026-10-27)
 
@@ -182,7 +188,7 @@ Same pattern as Fluvius: never-purged SoT table → rollup **reads** it → empt
 
 **`-daily` (locked):** after readings downsample, also empty-fill solar from `sunnyportal_pv_5min` for the same recent calendar span as the Fluvius stitch (last 2 local days), so `-lastdays` staging shows up without a full `-buildall`.
 
-**`-purge_derived`:** keep `sunnyportal_pv_5min` (add to the never-purged source list next to WebBox + Fluvius when coding).
+**`-purge_derived`:** keep `sunnyportal_pv_5min` (never-purged source next to WebBox + Fluvius).
 
 ### Sofie portable file → `meter_history.db` (now)
 
@@ -284,31 +290,7 @@ Night zeros that the API returns are real zeros. Missing stamps stay missing. Th
 
 **Hard constraint:** portal samples that only land in `history_5min` and not in never-purged staging are lost on `-buildall` / `-purge_derived`. Same pattern as WebBox staging and `fluvius_interval`.
 
-### Shipped in this implement (2026-10-27)
-
-- Removed dead `.env`→`app_settings` importers (`site_config.py`, `site_settings.php`, call sites).
-- `sunnyportal_pull.py`: `-pullall` / `-lastdays -n` / `-probe`; default = usage; writes `sunnyportal_pv_5min` on live DB (WAL).
-- `rollup.py -buildall` / `-daily`: empty-fill `solar_power_w` from staging (preferred component by row count); new rows `data_source` `sunnyportal`.
-- Docs: architecture, deploy, power-notes, pipeline, this file, cursor rule.
-
-### Still open
-
-1. **Non-PV channel map** — run `python3.14 sunnyportal_pull.py -probe`, then lock what (if anything) besides PV enters the warehouse.
-2. Operator smoke: `-lastdays -n 1` or `-pullall` resume, then `-daily` or `-buildall` and confirm empty solar slots fill.
-
-### Sofie note
-
-Portable ATTACH already done. Future pulls: `python3.14 sunnyportal_pull.py -pullall` or `-lastdays -n N` on the host (same DB as the dashboard).
-
-Merge staging into `history_5min` without a full rebuild:
-
-```bash
-python3.14 rollup.py -buildallsunnyportal
-```
-
-Prints staging component, 5-min written (inserted/updated/skipped), first and last written stamp.
-
-### 2026-10-27 — buildallsunnyportal
+### Verbatim — 2026-10-27 (buildallsunnyportal)
 
 > add a rollup -buildallsunnyportal -- which will only execute the last step : merge sunnyportal into the 5min table
 > add summary when tool ends: how many records (5min?) were imported into the 5min - which was the first? the last? etc
@@ -339,7 +321,7 @@ Manual CSV only, into `fluvius_interval`, for the electricity and gas EANs on th
 
 - Fluvius portal script (step 2).
 - Drawing the quarters (**A5**).
-- Pages for historical gas and the monthly peak (**A11**, **A12**).
+- Pages for historical gas / wind (**A11**). Capacity peak UI (**A12** Done).
 
 ### Verbatim — 2026-10-26 (close)
 
@@ -379,8 +361,9 @@ The 30-minute hole was dropped from the fall-out test. A long hole is stitched q
 
 ## Out of scope (until re-triaged)
 
+- **Non-PV channel map** after `sunnyportal_pull.py -probe` (P1 lock 5 / workstream C) — re-triage when the operator runs probe
 - Changing local `logger.py` SMA / WebBox poll behaviour
 - Replacing WebBox ZIP / `sql_importer` archive path without an explicit kickoff lock
 - Fluvius portal script (P3 step 2)
-- Drawing Fluvius quarters on the day chart (**A5**)
-- Pages for historical gas, wind, and the monthly peak (**A11**, **A12**)
+- Drawing Fluvius quarters on the day chart (**A5** — shipped separately)
+- Pages for historical gas / wind (**A11**). Capacity peak UI (**A12** Done).

@@ -39,11 +39,12 @@ Never put real LAN IPs or site nicknames in committed files.
 | `index.php` | Live dashboard. 2-hour pulse; Exchange / Balance / Classic (Exchange default) |
 | `settings.php` | Admin password, site configuration, encrypted DB backup/restore, 1-min CSV download |
 | `analytics.php` | Explorer (window+pan, mixed 1/5-min, Exchange default), two-day compare, clear-sky envelope |
-| `summary.php` | All years / week / month / year. Solar yield (default) or grid import, export, and net |
-| `topn.php` | Best/worst solar yield, or highest net import / net export. Click-through to the period view |
+| `summary.php` | Week / month / year / All years (last). Solar yield (default), grid import/export/net, or Capacity peak |
+| `topn.php` | Best/worst solar yield, grid net ranks, or highest Capacity peak months; metric-filtered all-time records |
 | `importer.py` / `import_dashboard.php` | WebBox Mean XML and daily archives → staging tables |
 | `fluvius_import.py` | Fluvius CSV in `import_queue/fluvius/` → `fluvius_interval` (Settings EANs only) |
-| `rollup.py` | Warehouse: `-consolidate`, nightly `-daily`, rare `-buildall` (includes Fluvius electricity backfill) |
+| `sunnyportal_pull.py` | ennexOS PV → `sunnyportal_pv_5min` (`-pullall` / `-lastdays` / `-probe`) |
+| `rollup.py` | Warehouse: `-consolidate`, nightly `-daily`, rare `-buildall` (Sunny Portal solar empty-fill + Fluvius electricity) |
 | `powertests.py` / `powertests.php` | Live hardware probes |
 
 ## Docs

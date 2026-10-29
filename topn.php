@@ -4,30 +4,36 @@
  * Top-N rankings + all-time records (A7).
  * Solar (default): best/worst yield from top_periods. Click -> analytics day or summary month/year.
  * Grid (metric=grid): highest net import and highest net export from daily_history / monthly_history.
+ * Capacity peak (metric=peak): highest 10 Fluvius monthly peaks (A12); open month may use live P1.
  * Net import is import minus export. Net export is export minus import.
  * The local day still in progress is left out of both day ranks.
  * A grid day click opens that month on summary, because the analytics day chart stays solar.
+ * A peak month click opens that year on summary in Capacity peak mode.
  * All-time singles from top_records sit above the charts; each dated row links to analytics that day.
  * Sensorbox / self-consumption rows are omitted when absent from the table.
  */
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
+require_once __DIR__ . '/capacity_peak.php';
 
 $hp = hp_boot();
 hp_require_ready($hp);
 $dbFile = $hp['db'];
 
 /**
- * solar or grid. Any other value stays on solar yield.
+ * solar, grid, or peak. Any other value stays on solar yield.
  */
 function topn_metric(): string
 {
     $metric = isset($_GET['metric']) ? (string)$_GET['metric'] : 'solar';
-    return $metric === 'grid' ? 'grid' : 'solar';
+    if ($metric === 'grid' || $metric === 'peak') {
+        return $metric;
+    }
+    return 'solar';
 }
 
 /**
- * Display order for all-time singles (A7). Rows missing from the DB are skipped in the UI.
+ * Display order for all-time singles (A7 / A12). Rows missing from the DB are skipped.
  *
  * @return list<string>
  */
@@ -35,9 +41,12 @@ function topn_record_order(): array
 {
     return [
         'best_day_kwh',
+        'best_year_kwh',
         'peak_surge_w',
         'max_sun_hours',
         'best_self_consumption_kwh',
+        'max_capacity_peak_kw',
+        'best_year_avg_capacity_peak_kw',
         'max_wind_ms',
         'max_temp_c',
         'min_temp_c',
@@ -46,9 +55,46 @@ function topn_record_order(): array
 }
 
 /**
+ * Metric bucket for each record_id. wind is A11 (hidden until that mode exists).
+ *
+ * @return array<string, 'yield'|'peak'|'wind'|'grid'>
+ */
+function topn_record_modes(): array
+{
+    return [
+        'best_day_kwh' => 'yield',
+        'best_year_kwh' => 'yield',
+        'peak_surge_w' => 'yield',
+        'max_sun_hours' => 'yield',
+        'best_self_consumption_kwh' => 'yield',
+        'max_capacity_peak_kw' => 'peak',
+        'best_year_avg_capacity_peak_kw' => 'peak',
+        'max_wind_ms' => 'wind',
+        'max_temp_c' => 'wind',
+        'min_temp_c' => 'wind',
+        'max_module_temp_c' => 'wind',
+    ];
+}
+
+/**
+ * UI metric (solar/grid/peak) -> record mode. solar maps to yield.
+ */
+function topn_record_mode_for_metric(string $metric): ?string
+{
+    if ($metric === 'solar') {
+        return 'yield';
+    }
+    if ($metric === 'peak') {
+        return 'peak';
+    }
+    // grid: no all-time singles yet. wind: A11.
+    return null;
+}
+
+/**
  * @return list<array{record_id: string, record_value: float, record_date: string, description: string}>
  */
-function topn_records(PDO $pdo): array
+function topn_records(PDO $pdo, ?string $modeFilter = null): array
 {
     $byId = [];
     try {
@@ -69,11 +115,77 @@ function topn_records(PDO $pdo): array
     } catch (Exception $e) {
         throw $e;
     }
+    // Open-month P1 may beat a stored Fluvius Capacity peak month without a rollup run.
+    $months = capacity_peak_months_display($pdo);
+    if (count($months) > 0) {
+        $bestYm = null;
+        $bestKw = null;
+        foreach ($months as $ym => $kw) {
+            if ($bestKw === null || $kw > $bestKw || ($kw === $bestKw && ($bestYm === null || $ym < $bestYm))) {
+                $bestYm = $ym;
+                $bestKw = $kw;
+            }
+        }
+        if ($bestYm !== null && $bestKw !== null) {
+            $id = 'max_capacity_peak_kw';
+            $stored = $byId[$id]['record_value'] ?? null;
+            if ($stored === null || $bestKw > $stored) {
+                $byId[$id] = [
+                    'record_id' => $id,
+                    'record_value' => $bestKw,
+                    'record_date' => $bestYm . '-01',
+                    'description' => 'Highest Capacity peak month (kW)',
+                ];
+            }
+        }
+        $byYear = [];
+        foreach ($months as $ym => $kw) {
+            $y = substr($ym, 0, 4);
+            if ($y === '') {
+                continue;
+            }
+            if (!isset($byYear[$y])) {
+                $byYear[$y] = [];
+            }
+            $byYear[$y][] = $kw;
+        }
+        $bestY = null;
+        $bestAvg = null;
+        foreach ($byYear as $y => $vals) {
+            if (count($vals) === 0) {
+                continue;
+            }
+            $avg = array_sum($vals) / count($vals);
+            if ($bestAvg === null || $avg > $bestAvg || ($avg === $bestAvg && ($bestY === null || $y < $bestY))) {
+                $bestY = $y;
+                $bestAvg = $avg;
+            }
+        }
+        if ($bestY !== null && $bestAvg !== null) {
+            $id = 'best_year_avg_capacity_peak_kw';
+            $stored = $byId[$id]['record_value'] ?? null;
+            $avgR = round($bestAvg, 3);
+            if ($stored === null || $avgR > $stored) {
+                $byId[$id] = [
+                    'record_id' => $id,
+                    'record_value' => $avgR,
+                    'record_date' => $bestY . '-01-01',
+                    'description' => 'Year with highest average Capacity peak (kW)',
+                ];
+            }
+        }
+    }
+    $modes = topn_record_modes();
     $out = [];
     foreach (topn_record_order() as $id) {
-        if (isset($byId[$id])) {
-            $out[] = $byId[$id];
+        if (!isset($byId[$id])) {
+            continue;
         }
+        $mode = $modes[$id] ?? null;
+        if ($modeFilter !== null && $mode !== $modeFilter) {
+            continue;
+        }
+        $out[] = $byId[$id];
     }
     return $out;
 }
@@ -208,8 +320,9 @@ if (isset($_GET['ajax'])) {
         $action = $_GET['ajax'];
 
         if ($action === 'records') {
+            $modeFilter = topn_record_mode_for_metric(topn_metric());
             try {
-                $records = topn_records($pdo);
+                $records = $modeFilter === null ? [] : topn_records($pdo, $modeFilter);
             } catch (Exception $e) {
                 echo json_encode([
                     'error' => 'top_records missing - run: python3 rollup.py -buildalltoprecords',
@@ -217,7 +330,13 @@ if (isset($_GET['ajax'])) {
                 ]);
                 exit;
             }
-            echo json_encode(['ok' => true, 'count' => count($records), 'records' => $records]);
+            echo json_encode([
+                'ok' => true,
+                'metric' => topn_metric(),
+                'mode' => $modeFilter,
+                'count' => count($records),
+                'records' => $records,
+            ]);
             exit;
         }
 
@@ -238,6 +357,22 @@ if (isset($_GET['ajax'])) {
                 }
             }
             echo json_encode(['ok' => true, 'metric' => 'grid', 'filled' => $filled, 'lists' => $lists]);
+            exit;
+        }
+
+        if ($action === 'lists' && topn_metric() === 'peak') {
+            $months = capacity_peak_months_display($pdo);
+            $list = capacity_peak_top_months($months, 10);
+            echo json_encode([
+                'ok' => true,
+                'metric' => 'peak',
+                'filled' => count($list),
+                'lists' => [
+                    'month' => ['best' => $list],
+                ],
+                'live_peak_kw' => capacity_peak_live_kw($pdo),
+                'open_month' => date('Y-m'),
+            ]);
             exit;
         }
 
@@ -362,6 +497,7 @@ if (isset($_GET['ajax'])) {
         <div class="metric-switch" role="group" aria-label="Ranking metric">
             <button type="button" id="metric-solar" class="metric-on" aria-pressed="true" onclick="setMetric('solar')">Solar yield</button>
             <button type="button" id="metric-grid" aria-pressed="false" onclick="setMetric('grid')">Grid import / export</button>
+            <button type="button" id="metric-peak" aria-pressed="false" onclick="setMetric('peak')">Capacity peak</button>
         </div>
         <div id="bars-wrap" class="metric-switch is-hidden" role="group" aria-label="Grid bars">
             <button type="button" id="bars-all" class="metric-on" aria-pressed="true" onclick="setBars('all')">All</button>
@@ -376,7 +512,7 @@ if (isset($_GET['ajax'])) {
 
     <div id="records-card" class="card border-t-4 border-t-amber-500">
         <h2 class="text-lg font-bold text-slate-900 mb-1">All-time records</h2>
-        <p class="text-xs text-slate-400 mb-3">Click a row to open that day in Analytics. Wind, ambient, module, and self-consumption appear only when data exists.</p>
+        <p id="records-blurb" class="text-xs text-slate-400 mb-3">Records for the selected metric. Yield rows open Analytics or Summary; Capacity peak rows open Summary.</p>
         <div id="records-warning" class="hidden text-xs text-amber-600 bg-amber-50 border border-amber-200 p-3 rounded-xl mb-3">
             No all-time records yet. Run <code>python3 rollup.py -buildalltoprecords</code> (or <code>-buildall</code> / <code>-daily</code>).
         </div>
@@ -395,32 +531,32 @@ if (isset($_GET['ajax'])) {
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div class="card border-t-4 border-t-emerald-500">
+        <div id="card-day-best" class="card border-t-4 border-t-emerald-500">
             <h2 id="title-day-best" class="text-lg font-bold text-slate-900 mb-1">Best days</h2>
             <p id="sub-day-best" class="text-xs text-slate-400 mb-3">Top 20 by solar yield (kWh)</p>
             <div id="chart-day-best" class="w-full"></div>
         </div>
-        <div class="card border-t-4 border-t-rose-500">
+        <div id="card-day-worst" class="card border-t-4 border-t-rose-500">
             <h2 id="title-day-worst" class="text-lg font-bold text-slate-900 mb-1">Worst days</h2>
             <p id="sub-day-worst" class="text-xs text-slate-400 mb-3">Bottom 20 by solar yield (kWh); no-production days and today excluded</p>
             <div id="chart-day-worst" class="w-full"></div>
         </div>
-        <div class="card border-t-4 border-t-teal-500">
+        <div id="card-month-best" class="card border-t-4 border-t-teal-500">
             <h2 id="title-month-best" class="text-lg font-bold text-slate-900 mb-1">Best months</h2>
             <p id="sub-month-best" class="text-xs text-slate-400 mb-3">Top 10 by solar yield (kWh)</p>
             <div id="chart-month-best" class="w-full"></div>
         </div>
-        <div class="card border-t-4 border-t-orange-500">
+        <div id="card-month-worst" class="card border-t-4 border-t-orange-500">
             <h2 id="title-month-worst" class="text-lg font-bold text-slate-900 mb-1">Worst months</h2>
             <p id="sub-month-worst" class="text-xs text-slate-400 mb-3">Bottom 10 by solar yield (kWh)</p>
             <div id="chart-month-worst" class="w-full"></div>
         </div>
-        <div class="card border-t-4 border-t-indigo-500">
+        <div id="card-year-best" class="card border-t-4 border-t-indigo-500">
             <h2 id="title-year-best" class="text-lg font-bold text-slate-900 mb-1">Best years</h2>
             <p id="sub-year-best" class="text-xs text-slate-400 mb-3">Top 10 by solar yield (kWh)</p>
             <div id="chart-year-best" class="w-full"></div>
         </div>
-        <div class="card border-t-4 border-t-slate-500">
+        <div id="card-year-worst" class="card border-t-4 border-t-slate-500">
             <h2 id="title-year-worst" class="text-lg font-bold text-slate-900 mb-1">Worst years</h2>
             <p id="sub-year-worst" class="text-xs text-slate-400 mb-3">Bottom 10 by solar yield (kWh)</p>
             <div id="chart-year-worst" class="w-full"></div>
@@ -434,7 +570,7 @@ if (isset($_GET['ajax'])) {
 
     /** @type {Record<string, any>} */
     const charts = {};
-    /** @type {'solar'|'grid'} */
+    /** @type {'solar'|'grid'|'peak'} */
     let metric = 'solar';
     /** @type {'all'|'registers'|'net'} */
     let bars = 'all';
@@ -450,6 +586,9 @@ if (isset($_GET['ajax'])) {
         if (recordId === 'peak_surge_w') {
             return `${Math.round(n).toLocaleString()} W`;
         }
+        if (recordId === 'max_capacity_peak_kw' || recordId === 'best_year_avg_capacity_peak_kw') {
+            return `${n.toLocaleString(undefined, { maximumFractionDigits: 3 })} kW`;
+        }
         if (recordId === 'max_wind_ms') {
             return `${n.toLocaleString(undefined, { maximumFractionDigits: 1 })} m/s`;
         }
@@ -463,13 +602,67 @@ if (isset($_GET['ajax'])) {
     }
 
     /**
+     * Month records show YYYY-MM; year records show YYYY; day records stay YYYY-MM-DD.
+     *
+     * @param {string} recordId
+     * @param {string} recordDate
+     * @returns {string}
+     */
+    function formatRecordDate(recordId, recordDate) {
+        const d = String(recordDate || '');
+        if (recordId === 'max_capacity_peak_kw') {
+            return d.length >= 7 ? d.slice(0, 7) : d;
+        }
+        if (recordId === 'best_year_avg_capacity_peak_kw' || recordId === 'best_year_kwh') {
+            return d.length >= 4 ? d.slice(0, 4) : d;
+        }
+        return d;
+    }
+
+    /**
+     * @param {string} recordId
+     * @param {string} recordDate
+     */
+    function openRecord(recordId, recordDate) {
+        if (recordId === 'max_capacity_peak_kw') {
+            const ym = String(recordDate).slice(0, 7);
+            const year = ym.slice(0, 4);
+            window.location.href = 'summary.php?metric=peak&year=' + encodeURIComponent(year)
+                + '&month=' + encodeURIComponent(ym);
+            return;
+        }
+        if (recordId === 'best_year_avg_capacity_peak_kw' || recordId === 'best_year_kwh') {
+            const year = String(recordDate).slice(0, 4);
+            const metricPart = recordId === 'best_year_kwh' ? '' : 'metric=peak&';
+            window.location.href = 'summary.php?' + metricPart + 'year=' + encodeURIComponent(year);
+            return;
+        }
+        window.location.href = 'analytics.php?date=' + encodeURIComponent(recordDate);
+    }
+
+    /**
      * @param {Array<{record_id: string, record_value: number, record_date: string, description: string}>} rows
      */
     function renderRecords(rows) {
+        const card = document.getElementById('records-card');
         const body = document.getElementById('records-body');
         const warn = document.getElementById('records-warning');
+        const blurb = document.getElementById('records-blurb');
         body.innerHTML = '';
+        if (metric === 'grid') {
+            card.classList.add('is-hidden');
+            return;
+        }
+        card.classList.remove('is-hidden');
+        if (metric === 'peak') {
+            blurb.textContent = 'Capacity peak records from Fluvius (open month may use live P1). Click a row to open Summary.';
+        } else {
+            blurb.textContent = 'Yield records for Solar mode. Day rows open Analytics; year generation opens Summary. Wind / temperature records wait for A11.';
+        }
         if (!rows || !rows.length) {
+            warn.textContent = metric === 'peak'
+                ? 'No Capacity peak records yet. Import piekvermogen CSV, then run python3 rollup.py -buildalltoprecords.'
+                : 'No yield records yet. Run python3 rollup.py -buildalltoprecords (or -buildall / -daily).';
             warn.classList.remove('hidden');
             return;
         }
@@ -477,15 +670,16 @@ if (isset($_GET['ajax'])) {
         rows.forEach((row) => {
             const tr = document.createElement('tr');
             tr.className = 'cursor-pointer hover:bg-amber-50/60 transition-colors';
-            tr.title = 'Open ' + row.record_date + ' in Analytics';
+            const dateLabel = formatRecordDate(row.record_id, row.record_date);
+            tr.title = 'Open ' + dateLabel;
             tr.addEventListener('click', () => {
-                window.location.href = 'analytics.php?date=' + encodeURIComponent(row.record_date);
+                openRecord(row.record_id, row.record_date);
             });
             const label = row.description || row.record_id;
             tr.innerHTML =
                 '<td class="py-2.5 pr-3 text-slate-800 font-medium">' + label + '</td>' +
                 '<td class="py-2.5 pr-3 font-mono text-slate-700">' + formatRecordValue(row.record_id, row.record_value) + '</td>' +
-                '<td class="py-2.5 font-mono text-indigo-600 underline-offset-2 hover:underline">' + row.record_date + '</td>';
+                '<td class="py-2.5 font-mono text-indigo-600 underline-offset-2 hover:underline">' + dateLabel + '</td>';
             body.appendChild(tr);
         });
     }
@@ -493,9 +687,13 @@ if (isset($_GET['ajax'])) {
     async function loadRecords() {
         const warn = document.getElementById('records-warning');
         try {
-            const res = await fetch('topn.php?ajax=records');
+            let q = 'topn.php?ajax=records';
+            if (metric === 'grid') q += '&metric=grid';
+            if (metric === 'peak') q += '&metric=peak';
+            const res = await fetch(q);
             const data = await res.json();
             if (data.error) {
+                document.getElementById('records-card').classList.remove('is-hidden');
                 warn.textContent = data.error;
                 warn.classList.remove('hidden');
                 document.getElementById('records-body').innerHTML = '';
@@ -503,6 +701,7 @@ if (isset($_GET['ajax'])) {
             }
             renderRecords(data.records || []);
         } catch (e) {
+            document.getElementById('records-card').classList.remove('is-hidden');
             warn.textContent = 'Failed to load all-time records.';
             warn.classList.remove('hidden');
             document.getElementById('records-body').innerHTML = '';
@@ -514,6 +713,14 @@ if (isset($_GET['ajax'])) {
      * @param {string} periodKey
      */
     function openPeriod(grain, periodKey) {
+        if (metric === 'peak') {
+            if (grain === 'month') {
+                const year = String(periodKey).slice(0, 4);
+                window.location.href = 'summary.php?metric=peak&year=' + encodeURIComponent(year)
+                    + '&month=' + encodeURIComponent(periodKey);
+            }
+            return;
+        }
         if (metric === 'grid') {
             const barsPart = bars === 'all' ? '' : '&bars=' + encodeURIComponent(bars);
             if (grain === 'day') {
@@ -544,11 +751,15 @@ if (isset($_GET['ajax'])) {
     }
 
     /**
-     * @param {Array<{period_key: string, yield_kwh?: number, net_kwh?: number}>} rows
+     * @param {Array<{period_key: string, yield_kwh?: number, net_kwh?: number, peak_kw?: number}>} rows
      * @returns {number[]}
      */
     function rowValues(rows) {
-        return rows.map((r) => (r.net_kwh != null ? r.net_kwh : r.yield_kwh));
+        return rows.map((r) => {
+            if (r.peak_kw != null) return r.peak_kw;
+            if (r.net_kwh != null) return r.net_kwh;
+            return r.yield_kwh;
+        });
     }
 
     /**
@@ -607,7 +818,11 @@ if (isset($_GET['ajax'])) {
             },
             grid: { borderColor: '#f1f5f9', strokeDashArray: 4 },
             tooltip: {
-                y: { formatter: (v) => `${Number(v).toLocaleString(undefined, { maximumFractionDigits: 3 })} kWh` }
+                y: {
+                    formatter: (v) => metric === 'peak'
+                        ? `${Number(v).toLocaleString(undefined, { maximumFractionDigits: 3 })} kW`
+                        : `${Number(v).toLocaleString(undefined, { maximumFractionDigits: 3 })} kWh`
+                }
             }
         });
         charts[hostId].render();
@@ -689,36 +904,58 @@ if (isset($_GET['ajax'])) {
         charts[hostId].render();
     }
 
+    function paintPeakCards() {
+        const peakOnly = metric === 'peak';
+        document.getElementById('card-day-best').classList.toggle('is-hidden', peakOnly);
+        document.getElementById('card-day-worst').classList.toggle('is-hidden', peakOnly);
+        document.getElementById('card-month-worst').classList.toggle('is-hidden', peakOnly);
+        document.getElementById('card-year-best').classList.toggle('is-hidden', peakOnly);
+        document.getElementById('card-year-worst').classList.toggle('is-hidden', peakOnly);
+        document.getElementById('card-month-best').classList.toggle('lg:col-span-2', peakOnly);
+    }
+
     function paintCopy() {
         const solarBtn = document.getElementById('metric-solar');
         const gridBtn = document.getElementById('metric-grid');
+        const peakBtn = document.getElementById('metric-peak');
         solarBtn.classList.toggle('metric-on', metric === 'solar');
         gridBtn.classList.toggle('metric-on', metric === 'grid');
+        peakBtn.classList.toggle('metric-on', metric === 'peak');
         solarBtn.setAttribute('aria-pressed', metric === 'solar' ? 'true' : 'false');
         gridBtn.setAttribute('aria-pressed', metric === 'grid' ? 'true' : 'false');
+        peakBtn.setAttribute('aria-pressed', metric === 'peak' ? 'true' : 'false');
         paintBars();
+        paintPeakCards();
         const summary = document.getElementById('nav-summary');
         const barsPart = bars === 'all' ? '' : '&bars=' + encodeURIComponent(bars);
+        if (metric === 'peak') {
+            document.getElementById('topn-title').textContent = 'Capacity peak rankings';
+            document.getElementById('topn-blurb').textContent = 'Highest 10 monthly Fluvius Capacity peaks (kW). Open month uses live P1 when available. Click a bar to open that year on Summary.';
+            summary.href = 'summary.php?metric=peak';
+            document.getElementById('title-month-best').textContent = 'Highest Capacity peak months';
+            document.getElementById('sub-month-best').textContent = 'Top 10 by monthly peak (kW). Open month may show live P1.';
+            return;
+        }
         if (metric === 'grid') {
             document.getElementById('topn-title').textContent = 'Grid net rankings';
-            document.getElementById('topn-blurb').textContent = 'Highest net import and net export — days (20), months (10), years (10). Today is excluded. Click a bar to open that period.';
+            document.getElementById('topn-blurb').textContent = 'Highest net import and net export - days (20), months (10), years (10). Today is excluded. Click a bar to open that period.';
             summary.href = 'summary.php?metric=grid' + barsPart;
             document.getElementById('title-day-best').textContent = 'Highest net import days';
-            document.getElementById('sub-day-best').textContent = 'Top 20 by import − export. Bars: import, export, net (yellow). Today excluded.';
+            document.getElementById('sub-day-best').textContent = 'Top 20 by import - export. Bars: import, export, net (yellow). Today excluded.';
             document.getElementById('title-day-worst').textContent = 'Highest net export days';
-            document.getElementById('sub-day-worst').textContent = 'Top 20 by export − import. Bars: import, export, net (yellow). Today excluded.';
+            document.getElementById('sub-day-worst').textContent = 'Top 20 by export - import. Bars: import, export, net (yellow). Today excluded.';
             document.getElementById('title-month-best').textContent = 'Highest net import months';
-            document.getElementById('sub-month-best').textContent = 'Top 10 by import − export. Bars: import, export, net (yellow).';
+            document.getElementById('sub-month-best').textContent = 'Top 10 by import - export. Bars: import, export, net (yellow).';
             document.getElementById('title-month-worst').textContent = 'Highest net export months';
-            document.getElementById('sub-month-worst').textContent = 'Top 10 by export − import. Bars: import, export, net (yellow).';
+            document.getElementById('sub-month-worst').textContent = 'Top 10 by export - import. Bars: import, export, net (yellow).';
             document.getElementById('title-year-best').textContent = 'Highest net import years';
-            document.getElementById('sub-year-best').textContent = 'Top 10 by import − export. Bars: import, export, net (yellow).';
+            document.getElementById('sub-year-best').textContent = 'Top 10 by import - export. Bars: import, export, net (yellow).';
             document.getElementById('title-year-worst').textContent = 'Highest net export years';
-            document.getElementById('sub-year-worst').textContent = 'Top 10 by export − import. Bars: import, export, net (yellow).';
+            document.getElementById('sub-year-worst').textContent = 'Top 10 by export - import. Bars: import, export, net (yellow).';
             return;
         }
         document.getElementById('topn-title').textContent = 'Top Yield Rankings';
-        document.getElementById('topn-blurb').textContent = 'Best and worst days (20), months (10), years (10) — click a bar to open that period';
+        document.getElementById('topn-blurb').textContent = 'Best and worst days (20), months (10), years (10) - click a bar to open that period';
         summary.href = 'summary.php' + (bars === 'all' ? '' : '?bars=' + encodeURIComponent(bars));
         document.getElementById('title-day-best').textContent = 'Best days';
         document.getElementById('sub-day-best').textContent = 'Top 20 by solar yield (kWh)';
@@ -739,7 +976,9 @@ if (isset($_GET['ajax'])) {
         warn.classList.add('hidden');
         paintCopy();
         let data;
-        const q = metric === 'grid' ? 'topn.php?ajax=lists&metric=grid' : 'topn.php?ajax=lists';
+        let q = 'topn.php?ajax=lists';
+        if (metric === 'grid') q = 'topn.php?ajax=lists&metric=grid';
+        if (metric === 'peak') q = 'topn.php?ajax=lists&metric=peak';
         try {
             const res = await fetch(q);
             data = await res.json();
@@ -752,8 +991,14 @@ if (isset($_GET['ajax'])) {
             warn.textContent = data.error
                 || (metric === 'grid'
                     ? 'No grid import / export on the rollups yet.'
-                    : 'No ranking data yet. Run python3 rollup.py -buildall (or -daily).');
+                    : (metric === 'peak'
+                        ? 'No Fluvius Capacity peak months yet. Import a piekvermogen CSV (electricity EAN on Settings).'
+                        : 'No ranking data yet. Run python3 rollup.py -buildall (or -daily).'));
             warn.classList.remove('hidden');
+            if (metric === 'peak') {
+                renderRankChart('chart-month-best', 'month', 'best', [], '#d97706', 'Capacity peak (kW)');
+                return;
+            }
             renderRankChart('chart-day-best', 'day', 'best', [], '#10b981', 'Yield (kWh)');
             renderRankChart('chart-day-worst', 'day', 'worst', [], '#f43f5e', 'Yield (kWh)');
             renderRankChart('chart-month-best', 'month', 'best', [], '#14b8a6', 'Yield (kWh)');
@@ -763,6 +1008,10 @@ if (isset($_GET['ajax'])) {
             return;
         }
         const L = data.lists;
+        if (metric === 'peak') {
+            renderRankChart('chart-month-best', 'month', 'best', L.month.best, '#d97706', 'Capacity peak (kW)');
+            return;
+        }
         if (metric === 'grid') {
             renderGridRankChart('chart-day-best', 'day', L.day.import);
             renderGridRankChart('chart-day-worst', 'day', L.day.export);
@@ -793,7 +1042,7 @@ if (isset($_GET['ajax'])) {
 
     function writeViewUrl() {
         const url = new URL(window.location.href);
-        if (metric === 'grid') url.searchParams.set('metric', 'grid');
+        if (metric === 'grid' || metric === 'peak') url.searchParams.set('metric', metric);
         else url.searchParams.delete('metric');
         if (bars === 'all') url.searchParams.delete('bars');
         else url.searchParams.set('bars', bars);
@@ -801,10 +1050,11 @@ if (isset($_GET['ajax'])) {
     }
 
     function setMetric(next) {
-        const chosen = next === 'grid' ? 'grid' : 'solar';
+        const chosen = next === 'grid' || next === 'peak' ? next : 'solar';
         if (chosen === metric) return;
         metric = chosen;
         writeViewUrl();
+        loadRecords();
         loadRankings();
     }
 
@@ -818,7 +1068,8 @@ if (isset($_GET['ajax'])) {
 
     document.addEventListener('DOMContentLoaded', () => {
         const params0 = new URLSearchParams(window.location.search);
-        metric = params0.get('metric') === 'grid' ? 'grid' : 'solar';
+        const m0 = params0.get('metric');
+        metric = m0 === 'grid' || m0 === 'peak' ? m0 : 'solar';
         const bars0 = params0.get('bars');
         bars = bars0 === 'registers' || bars0 === 'net' ? bars0 : 'all';
         loadRecords();

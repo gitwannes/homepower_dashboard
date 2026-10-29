@@ -2,7 +2,7 @@
 # Deploy notes
 
 **Status:** as-is for Synology-first host.  
-**Last updated:** 2026-10-27 (Settings backup zip and encryption run in Python)
+**Last updated:** 2026-10-28 (P1 Sunny Portal pull note)
 
 ## Runtime `.env`
 
@@ -60,7 +60,7 @@ Example config shape (placeholders only — put real values only in the local JS
 - Web Station: PHP with `curl`, `pdo_sqlite`, and `sqlite3`. `exec()` must be allowed. The dashboard poll button already uses it. The PHP `zip` extension is not used for the Settings backup.
 - Settings backup and restore run `db_backup.py` (Package Center Python, same search order as the poll button). That script uses the Python standard library plus OpenSSL `libcrypto`, which DSM already has. No extra pip package. The key is read from `.env` inside Python. It is not a command argument.
 - Download and restore call `set_time_limit(0)`. On Linux the wait for Python is outside PHP `max_execution_time`. The web server or PHP-FPM can still close the request. In Web Station, Core `default_socket_timeout` and `hard_timeout` are not that limit. `hard_timeout` is only the extra seconds after `max_execution_time`. The values that can still cut the request are Core `max_execution_time` (if `set_time_limit` is disabled), FPM `request_terminate_timeout`, and the web server read timeout.
-- Task Scheduler: run `logger.py` on the poll interval; nightly `rollup.py -daily`. `rollup.py -buildall` is a rare full rebuild, not a weekly job. `fluvius_import.py` is manual: drop CSVs in `import_queue/fluvius/` and run it when a file arrives. Nightly `-daily` then stitches those electricity quarters.
+- Task Scheduler: every 1 minute `logger.py -poll`; daily at 00:05 `rollup.py -daily`; weekly Sunday `PRAGMA optimize`. `rollup.py -buildall` is a rare full rebuild, not a weekly job. `fluvius_import.py` is manual: drop CSVs in `import_queue/fluvius/` and run it when a file arrives. `sunnyportal_pull.py -pullall` / `-lastdays` is on-demand (Settings credentials → `sunnyportal_pv_5min`); nightly `-daily` empty-fills solar and stitches Fluvius quarters.
 - DB file lives beside the app on Synology (`meter_history.db`).
 
 ## Pi / log2ram (optional)

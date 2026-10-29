@@ -183,7 +183,8 @@ Shipped (P3):
 	manual CSV -> fluvius_interval
 	electricity quarters stitched into history_5min on -daily / -buildall
 	gas stays in fluvius_interval (not on history_5min)
-	UI for historical gas / peak: A11 / A12 (queued)
+	UI Capacity peak: A12 Done (summary + top-n)
+	UI historical gas / wind: A11 (queued)
 
 Still open:
 	portal script for last-x-days pull
@@ -201,34 +202,5 @@ sunnyportal_pull.py
 	-pullall / -lastdays -n N / -probe
 	staging: sunnyportal_pv_5min
 	rollup empty-fills solar_power_w (new rows data_source sunnyportal)
-	non-PV channel map: after operator -probe review
-```
-
----
-
-## Triage / later (not a Sequence edit)
-
-Status vs current pipeline - keep here as a personal checklist; place new work with `triage` if it should enter Sequence.
-
-```
-[done]  .env device keys -> app_settings once; keep only DB_BACKUP_ENCRYPTION_KEY in .env
-[done]  dead .env->settings importers removed (P1)
-[done]  17-year WebBox archive ingestion into staging / rebuild path
-[done]  first-run: DB + tables created; admin password; Settings; then dashboard
-        (P1 address required before live dashboard)
-
-[open]  WanOS: sensors + MQTT listener; this app pushes on
-          rollup.py -daily
-          and when raw readings are opened
-          (Generate today removed - nightly -daily owns downsample)
-
-[open]  notifier.py (roadmap Phase 3)
-
-[open]  virtual kWh meters from Settings (bias to import / export / PV)
-
-[open]  meter_history.db -> Synology Hyper Backup (roadmap Phase 4)
-
-[open]  Settings save: probe every filled integration; fail -> modal, stay on page
-
-[ops]   Task Scheduler: daily 00:05 rollup.py -daily (still to confirm on host)
+	P1 Done 2026-10-28 (PV only). Non-PV channel map: re-triage after -probe
 ```

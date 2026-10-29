@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4**, **A5**, **A5b**, **A6**, **A7**, **A8**, **A9**, **A10**, and **A13 Done**; A11–A12 queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-27 (**A5b** closed)  
+**Status:** **A4**, **A5**, **A5b**, **A6**, **A7**, **A8**, **A9**, **A10**, **A12**, and **A13 Done**; **A11**, **A14**, **A15** queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-29 (**A12** closed)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py` · `settings.php` · `explorer_chart.php` · `balance_chart.php`
 
 ---
@@ -20,10 +20,12 @@
 | **A9** | Done | Settings encrypted backup download + restore. Product: [`docs/architecture.md`](../architecture.md) |
 | **A10** | Done | Warehouse rebuild. Product: [`docs/architecture.md`](../architecture.md) (Rollup CLI) |
 | **A11** | open | Historical gas, wind, and similar series on the pages. Not P3. Not kicked off |
-| **A12** | open | Historical monthly Fluvius peak on a page. Not P3. Not kicked off |
+| **A12** | Done | Capacity peak on summary + top-n. Product: [`docs/architecture.md`](../architecture.md) |
 | **A13** | Done | Grid import/export on summary and top-n. Product: [`docs/architecture.md`](../architecture.md) |
+| **A14** | open | Virtual kWh meters from Settings (bias to import / export / PV) |
+| **A15** | open | Settings save: probe every filled integration; fail -> modal, stay on page |
 
-**Parallel:** **A11** and **A12** read Fluvius rows **P3** stored. They are not kicked off. Wind for A11 is already in the warehouse.
+**Parallel:** **A11** reads Fluvius gas / warehouse wind (P3 gas stored). Wind already in warehouse. **A14** / **A15** are Settings-adjacent; Sequence order after A11 until the operator reorders.
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
@@ -31,7 +33,27 @@
 
 ## Verbatim inbox
 
-### 2026-10-23 — triage (three items)
+### 2026-10-28 - triage (A14 / A15 + Ops / pending letters)
+
+> triage:
+> [open]  WanOS: sensors + MQTT listener; this app pushes on
+>           rollup.py -daily
+>           and when raw readings are opened
+>           (Generate today removed - nightly -daily owns downsample)
+>
+> [open]  notifier.py (roadmap Phase 3)
+>
+> [open]  virtual kWh meters from Settings (bias to import / export / PV)
+>
+> [open]  meter_history.db -> Synology Hyper Backup (roadmap Phase 4)
+>
+> [open]  Settings save: probe every filled integration; fail -> modal, stay on page
+>
+> Task Scheduler: daily 00:05 rollup.py -daily = done: update docs
+
+Placed: **A14** virtual kWh meters; **A15** Settings save probe. **Ops5** Hyper Backup; **Ops6** Done; **Ops7** `notifier.py`. **W1** WanOS push ? [`phaseW-wanos.md`](phaseW-wanos.md). Operator confirmed 2026-10-28 (W1 / Ops / rest ok).
+
+### 2026-10-23 - triage (three items)
 
 > also triage:
 > - create table for top n days, months years & create graphs for it
@@ -447,17 +469,29 @@ Not part of P3. P3 stores gas for the configured gas EAN and does not put it on 
 
 ---
 
-## A12 — Historical monthly Fluvius peak
+## A12 — Historical monthly Fluvius peak (Capacity peak)
 
-**Status:** open (triaged 2026-10-26, not kicked off)  
-**Size:** **S**  
-**Depends on:** P3 (Done) stores `piekvermogen` in `fluvius_interval`. The live `capacity_peak_w` register on `index.php` stays as it is.
+**Status:** **Done** 2026-10-29  
+**Product:** [`docs/architecture.md`](../architecture.md) (UI map: `summary.php`, `topn.php`) · `capacity_peak.php` · `rollup.py` (`top_records`)
 
-### Placement
+### Done summary
 
-Not part of P3. P3 does not write the monthly peak into `capacity_peak_w` and does not add it to the live card. This phase decides where the monthly kW series is shown. No code until kickoff.
+Third metric **Capacity peak** on `summary.php` and `topn.php` (`?metric=peak`). Fluvius `piekvermogen` months (kW); open month replaced by live P1 W→kW. Summary peak mode: year + All years only; All years last in every metric; Max/Average on the All years card with a shared Max Y-axis. Top-N: highest 10 peak months. All-time records filtered by metric (yield / peak; wind hidden until A11; grid hides the card). New singles: `best_year_kwh`, `max_capacity_peak_kw`, `best_year_avg_capacity_peak_kw`. Deep link `?month=YYYY-MM` sets week (ISO week of day 1) + month + year; `?year=YYYY` sets year. Live Capacity Peak gauge on `index.php` unchanged.
 
-**Beside A13:** A13 is period import/export kWh on summary and top-n. This phase is the monthly peak kW (`piekvermogen` in `fluvius_interval`). Different unit, different store. A13 does not draw the peak.
+### DoD
+
+- [x] Summary + Top-N Capacity peak
+- [x] Product docs
+- [x] Operator close
+
+### Verbatim — 2026-10-29 (close)
+
+> close A12
+
+### Verbatim — 2026-10-28 (kickoff + implement)
+
+> Q1: both pages / Q2: third top-level metric / Q3: year + all-years only; all-years last in all modes / Q4: kW / Q5: overlay live P1 / Q6: A12 only
+> not worst, only highest month, not years; 1 bar per year avg&max; replace with P1 kW; Capacity peak; 10 is ok; implement
 
 ### Verbatim — 2026-10-26
 
@@ -508,6 +542,39 @@ Solar yield stays the default on `summary.php` and `topn.php`. Grid mode is grou
 > add checkboxes: show/hide import&export and show/hide net - mutually exclusive - so actually 3 options: show all, show only import/export or show only net -- how should the  UI best be styled?
 
 > close phase
+
+---
+
+
+## A14 - Virtual kWh meters from Settings
+
+**Status:** open (triaged 2026-10-28, not kicked off)
+**Size:** **M**
+**Depends on:** Settings (**A6** Done)
+
+### Placement
+
+Configure virtual kWh meters on the Settings page with a bias toward import / export / PV. Spec at kickoff (storage, UI, who consumes the meters).
+
+### Verbatim - 2026-10-28
+
+> [open]  virtual kWh meters from Settings (bias to import / export / PV)
+
+---
+
+## A15 - Settings save probe integrations
+
+**Status:** open (triaged 2026-10-28, not kicked off)
+**Size:** **S**
+**Depends on:** Settings (**A6** Done); existing powertests probe path is a candidate reuse at kickoff
+
+### Placement
+
+On Settings save, probe every filled integration. On failure: modal and stay on the page (do not keep the bad save as committed config - exact fail/rollback rule at kickoff).
+
+### Verbatim - 2026-10-28
+
+> [open]  Settings save: probe every filled integration; fail -> modal, stay on page
 
 ---
 

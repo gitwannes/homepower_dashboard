@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-27 (**P1** implement: pull CLI + rollup empty-fill + `.env` cleanup; await probe)
+**Last updated:** 2026-10-29 (**A12** Done)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -46,6 +46,9 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **A7** | `top_records` on `topn.php`; `-daily` beat; `-buildalltoprecords` — **2026-10-27** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **A5b** | Explorer + index 2h pulse; mixed 1/5-min V; Exchange default; CSV→Settings; drop telemetry — **2026-10-27** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **P2** | Closed as duplicate of **P1** (same ennexOS / `portal.sma.energy` login; no second Classic plant) — **2026-10-27** — [`phaseP-portals.md`](phaseP-portals.md) |
+| **P1** | Sunny Portal / ennexOS PV: `sunnyportal_pull.py` → `sunnyportal_pv_5min`; rollup empty-fill; `.env` cleanup. Non-PV after `-probe` out until re-triaged — **2026-10-28** — [`phaseP-portals.md`](phaseP-portals.md) · [`architecture.md`](../architecture.md) |
+| **A12** | Capacity peak on summary + top-n (Fluvius `piekvermogen` + live P1 open month) — **2026-10-29** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md)
+| **Ops6** | Task Scheduler daily 00:05 `rollup.py -daily` — **2026-10-28** — [`roadmap.md`](../roadmap.md) · [`deploy.md`](../deploy.md) |
 
 ---
 
@@ -53,17 +56,23 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| 1 | coding | L | **P1** | Sunny Portal / ennexOS — pull+wire shipped; non-PV map after operator `-probe` | [`phaseP-portals.md`](phaseP-portals.md) |
-| 2 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 3 | open | S | **A12** | Historical monthly Fluvius peak on a page. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 1 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 2 | open | M | **A14** | Virtual kWh meters from Settings (bias to import / export / PV) | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 3 | open | S | **A15** | Settings save: probe every filled integration; fail → modal, stay on page | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 4 | open | M | **W1** | WanOS: this app pushes on `-daily` and when raw readings are opened | [`phaseW-wanos.md`](phaseW-wanos.md) |
+| 5 | open | S | **Ops5** | `meter_history.db` → Synology Hyper Backup (roadmap Phase 4) | [`roadmap.md`](../roadmap.md) |
+| 6 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
 
 ---
 
 ## Ops
 
+Open Ops rows are also in **Sequence** (same ids). Done Ops stay in **Done** only.
+
 | Id | Status | What |
 |---|---|---|
-| — | — | (none open) |
+| **Ops5** | open | `meter_history.db` → Synology Hyper Backup (roadmap Phase 4) |
+| **Ops7** | open | `notifier.py` (roadmap Phase 3) |
 
 ---
 
@@ -73,4 +82,5 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 |---|---|---|
 | **M** | Migration + public-repo hygiene + local sync | [`_archive/phaseM-migration.md`](_archive/phaseM-migration.md) (**archived**) |
 | **A** | Aggregation warehouse + analytics UI | [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md) (A0–A3 Done) · [`phaseA-analytics.md`](phaseA-analytics.md) (A4+) |
-| **P** | Cloud / utility portal ingest (ennexOS Sunny Portal = former P1+P2; Fluvius P3 Done) | [`phaseP-portals.md`](phaseP-portals.md) |
+| **P** | Cloud / utility portal ingest (P1–P3 Done — move file offline when convenient) | [`phaseP-portals.md`](phaseP-portals.md) |
+| **W** | WanOS outbound bridge (push from this app) | [`phaseW-wanos.md`](phaseW-wanos.md) |

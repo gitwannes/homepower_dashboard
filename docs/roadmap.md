@@ -45,7 +45,7 @@ sqlite3 meter_history.db "VACUUM; PRAGMA optimize;"
 ```
 
 **Step 5: Run the Rollup Engine (`rollup.py`)**
-`-buildall` deletes `history_5min`, `daily_history`, and `monthly_history`, refills `history_5min` from all `readings` (open 5-minute slice skipped), from WebBox staging, and from `fluvius_interval` electricity quarters, then builds `daily_history`, `monthly_history`, `clear_sky_envelopes`, `top_records`, and `top_periods`. Rare. The day chart is empty until the command finishes. Run `fluvius_import.py` first when new Fluvius CSVs are in `import_queue/fluvius/`. `-buildalltoprecords` rewrites `top_records` only. `-daily` also beat-updates `top_records` for the recent calendar span.
+`-buildall` deletes `history_5min`, `daily_history`, and `monthly_history`, refills `history_5min` from all `readings` (open 5-minute slice skipped), from WebBox staging, empty-fills `solar_power_w` from `sunnyportal_pv_5min`, then stitches `fluvius_interval` electricity quarters, then builds `daily_history`, `monthly_history`, `clear_sky_envelopes`, `top_records`, and `top_periods`. Rare. The day chart is empty until the command finishes. Run `fluvius_import.py` and/or `sunnyportal_pull.py` first when those staging sources need a refresh. `-buildallsunnyportal` empty-fills solar only. `-buildalltoprecords` rewrites `top_records` only. `-daily` also beat-updates `top_records` for the recent calendar span.
 ```bash
 python3 rollup.py -buildall
 ```
@@ -79,12 +79,14 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
       - Exchange / Balance / Classic explorer: clock window (default 6 h), presets, pan, mixed 1-min / 5-min (rule V). Clear-sky envelope is a separate chart.
 - [x] Two-Day Overlay on `analytics.php`.
 - [x] Summary period views (`summary.php`):
-      - **All years** (lifetime bars vs PVGIS year baseline), week, month, year (months vs PVGIS).
+      - Week, month, year, then **All years** last (lifetime bars vs live `expected_monthly` PVGIS year baseline; omit PVGIS when all months are 0).
       - **A13 Done:** Solar yield / Grid switch. Grid mode is grouped bars (import, export, net). A second switch shows all three, import/export only, or net only.
+      - **A12 Done:** Capacity peak (`?metric=peak`) from Fluvius `piekvermogen` (kW); open month = live P1; year + All years only; Max/Average on All years (shared Y). Deep link `?month=` also sets week + year.
 - [x] Hall of Fame / Top 10:
       - Old live Top 10 removed in A3. **A4 Done:** `topn.php` + `top_periods` (best/worst days 20, months/years 10); rebuilt by `-buildall`/`-daily`. Worst days skip zero yield and today.
       - **A13 Done:** the same page ranks highest net import and highest net export from `daily_history` / `monthly_history` (20 days, 10 months, 10 years). Both day lists omit today. No second ranking table.
       - **A7 Done:** all-time singles on `topn.php` (`top_records`); `-daily` beat + `-buildalltoprecords`.
+      - **A12 Done:** Capacity peak ranks (top 10 months); records filtered by metric (yield / peak; wind waits for A11).
 - [x] Settings (`settings.php`): admin password on first open; devices, titles, monthly expected kWh, spike cap, and night gates in `meter_history.db`. Encrypted full-database download and restore (`db_backup.py`). See [`architecture.md`](architecture.md).
 - [x] Verify analytics / summary with populated rollups (A2/A3 + operator smoke).
 
@@ -107,5 +109,5 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 - [ ] Integrate `meter_history.db` into Synology Hyper Backup for offsite snapshot protection.
 - [ ] Configure Synology DSM Task Scheduler:
       - [x] Every 1 minute: `logger.py -poll` (Live P1 + Inverter ingestion).
-      - [ ] Daily at 00:05: `rollup.py -daily` (Locks in yesterday's daily aggregates).
+      - [x] Daily at 00:05: `rollup.py -daily` (Locks in yesterday's daily aggregates).
       - [x] Weekly on Sunday: `sqlite3 meter_history.db "PRAGMA optimize;"`.
