@@ -1,9 +1,9 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4**, **A5**, **A5b**, **A6**, **A7**, **A8**, **A9**, **A10**, **A12**, and **A13 Done**; **A11**, **A14**, **A15** queued. (A0–A3 Done — [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-29 (**A12** closed)  
-**Product pointers:** [`docs/architecture.md`](../architecture.md) · `topn.php` · `rollup.py` · `settings.php` · `explorer_chart.php` · `balance_chart.php`
+**Status:** **A4**, **A5**, **A5b**, **A6**, **A7**, **A8**, **A9**, **A10**, **A12**, **A13**, and **A16 Done**; **A17**, **A18**, **A11**, **A14**, **A15** queued. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-29 (**A16** Done)  
+**Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py`
 
 ---
 
@@ -24,14 +24,37 @@
 | **A13** | Done | Grid import/export on summary and top-n. Product: [`docs/architecture.md`](../architecture.md) |
 | **A14** | open | Virtual kWh meters from Settings (bias to import / export / PV) |
 | **A15** | open | Settings save: probe every filled integration; fail -> modal, stay on page |
+| **A16** | Done | Per-phase W on `readings` + logger. Product: [`docs/architecture.md`](../architecture.md) |
+| **A17** | open | Rollup: per-phase W into `history_5min`. Depends on A16. Not kicked off |
+| **A18** | open | UI: per-phase power. Depends on A16 (A17 if 5-min). Not kicked off |
 
-**Parallel:** **A11** reads Fluvius gas / warehouse wind (P3 gas stored). Wind already in warehouse. **A14** / **A15** are Settings-adjacent; Sequence order after A11 until the operator reorders.
+**Parallel:** **A16** is logger/`readings` only; Sequence #1. **A17**/**A18** follow A16 (rollup then UI). **A11** reads Fluvius gas / warehouse wind. **A14** / **A15** Settings-adjacent.
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
 ---
 
 ## Verbatim inbox
+
+### 2026-10-29 - A16 kickoff answers + triage A17/A18
+
+> Q1: why not split them between the 3? give advice
+> Q2: could happen: if eg net im/export = 0 and P1 = 100W and P2 = -100W --- is this the edge case? give advice
+> Q3: make sure you only do this is effectively there ARE 3 phases (not all P1 meters have that) - if not: just skip this for that plant
+> Q4: #1
+> & triage the rollup and UI changes
+
+Placed follow-ons: **A17** rollup, **A18** UI. Operator confirmed Q1/Q2 2026-10-29 - A16 kickoff locked.
+
+### 2026-10-29 - triage + kickoff (A16 per-phase W)
+
+> change database to, from now on, calculate power per phase, keep per minute, make sure the sum of the 3 phases matches the readout from im/export - don't change the UI yet, first i want to get some readings
+
+> 1 triage into new phase and kickoff
+> 2A
+> 3 yes: add columns and change poller to calculate these and store them - nothing rollup or UI for now
+
+Placed: **A16**. Kickoff locks below. Open Qs in the A16 section.
 
 ### 2026-10-28 - triage (A14 / A15 + Ops / pending letters)
 
@@ -545,6 +568,94 @@ Solar yield stays the default on `summary.php` and `topn.php`. Grid mode is grou
 
 ---
 
+
+## A16 - Per-phase power on readings (logger only)
+
+**Status:** Done (2026-10-29)
+**Size:** **S**
+**Depends on:** none (P1 logger path exists)
+**Sequence:** was #1
+
+### Placement
+
+Affinity **A** (warehouse/`readings` + `logger.py`). Not portals. Not UI. Rollup -> **A17**. UI -> **A18**.
+
+### Verbatim - 2026-10-29
+
+> change database to, from now on, calculate power per phase, keep per minute, make sure the sum of the 3 phases matches the readout from im/export - don't change the UI yet, first i want to get some readings
+
+> 1 triage into new phase and kickoff
+> 2A
+> 3 yes: add columns and change poller to calculate these and store them - nothing rollup or UI for now
+
+> Q1: why not split them between the 3? give advice
+> Q2: could happen: if eg net im/export = 0 and P1 = 100W and P2 = -100W --- is this the edge case? give advice
+> Q3: make sure you only do this is effectively there ARE 3 phases (not all P1 meters have that) - if not: just skip this for that plant
+> Q4: #1
+> & triage the rollup and UI changes
+
+### Kickoff locks
+
+| Lock | Decision |
+|---|---|
+| Match rule | **2A:** take P1 `active_power_l1_w` / `_l2_` / `_l3_`; if `L1+L2+L3 != active_power_w`, scale/adjust so the stored three sum to `active_power_w` (signed net W; not kWh counters) |
+| Persist | `readings` only (1-minute). Columns `power_l1_w`, `power_l2_w`, `power_l3_w` INTEGER |
+| 3-phase gate (**Q3**) | Only fill phase columns when the payload **has all three** `active_power_l{1,2,3}_w` keys (present, not null). Otherwise leave all three NULL (skip). Do **not** treat a missing key as 0 |
+| Sequence (**Q4**) | #1 |
+| Residual (**Q1**) | **Largest-remainder (Hamilton):** proportional scale to floats, floor each phase, hand out leftover +/-1 W to largest leftover fractions (tie-break: largest \|raw\|) |
+| Hard edge (**Q2**) | Phase sum == 0 and `active_power_w != 0`: store raw phases, accept mismatch, WARN once. Do not invent a distribution. (100/-100/0 with net 0 is normal - store raw, no scale) |
+| Out of scope this ship | `history_5min` / rollup (**A17**); UI (**A18**); backfill of old rows |
+| Old rows | New columns NULL for rows written before this ship |
+
+### Open questions
+
+None.
+
+### DoD
+
+- [x] `readings` schema + migrate existing DB (`ALTER` add `power_l1_w`, `power_l2_w`, `power_l3_w`)
+- [x] `logger.py`: 3-phase gate; largest-remainder scale; when filled, sum == `active_power` (except Q2 hard-edge samples)
+- [x] Q2 WARN via poller `alerts` -> `log_event("WARN", ...)` into `system_logs` (fixed message streaks)
+- [x] No rollup / UI changes (A17 / A18)
+- [x] Product docs: [`docs/architecture.md`](../architecture.md) readings row
+
+### Shipped summary
+
+`logger.py` fills `power_l1_w` / `power_l2_w` / `power_l3_w` on each 1-min insert when all three P1 phase keys are present. Scale uses largest-remainder to match `active_power`. Hard edge (phase sum 0, net != 0): store raw + WARN in `system_logs`. Settings 1-min CSV and UI unchanged.
+
+---
+
+## A17 - Rollup per-phase W into history_5min
+
+**Status:** open (triaged 2026-10-29, not kicked off)
+**Size:** **S**
+**Depends on:** **A16**
+
+### Placement
+
+Carry `power_l1_w` / `power_l2_w` / `power_l3_w` (or averages) onto `history_5min` during `-daily` / `-buildall`. Spec at kickoff (avg vs last sample; rebuild rules).
+
+### Verbatim - 2026-10-29
+
+> & triage the rollup and UI changes
+
+---
+
+## A18 - UI per-phase power
+
+**Status:** open (triaged 2026-10-29, not kicked off)
+**Size:** **M**
+**Depends on:** **A16** (and **A17** if any 5-min / day chart uses phase series)
+
+### Placement
+
+Show / chart per-phase power somewhere in the product UI. Page and series list at kickoff. Not part of A16.
+
+### Verbatim - 2026-10-29
+
+> & triage the rollup and UI changes
+
+---
 
 ## A14 - Virtual kWh meters from Settings
 

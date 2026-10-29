@@ -74,26 +74,11 @@ function hp_backup_work_dir(): string
 }
 
 /**
- * Package Center Python first, then the usual system paths.
- * Same order as the dashboard poll button.
+ * Same Python picker as the dashboard poll button (hp_python_bin).
  */
 function hp_backup_python(): string
 {
-    $candidates = [
-        '/var/packages/Python3.14/target/bin/python3',
-        '/var/packages/Python3.14/target/bin/python3.14',
-        '/var/packages/Python3.14/target/usr/bin/python3',
-        '/usr/local/bin/python3.14',
-        '/usr/local/bin/python3',
-        '/usr/bin/python3',
-        'python3',
-    ];
-    foreach ($candidates as $candidate) {
-        if (@file_exists($candidate) && @is_executable($candidate)) {
-            return $candidate;
-        }
-    }
-    return 'python3';
+    return hp_python_bin();
 }
 
 /**

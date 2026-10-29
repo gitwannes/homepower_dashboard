@@ -11,25 +11,8 @@ hp_require_ready($hp);
 
 $scriptPath = __DIR__ . '/powertests.py';
 
-// Prioritize Package Center Python 3.14 before DSM system Python
-// Auto-detect Python 3 binary on Synology DSM or Raspberry Pi
-    $pythonCandidates = [
-        '/var/packages/Python3.14/target/bin/python3',
-        '/var/packages/Python3.14/target/bin/python3.14',
-        '/var/packages/Python3.14/target/usr/bin/python3',
-        '/usr/local/bin/python3.14',
-        '/usr/local/bin/python3',
-        '/usr/bin/python3',
-        'python3'
-    ];
-
-$pythonBin = 'python3';
-foreach ($pythonCandidates as $candidate) {
-    if (@file_exists($candidate) && @is_executable($candidate)) {
-        $pythonBin = $candidate;
-        break;
-    }
-}
+// Newest Package Center / versioned Python (hp_python_bin in site_settings.php).
+$pythonBin = hp_python_bin();
 
 // Query Python runtime version
 $pythonVersion = 'Unknown';

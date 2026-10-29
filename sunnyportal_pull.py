@@ -755,13 +755,29 @@ def stitch_solar_power(
     }
 
 
-def print_stitch_summary(result: Dict[str, object], span_label: str = "") -> None:
-    """ASCII console summary after a sunnyportal -> history_5min merge."""
+def print_stitch_summary(
+    result: Dict[str, object],
+    span_label: str = "",
+    step: Optional[int] = None,
+) -> None:
+    """ASCII console summary after a sunnyportal -> history_5min merge.
+
+    Silent when staging is empty (nothing to empty-fill). Optional step prefixes
+    the first line as '-> N: ...' for -daily numbering.
+    """
+    staging_rows = int(result.get("staging_rows", 0) or 0)
+    written = int(result.get("written", 0) or 0)
+    if staging_rows == 0 and written == 0:
+        return
     suffix = f" ({span_label})" if span_label else ""
-    print(f"sunnyportal -> history_5min{suffix}")
+    title = f"sunnyportal -> history_5min{suffix}"
+    if step is not None:
+        print(f"-> {step}: {title}")
+    else:
+        print(title)
     print(f"  component     {result.get('component') or '-'}")
-    print(f"  staging rows  {result.get('staging_rows', 0)}")
-    print(f"  5-min written {result.get('written', 0)}  "
+    print(f"  staging rows  {staging_rows}")
+    print(f"  5-min written {written}  "
           f"(inserted {result.get('inserted', 0)}, "
           f"updated {result.get('updated', 0)}, "
           f"skipped {result.get('skipped', 0)})")

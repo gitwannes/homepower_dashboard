@@ -5,14 +5,21 @@ import urllib.error
 import ssl
 import socket
 import json
+import math
 import sqlite3
 import hashlib
 import os
 import sys
 import fcntl
 from datetime import datetime
+from typing import Dict, List, Optional, Tuple
 
 import site_config
+
+# Fixed message so system_logs streaks collapse repeated Q2 hard-edge samples.
+PHASE_SUM_HARD_EDGE_WARN = (
+    "Phase power sum is 0 but active_power_w is not; stored raw L1/L2/L3 without scale."
+)
 
 # Allow both cron (www-data) and personal user to access created database
 os.umask(0)
@@ -47,10 +54,21 @@ def init_db():
                 temp_module REAL,
                 wind_speed REAL,
                 gas REAL,
-                water REAL
+                water REAL,
+                power_l1_w INTEGER,
+                power_l2_w INTEGER,
+                power_l3_w INTEGER
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp)")
+
+        # A16: per-phase W on existing DBs (CREATE IF NOT EXISTS does not add columns).
+        reading_cols = {
+            str(info[1]) for info in conn.execute("PRAGMA table_info(readings)")
+        }
+        for col in ("power_l1_w", "power_l2_w", "power_l3_w"):
+            if col not in reading_cols:
+                conn.execute(f"ALTER TABLE readings ADD COLUMN {col} INTEGER")
 
         # 5-Minute Weather & SensorBox History (Permanent 17-year archive)
         conn.execute("""
@@ -153,6 +171,61 @@ def fetch_p1(ip):
     with urllib.request.urlopen(req, timeout=5) as response:
         raw = response.read().decode('utf-8')
         return json.loads(raw)
+
+
+def scale_phases_to_active(raw: List[int], active_power: int) -> List[int]:
+    """Largest-remainder scale so L1+L2+L3 == active_power (INTEGER watts).
+
+    Caller must not invoke this when sum(raw) == 0 and active_power != 0
+    (Q2 hard edge: store raw instead).
+    """
+    phase_sum = raw[0] + raw[1] + raw[2]
+    if phase_sum == active_power:
+        return list(raw)
+    if phase_sum == 0:
+        return list(raw)
+
+    exact = [r * active_power / phase_sum for r in raw]
+    floors = [math.floor(x) for x in exact]
+    residual = active_power - sum(floors)
+    # Largest leftover fraction first; tie-break largest |raw|, then index.
+    order = sorted(
+        range(3),
+        key=lambda i: (-(exact[i] - floors[i]), -abs(raw[i]), i),
+    )
+    out = list(floors)
+    if residual > 0:
+        for k in range(residual):
+            out[order[k % 3]] += 1
+    elif residual < 0:
+        rev = list(reversed(order))
+        for k in range(-residual):
+            out[rev[k % 3]] -= 1
+    return out
+
+
+def compute_phase_powers(
+    p1_data: Dict,
+    active_power: int,
+) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[str]]:
+    """Return stored L1/L2/L3 W and an optional Q2 WARN message.
+
+    Fills only when all three active_power_l*_w keys are present and non-null.
+    Otherwise returns (None, None, None, None) and the poller leaves columns NULL.
+    """
+    keys = ("active_power_l1_w", "active_power_l2_w", "active_power_l3_w")
+    if any(k not in p1_data or p1_data[k] is None for k in keys):
+        return None, None, None, None
+
+    raw = [int(p1_data[k]) for k in keys]
+    phase_sum = raw[0] + raw[1] + raw[2]
+
+    # Q2 hard edge: cannot scale; keep raw and warn.
+    if phase_sum == 0 and active_power != 0:
+        return raw[0], raw[1], raw[2], PHASE_SUM_HARD_EDGE_WARN
+
+    scaled = scale_phases_to_active(raw, active_power)
+    return scaled[0], scaled[1], scaled[2], None
 
 
 def extract_sma_val(device_dict, key):
@@ -642,6 +715,13 @@ def run_poll():
         active_power = int(p1_data.get('active_power_w', 0))
         home_consumption_w = max(0, total_solar_w + active_power) if has_solar else max(0, active_power)
 
+        # A16: per-phase W (3-phase plants only); scale so sum matches active_power.
+        power_l1_w, power_l2_w, power_l3_w, phase_warn = compute_phase_powers(
+            p1_data, active_power
+        )
+        if phase_warn:
+            alerts.append(phase_warn)
+
         # 7. Construct Full JSON Snapshot
         full_state = {
             'fatal_error': None,
@@ -679,8 +759,9 @@ def run_poll():
                     INSERT OR IGNORE INTO readings
                     (timestamp, active_power, solar_power, import_t1, import_t2, export_t1, export_t2,
                      total_import, total_export, capacity_peak_w, solar_total_kwh,
-                     solar_radiation, temp_module, wind_speed, gas, water)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     solar_radiation, temp_module, wind_speed, gas, water,
+                     power_l1_w, power_l2_w, power_l3_w)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     timestamp,
                     active_power,
@@ -697,7 +778,10 @@ def run_poll():
                     t_mod,
                     w_spd,
                     gas,
-                    water
+                    water,
+                    power_l1_w,
+                    power_l2_w,
+                    power_l3_w,
                 ))
                 conn.execute("""
                     INSERT INTO latest_state (id, updated_at, data_json)

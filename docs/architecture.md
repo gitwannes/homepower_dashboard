@@ -41,7 +41,7 @@ helpers/  (gitignored entire directory; PC-only sync tool)
 
 | Store | Role |
 |---|---|
-| `readings` | Live 1-min SoT (logger). Not purged by `-purge_derived`. |
+| `readings` | Live 1-min SoT (logger). Not purged by `-purge_derived`. On 3-phase P1 payloads, `power_l1_w` / `power_l2_w` / `power_l3_w` are filled each poll (largest-remainder scale so they sum to `active_power`). Single-phase or incomplete phase keys leave those columns NULL. Not rolled into `history_5min` yet (**A17**). |
 | `sensorbox_history_5min` / `inverter_history_5min` | Staging SoT (WebBox import). Never purged. Holds every WebBox year. |
 | `fluvius_interval` | Fluvius CSV SoT. Never purged. Electricity quarters, gas hours and days, monthly peak. |
 | `sunnyportal_pv_5min` | Sunny Portal / ennexOS PV staging. Never purged. Filled only by `sunnyportal_pull.py`. `-buildall` does not write this table. |
@@ -92,9 +92,9 @@ The live chart on `index.php` is a **2-hour pulse** of 1-minute `readings` (auto
 | Flag | Effect |
 |---|---|
 | `-consolidate` | Staging → solar and weather on `history_5min` (`data_source` `webbox_archive`) |
-| `-daily` | Last 2 local days of `readings` → `history_5min`, then Sunny Portal empty-fill `solar_power_w` for that span, then Fluvius quarter stitch; last 3 local days of `history_5min` → `daily_history`; full rewrite of `monthly_history` and `top_periods`; beat-update `top_records` for that stitch calendar span (stricter extreme only) |
+| `-daily` | Six status steps: (1) last 2 local days of `readings` → `history_5min`; (2) Sunny Portal empty-fill `solar_power_w` for that span (no console block when staging is empty); Fluvius quarter stitch (no status line); (3) last 3 local days → `daily_history`; (4) full rewrite `monthly_history`; (5) `top_periods`; (6) beat-update `top_records` for that stitch calendar span (stricter extreme only) |
 | `-buildall` | Delete `history_5min`, `daily_history`, `monthly_history` (no `VACUUM`). Refill `history_5min` from every `readings` row except the open 5-minute slice, then WebBox staging, then Sunny Portal empty-fill `solar_power_w`, then Fluvius electricity quarters. Then daily, monthly, envelopes, `top_records`, `top_periods`. Rare. The day chart is empty until the command finishes. |
-| `-buildallsunnyportal` | Empty-fill `history_5min.solar_power_w` from `sunnyportal_pv_5min` only (no wipe, no daily/monthly rebuild). Prints how many 5-min slots were written, first/last stamp. |
+| `-buildallsunnyportal` | Empty-fill `history_5min.solar_power_w` from `sunnyportal_pv_5min` only (no wipe, no daily/monthly rebuild). Prints how many 5-min slots were written, first/last stamp (silent when staging is empty). |
 | `-buildalltoprecords` | Full rewrite of `top_records` only (no wipe of `history_5min` / daily / monthly) |
 | `-purge_derived` | Wipes the six derived tables and `VACUUM`. `readings`, WebBox staging, `fluvius_interval`, and `sunnyportal_pv_5min` stay. Separate from `-buildall`. |
 

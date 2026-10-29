@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-29 (**A12** Done)
+**Last updated:** 2026-10-29 (**A16** Done)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -49,6 +49,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **P1** | Sunny Portal / ennexOS PV: `sunnyportal_pull.py` → `sunnyportal_pv_5min`; rollup empty-fill; `.env` cleanup. Non-PV after `-probe` out until re-triaged — **2026-10-28** — [`phaseP-portals.md`](phaseP-portals.md) · [`architecture.md`](../architecture.md) |
 | **A12** | Capacity peak on summary + top-n (Fluvius `piekvermogen` + live P1 open month) — **2026-10-29** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md)
 | **Ops6** | Task Scheduler daily 00:05 `rollup.py -daily` — **2026-10-28** — [`roadmap.md`](../roadmap.md) · [`deploy.md`](../deploy.md) |
+| **A16** | Per-phase W on `readings` + logger scale to `active_power` — **2026-10-29** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 
 ---
 
@@ -56,12 +57,14 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| 1 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 2 | open | M | **A14** | Virtual kWh meters from Settings (bias to import / export / PV) | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 3 | open | S | **A15** | Settings save: probe every filled integration; fail → modal, stay on page | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 4 | open | M | **W1** | WanOS: this app pushes on `-daily` and when raw readings are opened | [`phaseW-wanos.md`](phaseW-wanos.md) |
-| 5 | open | S | **Ops5** | `meter_history.db` → Synology Hyper Backup (roadmap Phase 4) | [`roadmap.md`](../roadmap.md) |
-| 6 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
+| 1 | open | S | **A17** | Rollup: carry per-phase W into `history_5min` (depends on A16). Not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 2 | open | M | **A18** | UI: show / chart per-phase power (depends on A16; A17 if 5-min views). Not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 3 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 4 | open | M | **A14** | Virtual kWh meters from Settings (bias to import / export / PV) | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 5 | open | S | **A15** | Settings save: probe every filled integration; fail → modal, stay on page | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 6 | open | M | **W1** | WanOS: this app pushes on `-daily` and when raw readings are opened | [`phaseW-wanos.md`](phaseW-wanos.md) |
+| 7 | open | S | **Ops5** | `meter_history.db` → Synology Hyper Backup (roadmap Phase 4) | [`roadmap.md`](../roadmap.md) |
+| 8 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
 
 ---
 

@@ -45,14 +45,14 @@ sql_importer.py
 
 ```
 rollup.py -daily
-	1/ readings, last 2 local days
-	   -> history_5min (closed 5-minute buckets only)
-	   then sunnyportal_pv_5min empty-fill solar_power_w (same 2-day span)
-	   then Fluvius electricity quarter stitch for those calendar days
-	2/ history_5min, last 3 local days
-	   -> daily_history (those 3 days)
-	3/ full rewrite: monthly_history, top_periods
-	4/ beat-update top_records when a day in that stitch span is a stricter extreme
+	1/ readings, last 2 local days -> history_5min (closed 5-minute buckets only)
+	2/ sunnyportal_pv_5min empty-fill solar_power_w (same 2-day span)
+	   status line omitted when staging has no rows for that span
+	   Fluvius electricity quarter stitch for those calendar days (no status line)
+	3/ history_5min, last 3 local days -> daily_history
+	4/ full rewrite: monthly_history
+	5/ full rewrite: top_periods
+	6/ beat-update top_records when a day in that stitch span is a stricter extreme
 ```
 
 Today's closed 5-minute buckets land here. There is no `rollup.py -today`, no `importer.py -aggregate5min`, and no analytics "Generate today table".

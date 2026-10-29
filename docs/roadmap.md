@@ -108,6 +108,7 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
       - Once 1-minute data is downsampled and aggregated, prune `readings` to 30–90 rolling days to keep hot queries lightweight while preserving permanent history in `history_5min`.
 - [ ] Integrate `meter_history.db` into Synology Hyper Backup for offsite snapshot protection.
 - [ ] Configure Synology DSM Task Scheduler:
-      - [x] Every 1 minute: `logger.py -poll` (Live P1 + Inverter ingestion).
-      - [x] Daily at 00:05: `rollup.py -daily` (Locks in yesterday's daily aggregates).
+      - [x] Every 1 minute: `run_python.sh logger.py -poll` (Live P1 + Inverter ingestion).
+      - [x] Daily at 00:05: `run_python.sh rollup.py -daily` (Locks in yesterday's daily aggregates).
       - [x] Weekly on Sunday: `sqlite3 meter_history.db "PRAGMA optimize;"`.
+      - Use absolute paths under `/volume1/web/`; `run_python.sh` picks newest Python (same order as `hp_python_bin()`).

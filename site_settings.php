@@ -395,3 +395,39 @@ function hp_nav_settings(): string
     return '<a href="settings.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">'
         . '<i data-lucide="settings" class="w-3.5 h-3.5 text-slate-500"></i> Settings</a>';
 }
+
+/**
+ * Newest usable Python 3 for Synology / Pi host scripts.
+ * Prefers Package Center 3.14, then versioned binaries (3.14 .. 3.9), then bare python3.
+ * DS723 typically resolves to 3.14; Sofie to /usr/local/bin/python3.9.
+ * Keep candidate order in sync with run_python.sh (Task Scheduler wrapper).
+ */
+function hp_python_bin(): string
+{
+    $candidates = [
+        '/var/packages/Python3.14/target/bin/python3.14',
+        '/var/packages/Python3.14/target/bin/python3',
+        '/var/packages/Python3.14/target/usr/bin/python3',
+        '/usr/local/bin/python3.14',
+        '/usr/bin/python3.14',
+        '/usr/local/bin/python3.13',
+        '/usr/bin/python3.13',
+        '/usr/local/bin/python3.12',
+        '/usr/bin/python3.12',
+        '/usr/local/bin/python3.11',
+        '/usr/bin/python3.11',
+        '/usr/local/bin/python3.10',
+        '/usr/bin/python3.10',
+        '/usr/local/bin/python3.9',
+        '/usr/bin/python3.9',
+        '/usr/local/bin/python3',
+        '/usr/bin/python3',
+        'python3',
+    ];
+    foreach ($candidates as $candidate) {
+        if (@file_exists($candidate) && @is_executable($candidate)) {
+            return $candidate;
+        }
+    }
+    return 'python3';
+}

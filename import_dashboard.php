@@ -22,7 +22,8 @@ if (isset($_GET['action']) &&$_GET['action'] === 'run') {
     header('Cache-Control: no-cache');
     header('Connection: keep-alive');
 
-    $pyScript = __DIR__ . '/importer.py';$pyBin = file_exists('/bin/python3') ? '/bin/python3' : 'python3';
+    $pyScript = __DIR__ . '/importer.py';
+    $pyBin = hp_python_bin();
 
     $proc = popen("{$pyBin} -u " . escapeshellarg($pyScript) . " 2>&1", 'r');
     while ($line = fgets($proc)) {

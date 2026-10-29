@@ -1,0 +1,3 @@
+# --- file: .gitattributes ---
+# Shell scripts must stay LF; CRLF breaks the shebang on Synology (/bin/sh^M).
+*.sh text eol=lf

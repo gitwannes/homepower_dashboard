@@ -437,13 +437,15 @@ if (isset($_GET['ajax'])) {
 
 $today = date('Y-m-d');
 $yesterday = date('Y-m-d', strtotime('-1 day'));
+$twoDaysAgo = date('Y-m-d', strtotime('-2 day'));
 $defaultDay = $yesterday;
 // Deep link from topn.php: ?date=YYYY-MM-DD
 if (isset($_GET['date']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$_GET['date'])) {
     $defaultDay = (string)$_GET['date'];
 }
-$defaultCompare1 = $today;
-$defaultCompare2 = $yesterday;
+// Overlay defaults to two finished days (today still incomplete).
+$defaultCompare1 = $yesterday;
+$defaultCompare2 = $twoDaysAgo;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -619,7 +621,7 @@ $defaultCompare2 = $yesterday;
                 <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
                     <i data-lucide="layers" class="w-5 h-5 text-indigo-500"></i> Two-Day Overlay
                 </h2>
-                <p class="text-xs text-slate-400">Defaults: today vs yesterday - type or use the calendar icon</p>
+                <p class="text-xs text-slate-400">Defaults: yesterday vs 2 days ago - type or use the calendar icon</p>
             </div>
             <div class="flex flex-wrap items-center gap-3 bg-slate-50 p-2 rounded-xl border border-slate-100">
                 <div class="flex items-center gap-1.5">
@@ -1090,12 +1092,14 @@ $defaultCompare2 = $yesterday;
                 ],
                 chart: {
                     type: 'area',
-                    height: 420,
+                    height: 400,
                     stacked: false,
                     animations: { enabled: false },
                     toolbar: { show: true },
                     zoom: { enabled: true },
-                    parentHeightOffset: 12
+                    parentHeightOffset: 0,
+                    redrawOnParentResize: true,
+                    redrawOnWindowResize: true
                 },
                 colors: ['#7c3aed', '#10b981'],
                 dataLabels: { enabled: false },
@@ -1141,12 +1145,14 @@ $defaultCompare2 = $yesterday;
                 ],
                 chart: {
                     type: 'area',
-                    height: 420,
+                    height: 400,
                     stacked: true,
                     animations: { enabled: false },
                     toolbar: { show: true },
                     zoom: { enabled: true },
-                    parentHeightOffset: 12
+                    parentHeightOffset: 0,
+                    redrawOnParentResize: true,
+                    redrawOnWindowResize: true
                 },
                 colors: ['#3b82f6', '#7c3aed', '#10b981'],
                 dataLabels: { enabled: false },
@@ -1198,12 +1204,14 @@ $defaultCompare2 = $yesterday;
                 ],
                 chart: {
                     type: 'line',
-                    height: 420,
+                    height: 400,
                     stacked: false,
                     animations: { enabled: false },
                     toolbar: { show: true },
                     zoom: { enabled: true },
-                    parentHeightOffset: 12
+                    parentHeightOffset: 0,
+                    redrawOnParentResize: true,
+                    redrawOnWindowResize: true
                 },
                 colors: ['#4f46e5', '#f59e0b'],
                 dataLabels: { enabled: false },
@@ -1228,12 +1236,20 @@ $defaultCompare2 = $yesterday;
         host.innerHTML = '';
         try {
             chartIntraday = new ApexCharts(host, options);
-            chartIntraday.render();
+            // Await + resize: concurrent Apex mounts on this page often paint blank
+            // until a later pan/reload; pan worked because it re-rendered alone.
+            return chartIntraday.render().then(function () {
+                if (chartIntraday && typeof chartIntraday.windowResize === 'function') {
+                    chartIntraday.windowResize();
+                }
+                syncExplorerUrl();
+            });
         } catch (err) {
             console.error('explorer chart render failed', err);
             host.innerHTML = '<p class="text-sm text-rose-600 p-6">Chart failed to render. See console.</p>';
+            syncExplorerUrl();
+            return Promise.resolve();
         }
-        syncExplorerUrl();
     }
 
     async function loadExplorer() {
@@ -1249,12 +1265,17 @@ $defaultCompare2 = $yesterday;
             const data = await res.json();
             if (data.error) {
                 console.error('explorer ajax error', data.error);
+                const host = document.querySelector('#chart-intraday');
+                if (host) {
+                    host.innerHTML = '<p class="text-sm text-rose-600 p-6">Explorer error: '
+                        + String(data.error) + '</p>';
+                }
                 return;
             }
             explorerStart = data.start;
             explorerEnd = data.end;
             explorerPayload = data;
-            renderExplorerChart();
+            await renderExplorerChart();
         } catch (err) {
             console.error('explorer load failed', err);
             const host = document.querySelector('#chart-intraday');
@@ -1270,36 +1291,65 @@ $defaultCompare2 = $yesterday;
         const host = document.querySelector('#chart-compare');
         const d1 = document.getElementById('compareText1').value.trim();
         const d2 = document.getElementById('compareText2').value.trim();
-        if (!isValidIsoDate(d1) || !isValidIsoDate(d2)) return;
-
-        const res = await fetch(
-            `analytics.php?ajax=compare&date1=${encodeURIComponent(d1)}&date2=${encodeURIComponent(d2)}`
-        );
-        const data = await res.json();
-        if (data.error) return;
-
-        const options = {
-            ...baseChartOptions,
-            series: [
-                { name: d1, data: data.series1 },
-                { name: d2, data: data.series2 }
-            ],
-            chart: { ...baseChartOptions.chart, type: 'line', height: 400 },
-            colors: ['#4f46e5', '#f59e0b'],
-            xaxis: { type: 'category', categories: data.categories, labels: timeAxisLabels },
-            tooltip: {
-                custom: function (opts) {
-                    return pacTooltip(opts);
-                }
+        if (!isValidIsoDate(d1) || !isValidIsoDate(d2)) {
+            if (host) {
+                host.innerHTML = '<p class="text-sm text-slate-400 p-6">Pick two valid dates (YYYY-MM-DD).</p>';
             }
-        };
-        if (chartCompare) {
-            chartCompare.destroy();
-            chartCompare = null;
+            return;
         }
-        host.innerHTML = '';
-        chartCompare = new ApexCharts(host, options);
-        chartCompare.render();
+
+        try {
+            const res = await fetch(
+                `analytics.php?ajax=compare&date1=${encodeURIComponent(d1)}&date2=${encodeURIComponent(d2)}`
+            );
+            const data = await res.json();
+            if (data.error) {
+                host.innerHTML = '<p class="text-sm text-rose-600 p-6">Compare error: '
+                    + String(data.error) + '</p>';
+                return;
+            }
+            if (!Array.isArray(data.categories) || !data.categories.length) {
+                host.innerHTML = '<p class="text-sm text-slate-400 p-6">No compare slots returned.</p>';
+                return;
+            }
+
+            const options = {
+                ...baseChartOptions,
+                series: [
+                    { name: d1, data: data.series1 },
+                    { name: d2, data: data.series2 }
+                ],
+                chart: {
+                    ...baseChartOptions.chart,
+                    type: 'line',
+                    height: 400,
+                    redrawOnParentResize: true,
+                    redrawOnWindowResize: true
+                },
+                colors: ['#4f46e5', '#f59e0b'],
+                xaxis: { type: 'category', categories: data.categories, labels: timeAxisLabels },
+                tooltip: {
+                    custom: function (opts) {
+                        return pacTooltip(opts);
+                    }
+                }
+            };
+            if (chartCompare) {
+                chartCompare.destroy();
+                chartCompare = null;
+            }
+            host.innerHTML = '';
+            chartCompare = new ApexCharts(host, options);
+            await chartCompare.render();
+            if (chartCompare && typeof chartCompare.windowResize === 'function') {
+                chartCompare.windowResize();
+            }
+        } catch (err) {
+            console.error('compare load failed', err);
+            if (host) {
+                host.innerHTML = '<p class="text-sm text-rose-600 p-6">Failed to load two-day overlay.</p>';
+            }
+        }
     }
 
     function scheduleCompareLoad() {
@@ -1376,6 +1426,9 @@ $defaultCompare2 = $yesterday;
         host.innerHTML = '';
         chartEnvelope = new ApexCharts(host, options);
         await chartEnvelope.render();
+        if (chartEnvelope && typeof chartEnvelope.windowResize === 'function') {
+            chartEnvelope.windowResize();
+        }
     }
 
     document.addEventListener('DOMContentLoaded', async () => {
@@ -1390,10 +1443,12 @@ $defaultCompare2 = $yesterday;
         bindDateField('compareText2', 'comparePicker2', () => scheduleCompareLoad());
 
         updateDayViewChrome();
-        loadExplorer();
-        loadComparison();
-        loadEnvelope();
         lucide.createIcons();
+        // One Apex mount at a time. Parallel explorer + compare + envelope often
+        // left the first charts blank until a later pan re-rendered alone.
+        await loadExplorer();
+        await loadComparison();
+        await loadEnvelope();
     });
 </script>
 

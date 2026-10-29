@@ -18,24 +18,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'poll') {
         die("Error: logger.py not found at " . htmlspecialchars($pyScript));
     }
 
-// Prioritize Package Center Python 3.14 before DSM system Python
-// Auto-detect Python 3 binary on Synology DSM or Raspberry Pi
-    $pythonCandidates = [
-        '/var/packages/Python3.14/target/bin/python3',
-        '/var/packages/Python3.14/target/bin/python3.14',
-        '/var/packages/Python3.14/target/usr/bin/python3',
-        '/usr/local/bin/python3.14',
-        '/usr/local/bin/python3',
-        '/usr/bin/python3',
-        'python3'
-    ];
-    $pyBin = 'python3';
-    foreach ($pythonCandidates as $candidate) {
-        if (@file_exists($candidate) && @is_executable($candidate)) {
-            $pyBin = $candidate;
-            break;
-        }
-    }
+    // Newest Package Center / versioned Python (hp_python_bin in site_settings.php).
+    $pyBin = hp_python_bin();
 
     $output = [];
     $returnCode = 0;

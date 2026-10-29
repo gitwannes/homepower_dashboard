@@ -1135,17 +1135,20 @@ if __name__ == '__main__':
                 print("=== SUCCESS: Open analytics.php / topn.php in browser ===")
 
         elif '-daily' in args:
-            # Nightly: last 2 local days of readings, last 3 local days of daily_history.
+            # Nightly steps: 1 downsample, 2 sunnyportal (silent if empty staging),
+            # Fluvius stitch (no status line), 3 daily, 4 monthly, 5 top_periods, 6 top_records.
             downsample_live_readings(conn, step=1)
             stitch_lo, stitch_hi = fluvius_import.local_span(conn, 2)
             sp = sunnyportal_pull.stitch_solar_power(conn, stitch_lo, stitch_hi)
-            sunnyportal_pull.print_stitch_summary(sp, f"{stitch_lo}..{stitch_hi}")
+            sunnyportal_pull.print_stitch_summary(
+                sp, f"{stitch_lo}..{stitch_hi}", step=2
+            )
             fluvius_import.stitch_electricity_curve(conn, stitch_lo, stitch_hi)
-            build_daily_history(conn, days_back=3, step=2)
-            build_monthly_history(conn, step=3)
-            build_top_periods(conn, step=4)
+            build_daily_history(conn, days_back=3, step=3)
+            build_monthly_history(conn, step=4)
+            build_top_periods(conn, step=5)
             # Beat check uses the same calendar span as the Fluvius stitch (last 2 days back).
-            refresh_top_records_from_recent(conn, stitch_lo, stitch_hi, step=5)
+            refresh_top_records_from_recent(conn, stitch_lo, stitch_hi, step=6)
 
         elif '-today' in args:
             sys.stderr.write(
