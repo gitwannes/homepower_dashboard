@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4**, **A5**, **A5b**, **A6**, **A7**, **A8**, **A9**, **A10**, **A12**, **A13**, and **A16 Done**; **A17**, **A18**, **A11**, **A14**, **A15** queued. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-29 (**A16** Done)  
+**Status:** **A4**-**A13**, **A16**, **A17**, **A19 Done**; **A18**/**A20** kicked off; **A11**, **A14**, **A15** queued. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-29 (**A19** closed)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py`
 
 ---
@@ -25,16 +25,52 @@
 | **A14** | open | Virtual kWh meters from Settings (bias to import / export / PV) |
 | **A15** | open | Settings save: probe every filled integration; fail -> modal, stay on page |
 | **A16** | Done | Per-phase W on `readings` + logger. Product: [`docs/architecture.md`](../architecture.md) |
-| **A17** | open | Rollup: per-phase W into `history_5min`. Depends on A16. Not kicked off |
-| **A18** | open | UI: per-phase power. Depends on A16 (A17 if 5-min). Not kicked off |
+| **A17** | Done | Rollup: per-phase W into `history_5min`. Product: [`docs/architecture.md`](../architecture.md) |
+| **A18** | open | UI: per-phase power. Depends on A16+A17. Kicked off |
+| **A19** | Done | Analytics explorer: calendar-day **Today** preset (default). Product: [`docs/architecture.md`](../architecture.md) |
+| **A20** | open | Settings locked-by-default / Unlock then Save-if-dirty. Kicked off |
 
-**Parallel:** **A16** is logger/`readings` only; Sequence #1. **A17**/**A18** follow A16 (rollup then UI). **A11** reads Fluvius gas / warehouse wind. **A14** / **A15** Settings-adjacent.
+**Parallel:** **A17**/**A19** closed. **A18** kicked off (needs A16+A17 data). **A11** Fluvius gas / wind. **A14** / **A15** / **A20** Settings-adjacent.
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
 ---
 
 ## Verbatim inbox
+
+### 2026-10-29 - close A17 + kickoff A18
+
+> clode A17 & kickoff A18
+
+A17 closed. A18 kickoff locked 2026-10-29 (operator: all ok). Waiting `implement`.
+
+### 2026-10-29 - triage A20 (Settings unlock UX, assess)
+
+> settings page: all fields are disabled (including DB backup but NOT CSV download)- button "save settings" is not there, it reads "unlock settings" - which will ask for pw in modal - if correct: all fields ware enabled, then the button becomes save IF something is changed
+> assess
+
+Placed: **A20** (new; not reopen **A6**). Affinity **A**. Kicked off 2026-10-29; open Qs in the A20 section.
+
+### 2026-10-29 - triage + kickoff A19 (Today explorer preset)
+
+> analytics page: grid exchange: add view: "today" which is default, which will show 00:00-23:59 today - assess
+
+> 1: fixed midnight, so "today" always shows 24hrs - arrows left-right then move day forward/back (if possible)
+> 2: all 3
+> 3: yes
+> 4: yes, cfr 1
+
+> 1: if today: then right-arrow will be disabled (same for very first day in DB for left arrow)
+> 2: DST days: spring ~23 h / autumn ~25 h
+
+> triage (give it a phase) & kickoff (check for open items)
+
+> 1: also readins, whatever is first in dB
+> 2: next to 24h but default
+> 3: ok
+> 4: yes, same
+
+Placed: **A19**. Locks complete in the A19 section. No open Qs.
 
 ### 2026-10-29 - A16 kickoff answers + triage A17/A18
 
@@ -263,12 +299,12 @@ Balance vs Classic on `index.php` and `analytics.php` (default Balance). Three p
 ## A5b — Balance explorer (window, pan, mixed resolution)
 
 **Status:** **Done** 2026-10-27  
-**Product:** [`docs/architecture.md`](../architecture.md) (UI map: index / analytics / Settings CSV) · `explorer_chart.php` · `balance_chart.php` · `live_chart.php`  
+**Product:** [`docs/architecture.md`](../architecture.md) (UI map: index / analytics / Settings CSV) - `explorer_chart.php` - `balance_chart.php` - `live_chart.php`  
 **Depends on:** **A5** Done
 
 ### Done summary
 
-Analytics owns the power explorer: presets 15 m–7 d (default **6 h** ending now), **Reset view**, pan by one window step, deep links (`range`, `from`/`to`, `view`). Index is a fixed **2 h** live pulse with Analytics link. Modes on both pages: **Exchange** (default, bipolar signed net), **Balance** (smooth stacked bands), **Classic** (straight area). Mixed resolution rule **V**: per 5-minute bucket, if at least two 1-min samples fall in **bucket ∩ window**, emit those; else `history_5min` (Fluvius W derive unchanged). No interpolate across a 1-min/5-min change; tooltip shows source. Telemetry table removed from index; **Download 1-min CSV** on Settings beside backup. Analytics **Generate today table** removed (nightly `-daily` owns today downsample).
+Analytics owns the power explorer: rolling presets 15 m-7 d, **Reset view**, pan, deep links (`range`, `from`/`to`, `view`). Index is a fixed **2 h** live pulse with Analytics link. Modes on both pages: **Exchange** (default), **Balance**, **Classic**. Mixed resolution rule **V**. Telemetry table removed from index; **Download 1-min CSV** on Settings. **A19** later made calendar-day **Today** the explorer default (see architecture).
 
 ### DoD
 
@@ -627,33 +663,153 @@ None.
 
 ## A17 - Rollup per-phase W into history_5min
 
-**Status:** open (triaged 2026-10-29, not kicked off)
+**Status:** Done (2026-10-29)
 **Size:** **S**
-**Depends on:** **A16**
+**Depends on:** **A16** (Done)
 
 ### Placement
 
-Carry `power_l1_w` / `power_l2_w` / `power_l3_w` (or averages) onto `history_5min` during `-daily` / `-buildall`. Spec at kickoff (avg vs last sample; rebuild rules).
+Affinity **A**. Carry per-phase W from `readings` onto `history_5min` in the downsample path used by `-daily` / `-buildall`. No UI (**A18**).
 
 ### Verbatim - 2026-10-29
 
 > & triage the rollup and UI changes
+
+> kickoff A17
+
+> ok & implement
+
+### Kickoff locks (operator confirmed 2026-10-29)
+
+| # | Lock |
+|---|---|
+| 1 | AVG + ROUND per phase (same as `grid_power_w`) |
+| 2 | Re-scale trio to `grid_power_w` (A16 largest-remainder via `phase_power.py`) |
+| 3 | Fill only if every 1-min sample in the bucket has non-NULL phases; else NULL trio |
+| 4 | WebBox / Fluvius-only -> NULL |
+| 5 | Columns `power_l1_w` / `power_l2_w` / `power_l3_w` INTEGER |
+| 6 | Same path for `-daily` and `-buildall` (purge + buildall rebuilds phases). No mandatory `-buildall` at ship |
+
+### DoD
+
+- [x] `history_5min` schema + migrate three phase columns
+- [x] `-daily` / `-buildall` downsample writes them per locked rules
+- [x] Shared `phase_power.py` (logger + rollup)
+- [x] No UI (A18); product docs: [`docs/architecture.md`](../architecture.md)
+
+### Shipped summary
+
+`downsample_live_readings` writes phase averages when the bucket is complete, then re-scales to `grid_power_w`. Incomplete / non-P1 rows stay NULL. Deploy `phase_power.py`, `rollup.py`, `logger.py`, `importer.py`; run `rollup.py -daily` (or `-buildall` after purge) to fill recent 5-min rows. `rollup.py` exits cleanly if Python &lt; 3.9 (use `run_python.sh` on Synology).
+
+### Close-out (2026-10-29)
+
+- Product reference: [`docs/architecture.md`](../architecture.md) (`readings` + `history_5min` phase columns).
+- No separate phase file to archive (section lives in this file).
+- Operator confirmed smoke on 1-min rows earlier; 5-min after `-daily`.
 
 ---
 
+
 ## A18 - UI per-phase power
 
-**Status:** open (triaged 2026-10-29, not kicked off)
+**Status:** open (kickoff locked 2026-10-29; waiting `implement`)
 **Size:** **M**
-**Depends on:** **A16** (and **A17** if any 5-min / day chart uses phase series)
+**Depends on:** **A16** + **A17** (Done)
 
 ### Placement
 
-Show / chart per-phase power somewhere in the product UI. Page and series list at kickoff. Not part of A16.
+Affinity **A** (analytics / live UI). Chart or surface for L1/L2/L3 W from `readings` / `history_5min`. Spec at kickoff.
 
 ### Verbatim - 2026-10-29
 
 > & triage the rollup and UI changes
+
+> clode A17 & kickoff A18
+
+### Verified
+
+- 1-min: `readings.power_l1_w` / `_l2_` / `_l3_` (A16); sum == `active_power` when filled.
+- 5-min: same columns on `history_5min` (A17); sum == `grid_power_w` when filled; NULL when incomplete / non-P1.
+- Index already shows **live** L1/L2/L3 bars from `latest_state` P1 JSON (instant W/V/A) - not a history chart.
+- Explorer / index power charts today: Exchange / Balance / Classic only (no phase series).
+- Settings 1-min CSV does **not** include phase columns yet.
+
+### Open questions (block implement)
+
+1. **Where:** index live pulse only, analytics explorer only, or **both**?
+2. **Presentation:** new view mode **Phases** (fourth switch next to Exchange/Balance/Classic), or always-on overlay / separate card?
+3. **Series:** L1 / L2 / L3 only, or also net (`active_power` / `grid_power_w`)?
+4. **Chart style:** three bipolar lines (same signed W as net), stacked bars, or something else?
+5. **Gaps:** NULL phase samples = chart gap (same as missing grid), correct?
+6. **1-phase plants:** hide the Phases control entirely when recent data has no phase columns filled?
+7. **Settings CSV:** add the three phase columns to the 1-min download in this phase, or leave for later?
+
+### Kickoff locks (operator confirmed 2026-10-29 - "all ok")
+
+| # | Lock |
+|---|---|
+| 1 | **Both** index (2 h pulse) and analytics (mixed 1/5-min path) |
+| 2 | Fourth switch **Phases** (`?view=phases`) next to Exchange / Balance / Classic |
+| 3 | **L1 + L2 + L3 only** (no net line); tooltip may show sum |
+| 4 | **Three bipolar lines** (signed W, same convention as `active_power`) |
+| 5 | **NULL = gap** (no zero-fill) |
+| 6 | **Hide Phases** when the loaded window has no non-NULL phase samples |
+| 7 | Settings 1-min CSV includes `power_l1_w` / `power_l2_w` / `power_l3_w` (empty when NULL) |
+
+### Open questions
+
+None. Kickoff locked. Wait for operator `implement`.
+
+### DoD
+
+- [ ] Index + analytics: Phases view per locks
+- [ ] Uses stored `power_l*_w` (not only live P1 JSON)
+- [ ] Hide Phases when window has no phase data
+- [ ] Settings 1-min CSV phase columns
+- [ ] Product docs on close-out
+
+---
+
+
+## A19 - Analytics explorer: Today calendar-day preset
+
+**Status:** Done (closed 2026-10-29)
+**Size:** **S**
+**Depends on:** none (**A5b** Done)
+**Product:** [`docs/architecture.md`](../architecture.md) (analytics explorer Today default)
+
+### Shipped summary
+
+Calendar-day **Today** preset (chip after 24 h, before 7 d) is the explorer default for Exchange / Balance / Classic. Axis = local midnight to next midnight (DST length as-is). Day pan with -> disabled on today and <- disabled on earliest day in `history_5min` U `readings`. `?date=` matches that behaviour. Reset view -> Today. Rolling presets kept.
+
+### DoD
+
+- [x] Preset **Today**; default; Reset view -> Today
+- [x] Axis / DST / day pan / arrow caps / `?date=`
+- [x] Product doc + roadmap
+- [x] Operator close
+
+### Delivery locks (record)
+
+| Lock | Decision |
+|---|---|
+| Default | **Today** (all three modes); chip after `24h`, before `7d` |
+| Axis | Midnight-midnight; no cap at now |
+| Pan | +/- 1 calendar day; caps as above |
+| Floor | Earliest day in `history_5min` or `readings` |
+| Out of scope | Index pulse; overlay/envelope; warehouse |
+
+### Verbatim - 2026-10-29
+
+> analytics page: grid exchange: add view: "today" which is default, which will show 00:00-23:59 today - assess
+
+> 1: fixed midnight... 2: all 3 3: yes 4: yes, cfr 1
+
+> 1: if today: then right-arrow will be disabled... 2: DST days: spring ~23 h / autumn ~25 h
+
+> triage (give it a phase) & kickoff (check for open items)
+
+> 1: also readins, whatever is first in dB 2: next to 24h but default 3: ok 4: yes, same
 
 ---
 
@@ -688,6 +844,78 @@ On Settings save, probe every filled integration. On failure: modal and stay on 
 > [open]  Settings save: probe every filled integration; fail -> modal, stay on page
 
 ---
+
+## A20 - Settings locked-by-default / Unlock then Save-if-dirty
+
+**Status:** open (kickoff locked 2026-10-29; waiting `implement`)
+**Size:** **S**
+**Depends on:** Settings (**A6** Done). Related: **A9** backup; **A15** still on Save after unlock (probe).
+**Prereqs:** **A6** Done - ok. No blockers.
+
+### Placement
+
+Affinity **A**. New UX on `settings.php`: page starts locked; Unlock asks admin password; then fields (incl. DB backup) enable; primary button becomes Save only when the form is dirty. **1-min CSV** usable while locked, outside the admin pane. Does not reopen Done **A6** - supersedes parts of A6 UX at ship after kickoff locks.
+
+### Verified (code / product docs)
+
+- Save, backup download, backup restore, and **1-min CSV** all currently ask admin password via the gate modal (`settings.php` + [`architecture.md`](../architecture.md)).
+- Device secrets: stars when set; **Edit** verifies admin then clears the field for a new value.
+- Change admin password: separate modal (current + new + new); not via Save.
+- No stay-logged-in session today. `verify_admin` JSON exists for Edit.
+- First-run create-admin and need-config flows stay out of this unlock UX (page is not the normal locked form until admin exists).
+
+### Kickoff locks (operator 2026-10-29)
+
+| # | Lock |
+|---|---|
+| 1 | Unlock window duration is a **named constant / variable** (default **5 minutes** from unlock) so the operator can change it without hunting magic numbers. On expiry: if form **not dirty** -> re-lock. If **dirty** -> modal **Save** or **Cancel**. Choosing **Save** asks admin password (timeout path). Cancel discards edits and re-locks. Reload or leave Settings ends unlock immediately. |
+| 2 | **Within** the unlock window: **Save does not ask** admin password again (UX). Server still receives the unlock password from page JS memory so crafted POSTs without a prior unlock do not save. |
+| 3 | **Change admin password:** control **disabled until unlock**. Inside the unlock window, no extra unlock/gate ask (change form still collects current + new + new). |
+| 4 | **1-min CSV:** **no password** (UI + server). Move the control out of the admin/config pane (readings export, available while locked). |
+| 5 | **Device passwords after unlock:** keep **Edit**; inside the unlock window Edit does **not** ask admin. Edit still clears the field for replace; empty+untouched keeps the stored secret; stored value never shown. |
+| 6 | **Backup download** while unlocked: **no password** (UI + server; control disabled until unlock). **Restore:** **always** admin password (+ existing destroy-confirm). |
+| 7 | **After successful Save:** **re-lock** (clear dirty / end unlock window). |
+
+### Open questions
+
+None. Ready for `implement`.
+
+### DoD
+
+- [ ] Settings loads locked: config fields + backup download/restore + change-admin disabled; CSV outside admin pane, no password
+- [ ] Unlock -> timed window (named variable, default 5 min); Save only when dirty; within window Save without pw; after Save re-lock
+- [ ] Timer expiry: clean re-lock, or dirty Save/Cancel modal (Save asks pw)
+- [ ] Device-password Edit kept; no admin ask inside unlock window
+- [ ] Backup download: no pw when unlocked; restore always pw + confirm
+- [ ] Wrong unlock pw stays locked
+- [ ] A6 first-run / need-config unchanged; product docs on close-out
+- [ ] No A15 probe work in this ship
+
+### Verbatim - 2026-10-29 (device pw + confirm)
+
+> device password fields after unlock: keep edit, no admin when in 5-min
+> make that 5-min a variable so I can change if needed
+> backup download & csv download: correct: no pw needed - restore: always pw
+
+### Verbatim - 2026-10-29 (kickoff answers)
+
+> 1: max 5 mins, then if no edits done: lock again - if edits are done: open modal to ask to save or cancel - to save: ask pw
+> 2: if within time 5 mins: no pw
+> 3: admin pw change: don't ask if in 5min-timeframe
+> 4: download csv = no pw - put in in UI so that it not in the "admin" pane
+> 5: disabled until unlock
+> 6: restore: always pw
+> 7: save = re-lock
+
+### Verbatim - 2026-10-29 (triage)
+
+> settings page: all fields are disabled (including DB backup but NOT CSV download)- button "save settings" is not there, it reads "unlock settings" - which will ask for pw in modal - if correct: all fields ware enabled, then the button becomes save IF something is changed
+> assess
+
+---
+
+
+
 
 ## Out of scope (until re-triaged)
 

@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
 # --- file: rollup.py ---
+import sys
+
+# zoneinfo (sunnyportal_pull) and other 3.9+ stdlib need this. Synology bare
+# python3 is often 3.8 - fail before imports so the operator sees a clear message.
+if sys.version_info < (3, 9):
+    _ver = "%d.%d" % (sys.version_info.major, sys.version_info.minor)
+    sys.stderr.write(
+        "rollup.py requires Python 3.9 or newer (this interpreter is %s).\n"
+        "Use run_python.sh, or a python3.9+ binary from Package Center.\n"
+        % _ver
+    )
+    sys.exit(1)
+
 import json
 import os
 import re
-import sys
 import sqlite3
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import fluvius_import
+import phase_power
 import site_config
 import sunnyportal_pull
 
@@ -97,11 +110,15 @@ def init_analytical_db(conn: sqlite3.Connection) -> None:
                 sample_count INTEGER DEFAULT 1,
                 data_source TEXT,
                 grid_import_kwh REAL,
-                grid_export_kwh REAL
+                grid_export_kwh REAL,
+                power_l1_w INTEGER,
+                power_l2_w INTEGER,
+                power_l3_w INTEGER
             )
         """)
         # Existing databases were created before the Fluvius quarter columns.
         fluvius_import.ensure_history_grid_columns(conn)
+        phase_power.ensure_history_phase_columns(conn)
         fluvius_import.ensure_interval_schema(conn)
         sunnyportal_pull.ensure_staging_schema(conn)
 
@@ -1005,15 +1022,44 @@ def downsample_live_readings(
         scope_label = "last 2 days"
 
     start_time = time.time()
+    phase_power.ensure_readings_phase_columns(conn)
+    phase_power.ensure_history_phase_columns(conn)
     # Open 5-min bucket in local time (exclude incomplete current slice)
     now_cut = """strftime('%Y-%m-%d %H:', datetime('now', 'localtime')) ||
                  printf('%02d:00', (CAST(strftime('%M', datetime('now', 'localtime')) AS INTEGER) / 5) * 5)"""
+
+    # A17: phase W only when every 1-min sample in the bucket has all three columns.
+    phase_avg_l1 = """
+                CASE
+                    WHEN COUNT(*) = COUNT(power_l1_w)
+                     AND COUNT(*) = COUNT(power_l2_w)
+                     AND COUNT(*) = COUNT(power_l3_w)
+                    THEN CAST(ROUND(AVG(power_l1_w)) AS INTEGER)
+                    ELSE NULL
+                END"""
+    phase_avg_l2 = """
+                CASE
+                    WHEN COUNT(*) = COUNT(power_l1_w)
+                     AND COUNT(*) = COUNT(power_l2_w)
+                     AND COUNT(*) = COUNT(power_l3_w)
+                    THEN CAST(ROUND(AVG(power_l2_w)) AS INTEGER)
+                    ELSE NULL
+                END"""
+    phase_avg_l3 = """
+                CASE
+                    WHEN COUNT(*) = COUNT(power_l1_w)
+                     AND COUNT(*) = COUNT(power_l2_w)
+                     AND COUNT(*) = COUNT(power_l3_w)
+                    THEN CAST(ROUND(AVG(power_l3_w)) AS INTEGER)
+                    ELSE NULL
+                END"""
 
     sql = f"""
             INSERT INTO history_5min (
                 timestamp, grid_power_w, import_t1, import_t2, export_t1, export_t2,
                 total_import, total_export, capacity_peak_w, gas, water,
-                solar_power_w, solar_total_kwh, solar_radiation, sample_count, data_source
+                solar_power_w, solar_total_kwh, solar_radiation, sample_count, data_source,
+                power_l1_w, power_l2_w, power_l3_w
             )
             SELECT
                 strftime('%Y-%m-%d %H:', timestamp) ||
@@ -1024,7 +1070,10 @@ def downsample_live_readings(
                 MAX(gas), MAX(water),
                 ROUND(AVG(solar_power)), MAX(solar_total_kwh),
                 AVG(solar_radiation),
-                COUNT(*), 'live_p1'
+                COUNT(*), 'live_p1',
+                {phase_avg_l1},
+                {phase_avg_l2},
+                {phase_avg_l3}
             FROM readings
             WHERE {where_sql}
             GROUP BY snapped_ts
@@ -1053,11 +1102,15 @@ def downsample_live_readings(
                 data_source     = CASE
                     WHEN history_5min.data_source = 'webbox_archive' THEN 'merged'
                     ELSE 'live_p1'
-                END;
+                END,
+                power_l1_w      = excluded.power_l1_w,
+                power_l2_w      = excluded.power_l2_w,
+                power_l3_w      = excluded.power_l3_w;
         """
     with conn:
         cur = conn.execute(sql, where_params)
         changed = cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else -1
+        _rescale_history_phases(conn, where_sql, where_params)
     duration = time.time() - start_time
     rows_txt = f"{changed:,}" if isinstance(changed, int) and changed >= 0 else str(changed)
     _status_line(
@@ -1066,6 +1119,46 @@ def downsample_live_readings(
         duration,
     )
     return int(changed) if changed is not None else -1
+
+
+def _rescale_history_phases(
+    conn: sqlite3.Connection,
+    where_sql: str,
+    where_params: Tuple[str, ...],
+) -> None:
+    """A17: largest-remainder so power_l1+l2+l3 == grid_power_w on filled buckets.
+
+    where_sql uses history_5min.timestamp the same way readings.timestamp is scoped
+    (day LIKE, last 2 days, or all rows).
+    """
+    rows = conn.execute(
+        f"""
+        SELECT timestamp, grid_power_w, power_l1_w, power_l2_w, power_l3_w
+        FROM history_5min
+        WHERE power_l1_w IS NOT NULL
+          AND power_l2_w IS NOT NULL
+          AND power_l3_w IS NOT NULL
+          AND grid_power_w IS NOT NULL
+          AND ({where_sql})
+        """,
+        where_params,
+    ).fetchall()
+    updates: List[Tuple[int, int, int, str]] = []
+    for ts, grid_w, l1, l2, l3 in rows:
+        raw = [int(l1), int(l2), int(l3)]
+        target = int(grid_w)
+        scaled = phase_power.scale_phases_to_active(raw, target)
+        if scaled != raw:
+            updates.append((scaled[0], scaled[1], scaled[2], str(ts)))
+    if updates:
+        conn.executemany(
+            """
+            UPDATE history_5min
+            SET power_l1_w = ?, power_l2_w = ?, power_l3_w = ?
+            WHERE timestamp = ?
+            """,
+            updates,
+        )
 
 
 def _apply_saved_pac(conn: sqlite3.Connection) -> None:

@@ -5,21 +5,15 @@ import urllib.error
 import ssl
 import socket
 import json
-import math
 import sqlite3
 import hashlib
 import os
 import sys
 import fcntl
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
 
 import site_config
-
-# Fixed message so system_logs streaks collapse repeated Q2 hard-edge samples.
-PHASE_SUM_HARD_EDGE_WARN = (
-    "Phase power sum is 0 but active_power_w is not; stored raw L1/L2/L3 without scale."
-)
+from phase_power import compute_phase_powers
 
 # Allow both cron (www-data) and personal user to access created database
 os.umask(0)
@@ -171,61 +165,6 @@ def fetch_p1(ip):
     with urllib.request.urlopen(req, timeout=5) as response:
         raw = response.read().decode('utf-8')
         return json.loads(raw)
-
-
-def scale_phases_to_active(raw: List[int], active_power: int) -> List[int]:
-    """Largest-remainder scale so L1+L2+L3 == active_power (INTEGER watts).
-
-    Caller must not invoke this when sum(raw) == 0 and active_power != 0
-    (Q2 hard edge: store raw instead).
-    """
-    phase_sum = raw[0] + raw[1] + raw[2]
-    if phase_sum == active_power:
-        return list(raw)
-    if phase_sum == 0:
-        return list(raw)
-
-    exact = [r * active_power / phase_sum for r in raw]
-    floors = [math.floor(x) for x in exact]
-    residual = active_power - sum(floors)
-    # Largest leftover fraction first; tie-break largest |raw|, then index.
-    order = sorted(
-        range(3),
-        key=lambda i: (-(exact[i] - floors[i]), -abs(raw[i]), i),
-    )
-    out = list(floors)
-    if residual > 0:
-        for k in range(residual):
-            out[order[k % 3]] += 1
-    elif residual < 0:
-        rev = list(reversed(order))
-        for k in range(-residual):
-            out[rev[k % 3]] -= 1
-    return out
-
-
-def compute_phase_powers(
-    p1_data: Dict,
-    active_power: int,
-) -> Tuple[Optional[int], Optional[int], Optional[int], Optional[str]]:
-    """Return stored L1/L2/L3 W and an optional Q2 WARN message.
-
-    Fills only when all three active_power_l*_w keys are present and non-null.
-    Otherwise returns (None, None, None, None) and the poller leaves columns NULL.
-    """
-    keys = ("active_power_l1_w", "active_power_l2_w", "active_power_l3_w")
-    if any(k not in p1_data or p1_data[k] is None for k in keys):
-        return None, None, None, None
-
-    raw = [int(p1_data[k]) for k in keys]
-    phase_sum = raw[0] + raw[1] + raw[2]
-
-    # Q2 hard edge: cannot scale; keep raw and warn.
-    if phase_sum == 0 and active_power != 0:
-        return raw[0], raw[1], raw[2], PHASE_SUM_HARD_EDGE_WARN
-
-    scaled = scale_phases_to_active(raw, active_power)
-    return scaled[0], scaled[1], scaled[2], None
 
 
 def extract_sma_val(device_dict, key):

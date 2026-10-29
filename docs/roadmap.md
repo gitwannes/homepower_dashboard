@@ -75,8 +75,8 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 - [x] Multi-page dashboard:
       - Live (`index.php`): 2-hour pulse of 1-minute readings; Exchange / Balance / Classic (Exchange default). Exploration (`analytics.php`), period summaries (`summary.php`).
       - Cross-navigation between hubs.
-- [x] Day Explorer on `analytics.php` (**A5b**):
-      - Exchange / Balance / Classic explorer: clock window (default 6 h), presets, pan, mixed 1-min / 5-min (rule V). Clear-sky envelope is a separate chart.
+- [x] Day Explorer on `analytics.php` (**A5b** + **A19**):
+      - Exchange / Balance / Classic explorer: rolling presets plus calendar-day **Today** (default; chip after 24 h); day pan with arrow caps; mixed 1-min / 5-min (rule V). Clear-sky envelope is a separate chart.
 - [x] Two-Day Overlay on `analytics.php`.
 - [x] Summary period views (`summary.php`):
       - Week, month, year, then **All years** last (lifetime bars vs live `expected_monthly` PVGIS year baseline; omit PVGIS when all months are 0).

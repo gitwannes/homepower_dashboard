@@ -1,8 +1,8 @@
 <?php
 # --- file: explorer_chart.php ---
 /**
- * Analytics Balance/Classic explorer (A5b).
- * Clock window + pan; mixed 1-min / 5-min per bucket (rule V).
+ * Analytics Balance/Classic/Exchange explorer (A5b + A19).
+ * Clock window + calendar-day Today; pan; mixed 1-min / 5-min (rule V).
  */
 require_once __DIR__ . '/live_chart.php';
 
@@ -23,16 +23,110 @@ function hp_sql_datetime(int $ts): string
 }
 
 /**
- * Explorer window: same presets as live (default 6h). Allows end in the past for pan.
+ * Explorer range chips: live rolling presets with Today after 24 h (A19).
  *
- * @return array{start: int, end: int, preset: string, custom: bool}
+ * @return array<string, array{label: string, seconds: int, kind: string}>
+ */
+function hp_explorer_chart_presets(): array
+{
+    return [
+        '15m' => ['label' => '15 min', 'seconds' => 15 * 60, 'kind' => 'rolling'],
+        '1h' => ['label' => '1 h', 'seconds' => 3600, 'kind' => 'rolling'],
+        '2h' => ['label' => '2 h', 'seconds' => 2 * 3600, 'kind' => 'rolling'],
+        '6h' => ['label' => '6 h', 'seconds' => 6 * 3600, 'kind' => 'rolling'],
+        '24h' => ['label' => '24 h', 'seconds' => 24 * 3600, 'kind' => 'rolling'],
+        'today' => ['label' => 'Today', 'seconds' => 0, 'kind' => 'day'],
+        '7d' => ['label' => '7 d', 'seconds' => 7 * 24 * 3600, 'kind' => 'rolling'],
+    ];
+}
+
+/**
+ * Local calendar day bounds (DST-aware): midnight inclusive to next midnight - 1s.
+ *
+ * @return array{start: int, end: int, ymd: string}|null
+ */
+function hp_local_calendar_day_bounds(string $ymd): ?array
+{
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $ymd) !== 1) {
+        return null;
+    }
+    $start = strtotime($ymd . ' 00:00:00');
+    if ($start === false) {
+        return null;
+    }
+    $nextMidnight = strtotime('+1 day', $start);
+    if ($nextMidnight === false || $nextMidnight <= $start) {
+        return null;
+    }
+    return [
+        'start' => $start,
+        'end' => $nextMidnight - 1,
+        'ymd' => $ymd,
+    ];
+}
+
+/**
+ * If start/end is a full local calendar day, return normalized bounds; else null.
+ *
+ * @return array{start: int, end: int, ymd: string}|null
+ */
+function hp_explorer_match_day_window(int $start, int $end): ?array
+{
+    $ymd = date('Y-m-d', $start);
+    $bounds = hp_local_calendar_day_bounds($ymd);
+    if ($bounds === null || $start !== $bounds['start']) {
+        return null;
+    }
+    // Inclusive last second, or exclusive next midnight (clients may send either).
+    if ($end === $bounds['end'] || $end === $bounds['end'] + 1) {
+        return $bounds;
+    }
+    $legacyEnd = strtotime($ymd . ' 23:59:59');
+    if ($legacyEnd !== false && $end === $legacyEnd) {
+        return $bounds;
+    }
+    return null;
+}
+
+/**
+ * Shift a calendar-day window by +/- 1 local day. Caps forward at today.
+ *
+ * @return array{start: int, end: int, ymd: string}|null
+ */
+function hp_explorer_shift_calendar_day(int $start, int $direction, ?int $now = null): ?array
+{
+    $now = $now ?? time();
+    $todayYmd = date('Y-m-d', $now);
+    $ymd = date('Y-m-d', $start);
+    $base = strtotime($ymd . ' 00:00:00');
+    if ($base === false) {
+        return null;
+    }
+    $step = $direction >= 0 ? '+1 day' : '-1 day';
+    $next = strtotime($step, $base);
+    if ($next === false) {
+        return null;
+    }
+    $nextYmd = date('Y-m-d', $next);
+    if ($nextYmd > $todayYmd) {
+        $nextYmd = $todayYmd;
+    }
+    return hp_local_calendar_day_bounds($nextYmd);
+}
+
+/**
+ * Explorer window. Default Today (A19). Rolling presets end at now; day windows
+ * keep midnight-to-midnight (empty future OK).
+ *
+ * @return array{start: int, end: int, preset: string, custom: bool, day_mode: bool}
  */
 function hp_explorer_window(?int $now = null): array
 {
-    $presets = hp_live_chart_presets();
+    $presets = hp_explorer_chart_presets();
     $minSpan = 15 * 60;
     $maxSpan = 7 * 24 * 3600;
     $now = $now ?? time();
+    $todayYmd = date('Y-m-d', $now);
 
     $fromRaw = isset($_GET['from']) ? trim((string)$_GET['from']) : '';
     $toRaw = isset($_GET['to']) ? trim((string)$_GET['to']) : '';
@@ -40,6 +134,22 @@ function hp_explorer_window(?int $now = null): array
         $from = strtotime($fromRaw);
         $to = strtotime($toRaw);
         if ($from !== false && $to !== false && $to > $from) {
+            $day = hp_explorer_match_day_window($from, $to);
+            if ($day !== null) {
+                if ($day['ymd'] > $todayYmd) {
+                    $day = hp_local_calendar_day_bounds($todayYmd);
+                }
+                if ($day !== null) {
+                    $isToday = ($day['ymd'] === $todayYmd);
+                    return [
+                        'start' => $day['start'],
+                        'end' => $day['end'],
+                        'preset' => $isToday ? 'today' : '',
+                        'custom' => !$isToday,
+                        'day_mode' => true,
+                    ];
+                }
+            }
             if ($to > $now) {
                 $to = $now;
             }
@@ -54,51 +164,90 @@ function hp_explorer_window(?int $now = null): array
                 'end' => $to,
                 'preset' => '',
                 'custom' => true,
+                'day_mode' => false,
             ];
         }
     }
 
-    // Top-N / deep link: ?date=YYYY-MM-DD -> that local calendar day (capped at now).
+    // Top-N / deep link: ?date=YYYY-MM-DD -> full local calendar day (A19).
     $dateRaw = isset($_GET['date']) ? trim((string)$_GET['date']) : '';
     if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateRaw) === 1) {
-        $from = strtotime($dateRaw . ' 00:00:00');
-        $to = strtotime($dateRaw . ' 23:59:59');
-        if ($from !== false && $to !== false) {
-            if ($to > $now) {
-                $to = $now;
-            }
-            if ($to > $from) {
-                return [
-                    'start' => $from,
-                    'end' => $to,
-                    'preset' => '',
-                    'custom' => true,
-                ];
-            }
+        if ($dateRaw > $todayYmd) {
+            $dateRaw = $todayYmd;
+        }
+        $day = hp_local_calendar_day_bounds($dateRaw);
+        if ($day !== null) {
+            $isToday = ($day['ymd'] === $todayYmd);
+            return [
+                'start' => $day['start'],
+                'end' => $day['end'],
+                'preset' => $isToday ? 'today' : '',
+                'custom' => !$isToday,
+                'day_mode' => true,
+            ];
         }
     }
 
-    $range = isset($_GET['range']) ? (string)$_GET['range'] : '6h';
+    $range = isset($_GET['range']) ? (string)$_GET['range'] : 'today';
     if (!isset($presets[$range])) {
-        $range = '6h';
+        $range = 'today';
+    }
+    if (($presets[$range]['kind'] ?? '') === 'day') {
+        $day = hp_local_calendar_day_bounds($todayYmd);
+        if ($day === null) {
+            // Fallback should not happen; keep a rolling 6h safety net.
+            return [
+                'start' => $now - (6 * 3600),
+                'end' => $now,
+                'preset' => '6h',
+                'custom' => false,
+                'day_mode' => false,
+            ];
+        }
+        return [
+            'start' => $day['start'],
+            'end' => $day['end'],
+            'preset' => 'today',
+            'custom' => false,
+            'day_mode' => true,
+        ];
     }
     return [
-        'start' => $now - $presets[$range]['seconds'],
+        'start' => $now - (int)$presets[$range]['seconds'],
         'end' => $now,
         'preset' => $range,
         'custom' => false,
+        'day_mode' => false,
     ];
 }
 
 /**
- * Pan window by one full step. Direction -1 = back, +1 = forward (capped at now).
+ * Pan window. Day mode: +/- one local calendar day (capped at today).
+ * Rolling: one full step (end capped at now).
  *
- * @param array{start: int, end: int} $window
- * @return array{start: int, end: int}
+ * @param array{start: int, end: int, day_mode?: bool} $window
+ * @return array{start: int, end: int, day_mode: bool}
  */
 function hp_explorer_pan(array $window, int $direction, ?int $now = null): array
 {
     $now = $now ?? time();
+    $dayMode = !empty($window['day_mode'])
+        || hp_explorer_match_day_window((int)$window['start'], (int)$window['end']) !== null;
+    if ($dayMode) {
+        $shifted = hp_explorer_shift_calendar_day((int)$window['start'], $direction, $now);
+        if ($shifted === null) {
+            return [
+                'start' => (int)$window['start'],
+                'end' => (int)$window['end'],
+                'day_mode' => true,
+            ];
+        }
+        return [
+            'start' => $shifted['start'],
+            'end' => $shifted['end'],
+            'day_mode' => true,
+        ];
+    }
     $span = max(15 * 60, (int)$window['end'] - (int)$window['start']);
     $start = (int)$window['start'] + ($direction * $span);
     $end = (int)$window['end'] + ($direction * $span);
@@ -106,7 +255,7 @@ function hp_explorer_pan(array $window, int $direction, ?int $now = null): array
         $end = $now;
         $start = $end - $span;
     }
-    return ['start' => $start, 'end' => $end];
+    return ['start' => $start, 'end' => $end, 'day_mode' => false];
 }
 
 /**

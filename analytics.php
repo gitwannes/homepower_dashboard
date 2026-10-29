@@ -155,18 +155,34 @@ if (isset($_GET['ajax'])) {
         $action = $_GET['ajax'];
 
         if ($action === 'range') {
+            // Earliest/latest local day across history_5min and readings (A19).
             $min = null;
             $max = null;
-            try {
-                $row = $pdo->query(
-                    "SELECT substr(MIN(timestamp), 1, 10) AS dmin, substr(MAX(timestamp), 1, 10) AS dmax
-                     FROM history_5min"
-                )->fetch(PDO::FETCH_ASSOC);
-                if ($row) {
-                    $min = $row['dmin'];
-                    $max = $row['dmax'];
+            $candidates = [];
+            foreach (['history_5min', 'readings'] as $table) {
+                try {
+                    $row = $pdo->query(
+                        "SELECT substr(MIN(timestamp), 1, 10) AS dmin, substr(MAX(timestamp), 1, 10) AS dmax
+                         FROM {$table}"
+                    )->fetch(PDO::FETCH_ASSOC);
+                    if ($row) {
+                        if (!empty($row['dmin'])) {
+                            $candidates['min'][] = (string)$row['dmin'];
+                        }
+                        if (!empty($row['dmax'])) {
+                            $candidates['max'][] = (string)$row['dmax'];
+                        }
+                    }
+                } catch (Exception $e) {
                 }
-            } catch (Exception $e) {
+            }
+            if (!empty($candidates['min'])) {
+                sort($candidates['min']);
+                $min = $candidates['min'][0];
+            }
+            if (!empty($candidates['max'])) {
+                rsort($candidates['max']);
+                $max = $candidates['max'][0];
             }
             echo json_encode(['min' => $min, 'max' => $max]);
             exit;
@@ -178,8 +194,16 @@ if (isset($_GET['ajax'])) {
                 $panned = hp_explorer_pan($win, (int)$_GET['pan']);
                 $win['start'] = $panned['start'];
                 $win['end'] = $panned['end'];
-                $win['custom'] = true;
-                $win['preset'] = '';
+                $win['day_mode'] = !empty($panned['day_mode']);
+                $todayYmd = date('Y-m-d');
+                $panYmd = date('Y-m-d', (int)$win['start']);
+                if (!empty($win['day_mode']) && $panYmd === $todayYmd) {
+                    $win['custom'] = false;
+                    $win['preset'] = 'today';
+                } else {
+                    $win['custom'] = true;
+                    $win['preset'] = '';
+                }
             }
             $payload = hp_explorer_mixed_series(
                 $pdo,
@@ -193,6 +217,7 @@ if (isset($_GET['ajax'])) {
                 'end' => $win['end'],
                 'preset' => $win['preset'],
                 'custom' => $win['custom'],
+                'day_mode' => !empty($win['day_mode']),
                 'balance' => $payload['balance'],
                 'tip_bands' => $payload['tip_bands'],
                 'classic' => $payload['classic'],
@@ -467,6 +492,11 @@ $defaultCompare2 = $twoDaysAgo;
             @apply w-9 h-9 rounded-xl bg-white border border-slate-200 text-slate-700
                    flex items-center justify-center hover:bg-slate-50 shadow-sm transition-colors cursor-pointer;
         }
+        .nav-arrow:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
         .date-wrap {
             @apply inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 pl-2 pr-1 py-0.5;
         }
@@ -580,20 +610,20 @@ $defaultCompare2 = $twoDaysAgo;
                 </div>
             </div>
             <div class="flex flex-wrap items-center gap-1.5" role="group" aria-label="Chart range">
-                <?php foreach (hp_live_chart_presets() as $presetId => $preset): ?>
+                <?php foreach (hp_explorer_chart_presets() as $presetId => $preset): ?>
                     <?php $presetOn = !$explorerWindow['custom'] && $explorerWindow['preset'] === $presetId; ?>
                     <button type="button"
                             class="px-2.5 py-1 rounded-full text-[11px] font-semibold border explorer-preset <?= $presetOn ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200' ?>"
                             data-range="<?= htmlspecialchars($presetId, ENT_QUOTES, 'UTF-8') ?>"
                             onclick="setExplorerPreset('<?= htmlspecialchars($presetId, ENT_QUOTES, 'UTF-8') ?>')"><?= htmlspecialchars($preset['label'], ENT_QUOTES, 'UTF-8') ?></button>
                 <?php endforeach; ?>
-                <button type="button" class="nav-arrow" onclick="panExplorer(-1)" title="Pan back one window" aria-label="Pan back">
+                <button type="button" id="explorerPanBack" class="nav-arrow" onclick="panExplorer(-1)" title="Previous day / pan back" aria-label="Pan back">
                     <i data-lucide="chevron-left" class="w-5 h-5"></i>
                 </button>
-                <button type="button" class="nav-arrow" onclick="panExplorer(1)" title="Pan forward one window" aria-label="Pan forward">
+                <button type="button" id="explorerPanFwd" class="nav-arrow" onclick="panExplorer(1)" title="Next day / pan forward" aria-label="Pan forward">
                     <i data-lucide="chevron-right" class="w-5 h-5"></i>
                 </button>
-                <button type="button" class="jump-btn" onclick="resetExplorerView()" title="Last 6 hours ending now">Reset view</button>
+                <button type="button" class="jump-btn" onclick="resetExplorerView()" title="Today 00:00-23:59">Reset view</button>
                 <span id="explorerWindowLabel" class="text-[11px] text-slate-500 font-mono ml-1"></span>
             </div>
             <div id="explorerBalanceLegend" class="flex flex-wrap items-center gap-3 text-xs <?= $chartView === 'balance' ? '' : 'is-hidden' ?>">
@@ -828,13 +858,70 @@ $defaultCompare2 = $twoDaysAgo;
     let explorerEnd = <?= (int)$explorerWindow['end'] ?>;
     let explorerPreset = <?= json_encode($explorerWindow['preset']) ?>;
     let explorerCustom = <?= $explorerWindow['custom'] ? 'true' : 'false' ?>;
+    let explorerDayMode = <?= !empty($explorerWindow['day_mode']) ? 'true' : 'false' ?>;
     let explorerPayload = null;
+    /** @type {{min: string|null, max: string|null}} */
+    let explorerDayBounds = { min: null, max: null };
 
     function chartQueryTime(sec) {
         const d = new Date(sec * 1000);
         const p = (n) => String(n).padStart(2, '0');
         return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
             + 'T' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    }
+
+    /** Local YYYY-MM-DD for a unix second. */
+    function localYmdFromSec(sec) {
+        const d = new Date(sec * 1000);
+        const p = (n) => String(n).padStart(2, '0');
+        return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+    }
+
+    /**
+     * Local calendar-day bounds (DST-aware via Date): midnight .. next midnight - 1s.
+     * @returns {{start: number, end: number, ymd: string}}
+     */
+    function localCalendarDayBounds(ymd) {
+        const parts = String(ymd).split('-');
+        const y = Number(parts[0]);
+        const m = Number(parts[1]);
+        const day = Number(parts[2]);
+        const startMs = new Date(y, m - 1, day, 0, 0, 0, 0).getTime();
+        const endMs = new Date(y, m - 1, day + 1, 0, 0, 0, 0).getTime() - 1000;
+        return {
+            start: Math.floor(startMs / 1000),
+            end: Math.floor(endMs / 1000),
+            ymd: ymd
+        };
+    }
+
+    function shiftLocalYmd(ymd, direction) {
+        const parts = String(ymd).split('-');
+        const y = Number(parts[0]);
+        const m = Number(parts[1]);
+        const day = Number(parts[2]);
+        const d = new Date(y, m - 1, day + (direction >= 0 ? 1 : -1), 12, 0, 0, 0);
+        return localYmdFromSec(Math.floor(d.getTime() / 1000));
+    }
+
+    function updateExplorerPanButtons() {
+        const back = document.getElementById('explorerPanBack');
+        const fwd = document.getElementById('explorerPanFwd');
+        if (!back || !fwd) return;
+        if (!explorerDayMode) {
+            back.disabled = false;
+            fwd.disabled = false;
+            back.title = 'Pan back one window';
+            fwd.title = 'Pan forward one window';
+            return;
+        }
+        const ymd = localYmdFromSec(explorerStart);
+        const atFirst = !!(explorerDayBounds.min && ymd <= explorerDayBounds.min);
+        const atToday = ymd >= TODAY_ISO;
+        back.disabled = atFirst;
+        fwd.disabled = atToday;
+        back.title = atFirst ? 'First day in database' : 'Previous calendar day';
+        fwd.title = atToday ? 'Already on today' : 'Next calendar day';
     }
 
     function syncExplorerUrl() {
@@ -845,14 +932,24 @@ $defaultCompare2 = $twoDaysAgo;
         } else {
             url.searchParams.delete('view');
         }
-        if (explorerCustom) {
+        if (explorerDayMode) {
+            url.searchParams.delete('from');
+            url.searchParams.delete('to');
+            url.searchParams.delete('range');
+            const ymd = localYmdFromSec(explorerStart);
+            if (!explorerCustom && explorerPreset === 'today') {
+                // Default Today: omit range/date.
+            } else {
+                url.searchParams.set('date', ymd);
+            }
+        } else if (explorerCustom) {
             url.searchParams.delete('range');
             url.searchParams.set('from', chartQueryTime(explorerStart));
             url.searchParams.set('to', chartQueryTime(explorerEnd));
         } else {
             url.searchParams.delete('from');
             url.searchParams.delete('to');
-            if (explorerPreset && explorerPreset !== '6h') {
+            if (explorerPreset && explorerPreset !== 'today') {
                 url.searchParams.set('range', explorerPreset);
             } else {
                 url.searchParams.delete('range');
@@ -873,6 +970,7 @@ $defaultCompare2 = $twoDaysAgo;
             label.textContent = new Date(explorerStart * 1000).toLocaleString()
                 + ' -> ' + new Date(explorerEnd * 1000).toLocaleString();
         }
+        updateExplorerPanButtons();
     }
 
     function updateDayViewChrome() {
@@ -983,6 +1081,15 @@ $defaultCompare2 = $twoDaysAgo;
     function setExplorerPreset(rangeId) {
         explorerPreset = rangeId;
         explorerCustom = false;
+        if (rangeId === 'today') {
+            const day = localCalendarDayBounds(TODAY_ISO);
+            explorerStart = day.start;
+            explorerEnd = day.end;
+            explorerDayMode = true;
+            loadExplorer();
+            return;
+        }
+        explorerDayMode = false;
         const seconds = {
             '15m': 15 * 60,
             '1h': 3600,
@@ -996,12 +1103,41 @@ $defaultCompare2 = $twoDaysAgo;
         loadExplorer();
     }
 
-    /** Default explorer view: last 6 hours ending now. */
+    /** Default explorer view: Today (local midnight to midnight). */
     function resetExplorerView() {
-        setExplorerPreset('6h');
+        setExplorerPreset('today');
     }
 
     function panExplorer(direction) {
+        if (explorerDayMode) {
+            const ymd = localYmdFromSec(explorerStart);
+            if (direction > 0 && ymd >= TODAY_ISO) {
+                return;
+            }
+            if (direction < 0 && explorerDayBounds.min && ymd <= explorerDayBounds.min) {
+                return;
+            }
+            let nextYmd = shiftLocalYmd(ymd, direction);
+            if (nextYmd > TODAY_ISO) {
+                nextYmd = TODAY_ISO;
+            }
+            if (explorerDayBounds.min && nextYmd < explorerDayBounds.min) {
+                nextYmd = explorerDayBounds.min;
+            }
+            const day = localCalendarDayBounds(nextYmd);
+            explorerStart = day.start;
+            explorerEnd = day.end;
+            explorerDayMode = true;
+            if (nextYmd === TODAY_ISO) {
+                explorerCustom = false;
+                explorerPreset = 'today';
+            } else {
+                explorerCustom = true;
+                explorerPreset = '';
+            }
+            loadExplorer();
+            return;
+        }
         const span = Math.max(15 * 60, explorerEnd - explorerStart);
         explorerStart += direction * span;
         explorerEnd += direction * span;
@@ -1012,6 +1148,7 @@ $defaultCompare2 = $twoDaysAgo;
         }
         explorerCustom = true;
         explorerPreset = '';
+        explorerDayMode = false;
         loadExplorer();
     }
 
@@ -1274,6 +1411,15 @@ $defaultCompare2 = $twoDaysAgo;
             }
             explorerStart = data.start;
             explorerEnd = data.end;
+            if (typeof data.day_mode === 'boolean') {
+                explorerDayMode = data.day_mode;
+            }
+            if (typeof data.custom === 'boolean') {
+                explorerCustom = data.custom;
+            }
+            if (typeof data.preset === 'string') {
+                explorerPreset = data.preset;
+            }
             explorerPayload = data;
             await renderExplorerChart();
         } catch (err) {
@@ -1435,14 +1581,20 @@ $defaultCompare2 = $twoDaysAgo;
         try {
             const rr = await fetch('analytics.php?ajax=range');
             dayRange = await rr.json();
+            explorerDayBounds = {
+                min: dayRange.min || null,
+                max: dayRange.max || null
+            };
         } catch (e) {
             dayRange = { min: null, max: null };
+            explorerDayBounds = { min: null, max: null };
         }
 
         bindDateField('compareText1', 'comparePicker1', () => scheduleCompareLoad());
         bindDateField('compareText2', 'comparePicker2', () => scheduleCompareLoad());
 
         updateDayViewChrome();
+        updateExplorerPanButtons();
         lucide.createIcons();
         // One Apex mount at a time. Parallel explorer + compare + envelope often
         // left the first charts blank until a later pan re-rendered alone.
