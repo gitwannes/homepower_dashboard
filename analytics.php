@@ -221,6 +221,8 @@ if (isset($_GET['ajax'])) {
                 'balance' => $payload['balance'],
                 'tip_bands' => $payload['tip_bands'],
                 'classic' => $payload['classic'],
+                'phases' => $payload['phases'] ?? ['l1' => [], 'l2' => [], 'l3' => []],
+                'has_phases' => hp_phases_series_has_data($payload['phases'] ?? []),
                 'sources' => $payload['sources'],
             ]);
             exit;
@@ -584,6 +586,8 @@ $defaultCompare2 = $twoDaysAgo;
                                 echo 'Grid exchange';
                             } elseif ($chartView === 'classic') {
                                 echo 'Power History';
+                            } elseif ($chartView === 'phases') {
+                                echo 'Phase power';
                             } else {
                                 echo 'Energy Balance';
                             }
@@ -595,6 +599,8 @@ $defaultCompare2 = $twoDaysAgo;
                             echo 'Mixed 1-min / 5-min signed net. Above 0 = from grid, below 0 = surplus to grid.';
                         } elseif ($chartView === 'classic') {
                             echo 'Mixed 1-min / 5-min solar / home profile for the selected window.';
+                        } elseif ($chartView === 'phases') {
+                            echo 'Mixed 1-min / 5-min signed W per phase (L1/L2/L3). Gaps where phase samples are missing.';
                         } else {
                             echo 'Mixed 1-min / 5-min. Bands: self-sufficient / grid / surplus. Production and consumption in the tooltip.';
                         }
@@ -606,6 +612,7 @@ $defaultCompare2 = $twoDaysAgo;
                         <button type="button" id="day-view-exchange" class="<?= $chartView === 'exchange' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'exchange' ? 'true' : 'false' ?>" onclick="setDayChartView('exchange')">Exchange</button>
                         <button type="button" id="day-view-balance" class="<?= $chartView === 'balance' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'balance' ? 'true' : 'false' ?>" onclick="setDayChartView('balance')">Balance</button>
                         <button type="button" id="day-view-classic" class="<?= $chartView === 'classic' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'classic' ? 'true' : 'false' ?>" onclick="setDayChartView('classic')">Classic</button>
+                        <button type="button" id="day-view-phases" class="is-hidden <?= $chartView === 'phases' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'phases' ? 'true' : 'false' ?>" onclick="setDayChartView('phases')">Phases</button>
                     </div>
                 </div>
             </div>
@@ -640,6 +647,12 @@ $defaultCompare2 = $twoDaysAgo;
             <div id="explorerExchangeLegend" class="flex flex-wrap items-center gap-3 text-xs <?= $chartView === 'exchange' ? '' : 'is-hidden' ?>">
                 <span class="inline-flex items-center gap-1.5 text-violet-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-violet-600"></span> Grid</span>
                 <span class="inline-flex items-center gap-1.5 text-emerald-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Surplus</span>
+            </div>
+            <div id="explorerPhasesLegend" class="flex flex-wrap items-center gap-3 text-xs <?= $chartView === 'phases' ? '' : 'is-hidden' ?>">
+                <span class="inline-flex items-center gap-1.5 text-slate-500 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-slate-400/50"></span> Sum</span>
+                <span class="inline-flex items-center gap-1.5 text-indigo-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span> L1</span>
+                <span class="inline-flex items-center gap-1.5 text-amber-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span> L2</span>
+                <span class="inline-flex items-center gap-1.5 text-rose-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> L3</span>
             </div>
         </div>
         <div id="chart-intraday" class="w-full h-[400px]"></div>
@@ -927,7 +940,7 @@ $defaultCompare2 = $twoDaysAgo;
     function syncExplorerUrl() {
         const url = new URL(window.location.href);
         url.searchParams.delete('date');
-        if (dayChartView === 'classic' || dayChartView === 'balance') {
+        if (dayChartView === 'classic' || dayChartView === 'balance' || dayChartView === 'phases') {
             url.searchParams.set('view', dayChartView);
         } else {
             url.searchParams.delete('view');
@@ -973,10 +986,38 @@ $defaultCompare2 = $twoDaysAgo;
         updateExplorerPanButtons();
     }
 
+    function explorerHasPhaseData(payload) {
+        if (payload && payload.has_phases === true) {
+            return true;
+        }
+        const ph = payload && payload.phases ? payload.phases : null;
+        if (!ph) {
+            return false;
+        }
+        const keys = ['l1', 'l2', 'l3'];
+        for (let k = 0; k < keys.length; k++) {
+            const arr = ph[keys[k]] || [];
+            for (let i = 0; i < arr.length; i++) {
+                const p = arr[i];
+                if (p && p.y !== null && p.y !== undefined && Number.isFinite(Number(p.y))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     function updateDayViewChrome() {
         const balBtn = document.getElementById('day-view-balance');
         const clsBtn = document.getElementById('day-view-classic');
         const exBtn = document.getElementById('day-view-exchange');
+        const phBtn = document.getElementById('day-view-phases');
+        const hasPh = explorerHasPhaseData(explorerPayload);
+        if (phBtn) {
+            phBtn.classList.toggle('is-hidden', !hasPh);
+            phBtn.classList.toggle('metric-on', dayChartView === 'phases');
+            phBtn.setAttribute('aria-pressed', dayChartView === 'phases' ? 'true' : 'false');
+        }
         if (balBtn && clsBtn && exBtn) {
             balBtn.classList.toggle('metric-on', dayChartView === 'balance');
             clsBtn.classList.toggle('metric-on', dayChartView === 'classic');
@@ -990,6 +1031,7 @@ $defaultCompare2 = $twoDaysAgo;
         if (title) {
             if (dayChartView === 'exchange') title.textContent = 'Grid exchange';
             else if (dayChartView === 'classic') title.textContent = 'Power History';
+            else if (dayChartView === 'phases') title.textContent = 'Phase power';
             else title.textContent = 'Energy Balance';
         }
         if (blurb) {
@@ -997,14 +1039,18 @@ $defaultCompare2 = $twoDaysAgo;
                 blurb.textContent = 'Mixed 1-min / 5-min signed net. Above 0 = from grid, below 0 = surplus to grid.';
             } else if (dayChartView === 'classic') {
                 blurb.textContent = 'Mixed 1-min / 5-min solar / home profile for the selected window.';
+            } else if (dayChartView === 'phases') {
+                blurb.textContent = 'Mixed 1-min / 5-min signed W per phase (L1/L2/L3). Gaps where phase samples are missing.';
             } else {
                 blurb.textContent = 'Mixed 1-min / 5-min. Bands: self-sufficient / grid / surplus. Production and consumption in the tooltip.';
             }
         }
         const balLeg = document.getElementById('explorerBalanceLegend');
         const exLeg = document.getElementById('explorerExchangeLegend');
+        const phLeg = document.getElementById('explorerPhasesLegend');
         if (balLeg) balLeg.classList.toggle('is-hidden', dayChartView !== 'balance');
         if (exLeg) exLeg.classList.toggle('is-hidden', dayChartView !== 'exchange');
+        if (phLeg) phLeg.classList.toggle('is-hidden', dayChartView !== 'phases');
     }
 
     function setDayChartView(view) {
@@ -1012,6 +1058,7 @@ $defaultCompare2 = $twoDaysAgo;
         if (view === 'classic') next = 'classic';
         else if (view === 'balance') next = 'balance';
         else if (view === 'exchange') next = 'exchange';
+        else if (view === 'phases' && explorerHasPhaseData(explorerPayload)) next = 'phases';
         if (next === dayChartView) {
             return;
         }
@@ -1333,6 +1380,129 @@ $defaultCompare2 = $twoDaysAgo;
                     }
                 }
             };
+        } else if (dayChartView === 'phases') {
+            const ph = data.phases || {};
+            if (!explorerHasPhaseData(data)) {
+                const hostEmpty = document.querySelector('#chart-intraday');
+                if (hostEmpty) {
+                    hostEmpty.innerHTML = '<p class="text-sm text-slate-400 p-6">No per-phase samples in this window.</p>';
+                }
+                syncExplorerUrl();
+                return;
+            }
+            // Omit null gap markers - same Apex blanking pitfall as Exchange / live Phases.
+            function finiteXy(points) {
+                const out = [];
+                if (!Array.isArray(points)) {
+                    return out;
+                }
+                for (let i = 0; i < points.length; i++) {
+                    const p = points[i];
+                    if (!p || p.x === null || p.x === undefined) {
+                        continue;
+                    }
+                    if (p.y === null || p.y === undefined || !Number.isFinite(Number(p.y))) {
+                        continue;
+                    }
+                    out.push({ x: p.x, y: Number(p.y) });
+                }
+                return out;
+            }
+            const l1 = finiteXy(ph.l1);
+            const l2 = finiteXy(ph.l2);
+            const l3 = finiteXy(ph.l3);
+            const sumMap = {};
+            function addSum(arr, key) {
+                for (let i = 0; i < arr.length; i++) {
+                    const p = arr[i];
+                    const x = String(p.x);
+                    if (!sumMap[x]) {
+                        sumMap[x] = {};
+                    }
+                    sumMap[x][key] = p.y;
+                }
+            }
+            addSum(l1, 'l1');
+            addSum(l2, 'l2');
+            addSum(l3, 'l3');
+            const sumXs = Object.keys(sumMap).map(Number).sort(function (a, b) { return a - b; });
+            const sumPts = [];
+            for (let i = 0; i < sumXs.length; i++) {
+                const m = sumMap[String(sumXs[i])];
+                if (
+                    Number.isFinite(Number(m.l1))
+                    && Number.isFinite(Number(m.l2))
+                    && Number.isFinite(Number(m.l3))
+                ) {
+                    sumPts.push({
+                        x: sumXs[i],
+                        y: Number(m.l1) + Number(m.l2) + Number(m.l3)
+                    });
+                }
+            }
+            options = {
+                series: [
+                    { name: 'Sum', type: 'area', data: sumPts },
+                    { name: 'L1', type: 'line', data: l1 },
+                    { name: 'L2', type: 'line', data: l2 },
+                    { name: 'L3', type: 'line', data: l3 }
+                ],
+                chart: {
+                    type: 'line',
+                    height: 400,
+                    stacked: false,
+                    animations: { enabled: false },
+                    toolbar: { show: true },
+                    zoom: { enabled: true },
+                    parentHeightOffset: 0,
+                    redrawOnParentResize: true,
+                    redrawOnWindowResize: true
+                },
+                colors: ['#94a3b8', '#6366f1', '#f59e0b', '#f43f5e'],
+                dataLabels: { enabled: false },
+                stroke: { curve: 'straight', width: [1, 2, 2, 2] },
+                fill: { type: 'solid', opacity: [0.18, 1, 1, 1] },
+                xaxis: xaxisCommon,
+                yaxis: yaxisCommon,
+                annotations: {
+                    yaxis: [{ y: 0, borderColor: '#94a3b8', borderWidth: 1 }]
+                },
+                grid: gridPad,
+                legend: { show: false },
+                tooltip: {
+                    shared: true,
+                    intersect: false,
+                    custom: function ({ dataPointIndex, w }) {
+                        const i = dataPointIndex;
+                        const fmt = function (v) {
+                            if (v === null || v === undefined || !Number.isFinite(Number(v))) return '-';
+                            return Math.round(Number(v)) + ' W';
+                        };
+                        const when = w.globals.seriesX[0] && w.globals.seriesX[0][i] != null
+                            ? new Date(w.globals.seriesX[0][i]).toLocaleString()
+                            : '';
+                        const ySum = w.globals.series[0] ? w.globals.series[0][i] : null;
+                        const y1 = w.globals.series[1] ? w.globals.series[1][i] : null;
+                        const y2 = w.globals.series[2] ? w.globals.series[2][i] : null;
+                        const y3 = w.globals.series[3] ? w.globals.series[3][i] : null;
+                        const rows = [
+                            ['Sum', ySum, '#94a3b8'],
+                            ['L1', y1, '#6366f1'],
+                            ['L2', y2, '#f59e0b'],
+                            ['L3', y3, '#f43f5e']
+                        ];
+                        let body = '';
+                        for (let r = 0; r < rows.length; r++) {
+                            body += '<div style="display:flex;align-items:center;gap:6px;padding:2px 0">'
+                                + '<span style="width:8px;height:8px;border-radius:50%;background:' + rows[r][2] + '"></span>'
+                                + '<span>' + rows[r][0] + ': <strong>' + fmt(rows[r][1]) + '</strong></span></div>';
+                        }
+                        return '<div style="padding:8px 10px;font-size:12px">'
+                            + '<div style="margin-bottom:4px;font-weight:600">' + when + '</div>'
+                            + body + '</div>';
+                    }
+                }
+            };
         } else {
             options = {
                 series: [
@@ -1394,7 +1564,7 @@ $defaultCompare2 = $twoDaysAgo;
         params.set('ajax', 'explorer');
         params.set('from', chartQueryTime(explorerStart));
         params.set('to', chartQueryTime(explorerEnd));
-        if (dayChartView === 'classic' || dayChartView === 'balance') {
+        if (dayChartView === 'classic' || dayChartView === 'balance' || dayChartView === 'phases') {
             params.set('view', dayChartView);
         }
         try {
@@ -1421,6 +1591,10 @@ $defaultCompare2 = $twoDaysAgo;
                 explorerPreset = data.preset;
             }
             explorerPayload = data;
+            if (dayChartView === 'phases' && !explorerHasPhaseData(data)) {
+                dayChartView = 'exchange';
+            }
+            updateDayViewChrome();
             await renderExplorerChart();
         } catch (err) {
             console.error('explorer load failed', err);

@@ -76,6 +76,8 @@ $chartBalance = [
     'grid' => [],
     'surplus' => [],
 ];
+$chartPhases = ['l1' => [], 'l2' => [], 'l3' => []];
+$hasPhaseChartData = false;
 // A5b: fixed 2-hour live pulse (exploration lives on analytics).
 $nowPulse = time();
 $chartWindow = [
@@ -120,19 +122,38 @@ if (!$fatalError) {
                     ];
                 }
 
-                $chartStmt = $pdo->prepare(
-                    'SELECT timestamp, active_power, solar_power FROM readings WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC'
-                );
-                $chartStmt->execute([
-                    date('Y-m-d H:i:s', $chartWindow['start']),
-                    date('Y-m-d H:i:s', $chartWindow['end']),
-                ]);
-                $chartRows = $chartStmt->fetchAll(PDO::FETCH_ASSOC);
+                $chartRows = [];
+                try {
+                    $chartStmt = $pdo->prepare(
+                        'SELECT timestamp, active_power, solar_power, power_l1_w, power_l2_w, power_l3_w
+                         FROM readings WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC'
+                    );
+                    $chartStmt->execute([
+                        date('Y-m-d H:i:s', $chartWindow['start']),
+                        date('Y-m-d H:i:s', $chartWindow['end']),
+                    ]);
+                    $chartRows = $chartStmt->fetchAll(PDO::FETCH_ASSOC);
+                } catch (Throwable $e) {
+                    $chartStmt = $pdo->prepare(
+                        'SELECT timestamp, active_power, solar_power FROM readings
+                         WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC'
+                    );
+                    $chartStmt->execute([
+                        date('Y-m-d H:i:s', $chartWindow['start']),
+                        date('Y-m-d H:i:s', $chartWindow['end']),
+                    ]);
+                    $chartRows = $chartStmt->fetchAll(PDO::FETCH_ASSOC);
+                }
                 $chartBuilt = hp_live_chart_series($chartRows);
                 $chartHome = $chartBuilt['home'];
                 $chartSolar = $chartBuilt['solar'];
                 $chartGrid = $chartBuilt['grid'];
                 $chartBalance = hp_live_chart_balance_series($chartRows);
+                $chartPhases = hp_live_chart_phases_series($chartRows);
+                $hasPhaseChartData = hp_phases_series_has_data($chartPhases);
+                if ($chartView === 'phases' && !$hasPhaseChartData) {
+                    $chartView = 'exchange';
+                }
 
                 $stmt = $pdo->query("SELECT id, first_seen, last_seen, status, count, message FROM system_logs ORDER BY id DESC LIMIT 50");
                 $logHistory = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -683,13 +704,21 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                             echo 'Grid exchange';
                         } elseif ($chartView === 'classic') {
                             echo $hasSolar ? 'Solar & Consumption Profile' : 'Power History';
+                        } elseif ($chartView === 'phases') {
+                            echo 'Phase power';
                         } else {
                             echo 'Energy Balance';
                         }
                     ?></span>
                 </h2>
                 <p id="liveChartBlurb" class="text-xs text-slate-400 mt-0.5">
+                    <?php if ($chartView === 'phases'): ?>
+                    Last 2 hours. Signed W per phase (L1/L2/L3). Gaps where phase samples are missing.
+                    <?php elseif ($chartView === 'exchange'): ?>
+                    Last 2 hours. Above 0 = from grid, below 0 = surplus to grid.
+                    <?php else: ?>
                     Last 2 hours. Open Analytics for longer windows, pan, and mixed 1-min / 5-min history.
+                    <?php endif; ?>
                 </p>
             </div>
             <div class="flex flex-wrap items-center gap-3">
@@ -697,6 +726,9 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                     <button type="button" id="view-exchange" class="<?= $chartView === 'exchange' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'exchange' ? 'true' : 'false' ?>" onclick="setLiveChartView('exchange')">Exchange</button>
                     <button type="button" id="view-balance" class="<?= $chartView === 'balance' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'balance' ? 'true' : 'false' ?>" onclick="setLiveChartView('balance')">Balance</button>
                     <button type="button" id="view-classic" class="<?= $chartView === 'classic' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'classic' ? 'true' : 'false' ?>" onclick="setLiveChartView('classic')">Classic</button>
+                    <?php if ($hasPhaseChartData): ?>
+                    <button type="button" id="view-phases" class="<?= $chartView === 'phases' ? 'metric-on' : '' ?>" aria-pressed="<?= $chartView === 'phases' ? 'true' : 'false' ?>" onclick="setLiveChartView('phases')">Phases</button>
+                    <?php endif; ?>
                 </div>
                 <a href="analytics.php<?= htmlspecialchars(hp_chart_view_query([], $chartView), ENT_QUOTES, 'UTF-8') ?>" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                     <i data-lucide="line-chart" class="w-3.5 h-3.5 text-indigo-600"></i> Analytics
@@ -720,6 +752,12 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                     <span class="inline-flex items-center gap-1.5 text-slate-600 font-medium" title="Self-sufficient + Surplus (tooltip)">
                         <span class="w-2.5 h-2.5 rounded-full inline-block" style="background:linear-gradient(90deg,#3b82f6 50%,#10b981 50%)"></span> Production
                     </span>
+                </div>
+                <div id="liveChartLegendPhases" class="flex items-center gap-3 text-xs <?= $chartView === 'phases' ? '' : 'is-hidden' ?>">
+                    <span class="inline-flex items-center gap-1.5 text-slate-500 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-slate-400/50"></span> Sum</span>
+                    <span class="inline-flex items-center gap-1.5 text-indigo-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-indigo-500"></span> L1</span>
+                    <span class="inline-flex items-center gap-1.5 text-amber-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-amber-500"></span> L2</span>
+                    <span class="inline-flex items-center gap-1.5 text-rose-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-rose-500"></span> L3</span>
                 </div>
                 <div id="liveChartLegendExchange" class="flex items-center gap-3 text-xs <?= $chartView === 'exchange' ? '' : 'is-hidden' ?>">
                     <span class="inline-flex items-center gap-1.5 text-violet-600 font-medium"><span class="w-2.5 h-2.5 rounded-full bg-violet-600"></span> Grid</span>
@@ -1209,6 +1247,12 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         grid: <?= json_encode($chartBalance['grid']) ?>,
         surplus: <?= json_encode($chartBalance['surplus']) ?>
     };
+    const phasesData = {
+        l1: <?= json_encode($chartPhases['l1']) ?>,
+        l2: <?= json_encode($chartPhases['l2']) ?>,
+        l3: <?= json_encode($chartPhases['l3']) ?>
+    };
+    const hasPhaseChartData = <?= $hasPhaseChartData ? 'true' : 'false' ?>;
 
     function classicChartConfig() {
         // Area + gradient: line + opacity 0 stayed blank after Balance stacked area.
@@ -1333,7 +1377,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         url.searchParams.delete('range');
         url.searchParams.delete('from');
         url.searchParams.delete('to');
-        if (liveChartView === 'classic' || liveChartView === 'balance') {
+        if (liveChartView === 'classic' || liveChartView === 'balance' || liveChartView === 'phases') {
             url.searchParams.set('view', liveChartView);
         } else {
             url.searchParams.delete('view');
@@ -1361,12 +1405,102 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         };
     }
 
+    /**
+     * Drop null / non-finite y. Apex line charts on the live pulse blank when
+     * series are peppered with null gap markers (same pitfall as Exchange areas).
+     * Missing samples become x-axis gaps instead of zero-fill.
+     */
+    function finiteXy(points) {
+        const out = [];
+        if (!Array.isArray(points)) {
+            return out;
+        }
+        for (let i = 0; i < points.length; i++) {
+            const p = points[i];
+            if (!p || p.x === null || p.x === undefined) {
+                continue;
+            }
+            if (p.y === null || p.y === undefined || !Number.isFinite(Number(p.y))) {
+                continue;
+            }
+            out.push({ x: p.x, y: Number(p.y) });
+        }
+        return out;
+    }
+
+    /** L1+L2+L3 at each shared timestamp (only when all three are present). */
+    function phaseSumXy(l1, l2, l3) {
+        const map = {};
+        function add(arr, key) {
+            if (!Array.isArray(arr)) {
+                return;
+            }
+            for (let i = 0; i < arr.length; i++) {
+                const p = arr[i];
+                if (!p || p.x === null || p.x === undefined) {
+                    continue;
+                }
+                const x = String(p.x);
+                if (!map[x]) {
+                    map[x] = {};
+                }
+                map[x][key] = p.y;
+            }
+        }
+        add(l1, 'l1');
+        add(l2, 'l2');
+        add(l3, 'l3');
+        const xs = Object.keys(map).map(Number).sort(function (a, b) { return a - b; });
+        const out = [];
+        for (let i = 0; i < xs.length; i++) {
+            const m = map[String(xs[i])];
+            if (
+                m.l1 !== null && m.l1 !== undefined && Number.isFinite(Number(m.l1))
+                && m.l2 !== null && m.l2 !== undefined && Number.isFinite(Number(m.l2))
+                && m.l3 !== null && m.l3 !== undefined && Number.isFinite(Number(m.l3))
+            ) {
+                out.push({ x: xs[i], y: Number(m.l1) + Number(m.l2) + Number(m.l3) });
+            }
+        }
+        return out;
+    }
+
+    function phasesChartConfig() {
+        const l1 = finiteXy(phasesData.l1);
+        const l2 = finiteXy(phasesData.l2);
+        const l3 = finiteXy(phasesData.l3);
+        const sum = phaseSumXy(l1, l2, l3);
+        return {
+            // Sum area first so phase lines paint on top.
+            series: [
+                { name: 'Sum', type: 'area', data: sum },
+                { name: 'L1', type: 'line', data: l1 },
+                { name: 'L2', type: 'line', data: l2 },
+                { name: 'L3', type: 'line', data: l3 }
+            ],
+            colors: ['#94a3b8', '#6366f1', '#f59e0b', '#f43f5e'],
+            stroke: { curve: 'straight', width: [1, 2, 2, 2] },
+            fill: { type: 'solid', opacity: [0.18, 1, 1, 1] },
+            annotations: {
+                yaxis: [{ y: 0, borderColor: '#94a3b8', borderWidth: 1 }]
+            },
+            stacked: false,
+            chartType: 'line',
+            yMin: undefined,
+            autoScaleYaxis: true,
+            tipPhases: true
+        };
+    }
+
     function liveChartConfigForView() {
         if (liveChartView === 'exchange') {
             return exchangeChartConfig();
         }
         if (liveChartView === 'classic') {
             return classicChartConfig();
+        }
+        if (liveChartView === 'phases') {
+            return phasesChartConfig();
         }
         return balanceChartConfig();
     }
@@ -1375,6 +1509,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         const balBtn = document.getElementById('view-balance');
         const clsBtn = document.getElementById('view-classic');
         const exBtn = document.getElementById('view-exchange');
+        const phBtn = document.getElementById('view-phases');
         if (balBtn && clsBtn && exBtn) {
             balBtn.classList.toggle('metric-on', liveChartView === 'balance');
             clsBtn.classList.toggle('metric-on', liveChartView === 'classic');
@@ -1383,12 +1518,18 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
             clsBtn.setAttribute('aria-pressed', liveChartView === 'classic' ? 'true' : 'false');
             exBtn.setAttribute('aria-pressed', liveChartView === 'exchange' ? 'true' : 'false');
         }
+        if (phBtn) {
+            phBtn.classList.toggle('metric-on', liveChartView === 'phases');
+            phBtn.setAttribute('aria-pressed', liveChartView === 'phases' ? 'true' : 'false');
+        }
         const legB = document.getElementById('liveChartLegendBalance');
         const legC = document.getElementById('liveChartLegendClassic');
         const legE = document.getElementById('liveChartLegendExchange');
+        const legP = document.getElementById('liveChartLegendPhases');
         if (legB) legB.classList.toggle('is-hidden', liveChartView !== 'balance');
         if (legC) legC.classList.toggle('is-hidden', liveChartView !== 'classic');
         if (legE) legE.classList.toggle('is-hidden', liveChartView !== 'exchange');
+        if (legP) legP.classList.toggle('is-hidden', liveChartView !== 'phases');
         const title = document.getElementById('liveChartTitleText');
         const blurb = document.getElementById('liveChartBlurb');
         if (title) {
@@ -1396,14 +1537,20 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                 title.textContent = 'Grid exchange';
             } else if (liveChartView === 'classic') {
                 title.textContent = hasSolar ? 'Solar & Consumption Profile' : 'Power History';
+            } else if (liveChartView === 'phases') {
+                title.textContent = 'Phase power';
             } else {
                 title.textContent = 'Energy Balance';
             }
         }
         if (blurb) {
-            blurb.textContent = liveChartView === 'exchange'
-                ? 'Last 2 hours. Above 0 = from grid, below 0 = surplus to grid.'
-                : 'Last 2 hours. Open Analytics for longer windows, pan, and mixed 1-min / 5-min history.';
+            if (liveChartView === 'exchange') {
+                blurb.textContent = 'Last 2 hours. Above 0 = from grid, below 0 = surplus to grid.';
+            } else if (liveChartView === 'phases') {
+                blurb.textContent = 'Last 2 hours. Signed W per phase (L1/L2/L3). Gaps where phase samples are missing.';
+            } else {
+                blurb.textContent = 'Last 2 hours. Open Analytics for longer windows, pan, and mixed 1-min / 5-min history.';
+            }
         }
     }
 
@@ -1500,12 +1647,44 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                         + '<div style="margin-bottom:4px;font-weight:600">' + when + '</div>'
                         + body + '</div>';
                 }
+            } : (cfg.tipPhases ? {
+                shared: true,
+                intersect: false,
+                custom: function ({ dataPointIndex, w }) {
+                    const i = dataPointIndex;
+                    const fmt = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)))
+                        ? '-'
+                        : (Math.round(Number(v)) + ' W');
+                    const when = w.globals.seriesX[0] && w.globals.seriesX[0][i] != null
+                        ? new Date(w.globals.seriesX[0][i]).toLocaleString()
+                        : '';
+                    // Series order: Sum, L1, L2, L3
+                    const ySum = w.globals.series[0] ? w.globals.series[0][i] : null;
+                    const y1 = w.globals.series[1] ? w.globals.series[1][i] : null;
+                    const y2 = w.globals.series[2] ? w.globals.series[2][i] : null;
+                    const y3 = w.globals.series[3] ? w.globals.series[3][i] : null;
+                    const rows = [
+                        ['Sum', ySum, '#94a3b8'],
+                        ['L1', y1, '#6366f1'],
+                        ['L2', y2, '#f59e0b'],
+                        ['L3', y3, '#f43f5e']
+                    ];
+                    let body = '';
+                    for (let r = 0; r < rows.length; r++) {
+                        body += '<div style="display:flex;align-items:center;gap:6px;padding:2px 0">'
+                            + '<span style="width:8px;height:8px;border-radius:50%;background:' + rows[r][2] + '"></span>'
+                            + '<span>' + rows[r][0] + ': <strong>' + fmt(rows[r][1]) + '</strong></span></div>';
+                    }
+                    return '<div style="padding:8px 10px;font-size:12px">'
+                        + '<div style="margin-bottom:4px;font-weight:600">' + when + '</div>'
+                        + body + '</div>';
+                }
             } : {
                 shared: true,
                 intersect: false,
                 x: { format: 'dd MMM HH:mm' },
                 y: { formatter: (val) => (val === null || val === undefined) ? '' : `${val} W` }
-            },
+            }),
             legend: { show: false }
         };
         const host = document.querySelector('#historyTimelineChart');
@@ -1531,6 +1710,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         if (view === 'classic') next = 'classic';
         else if (view === 'balance') next = 'balance';
         else if (view === 'exchange') next = 'exchange';
+        else if (view === 'phases' && hasPhaseChartData) next = 'phases';
         if (next === liveChartView) {
             return;
         }

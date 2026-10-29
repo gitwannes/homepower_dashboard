@@ -11,7 +11,7 @@
 function hp_chart_view(): string
 {
     $raw = isset($_GET['view']) ? strtolower(trim((string)$_GET['view'])) : 'exchange';
-    if ($raw === 'classic' || $raw === 'balance' || $raw === 'exchange') {
+    if ($raw === 'classic' || $raw === 'balance' || $raw === 'exchange' || $raw === 'phases') {
         return $raw;
     }
     return 'exchange';
@@ -24,7 +24,7 @@ function hp_chart_view(): string
  */
 function hp_chart_view_query(array $params, string $view): string
 {
-    if ($view === 'classic' || $view === 'balance') {
+    if ($view === 'classic' || $view === 'balance' || $view === 'phases') {
         $params['view'] = $view;
     } else {
         unset($params['view']);
@@ -33,6 +33,29 @@ function hp_chart_view_query(array $params, string $view): string
         return '';
     }
     return '?' . http_build_query($params);
+}
+
+/**
+ * True when any phase series point has a non-null y (A18 hide-control gate).
+ *
+ * @param array{l1?: list<array{x:int,y:int|null}>, l2?: list<array{x:int,y:int|null}>, l3?: list<array{x:int,y:int|null}>} $phases
+ */
+function hp_phases_series_has_data(array $phases): bool
+{
+    foreach (['l1', 'l2', 'l3'] as $key) {
+        if (empty($phases[$key]) || !is_array($phases[$key])) {
+            continue;
+        }
+        foreach ($phases[$key] as $pt) {
+            if (!is_array($pt)) {
+                continue;
+            }
+            if (array_key_exists('y', $pt) && $pt['y'] !== null && $pt['y'] !== '') {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 /**

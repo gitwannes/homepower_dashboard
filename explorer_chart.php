@@ -265,6 +265,7 @@ function hp_explorer_pan(array $window, int $direction, ?int $now = null): array
  *   end: int,
  *   balance: array{self_sufficient: list<array{x:int,y:int|null}>, grid: list<array{x:int,y:int|null}>, surplus: list<array{x:int,y:int|null}>, production: list<array{x:int,y:int|null}>, consumption: list<array{x:int,y:int|null}>},
  *   classic: array{solar: list<array{x:int,y:int|null}>, home: list<array{x:int,y:int|null}>, grid: list<array{x:int,y:int|null}>},
+ *   phases: array{l1: list<array{x:int,y:int|null}>, l2: list<array{x:int,y:int|null}>, l3: list<array{x:int,y:int|null}>},
  *   sources: list<array{x:int, source: string}>
  * }
  */
@@ -276,20 +277,32 @@ function hp_explorer_mixed_series(PDO $pdo, int $start, int $end, $sanitizePac =
     $readings = [];
     try {
         $stmt = $pdo->prepare(
-            'SELECT timestamp, active_power, solar_power FROM readings
+            'SELECT timestamp, active_power, solar_power, power_l1_w, power_l2_w, power_l3_w
+             FROM readings
              WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC'
         );
         $stmt->execute([$startSql, $endSql]);
         $readings = $stmt->fetchAll(PDO::FETCH_ASSOC);
     } catch (Throwable $e) {
-        $readings = [];
+        // Pre-A16 DBs lack phase columns - fall back without them.
+        try {
+            $stmt = $pdo->prepare(
+                'SELECT timestamp, active_power, solar_power FROM readings
+                 WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC'
+            );
+            $stmt->execute([$startSql, $endSql]);
+            $readings = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Throwable $e2) {
+            $readings = [];
+        }
     }
 
     $five = [];
     try {
         $stmt = $pdo->prepare(
             'SELECT timestamp, solar_power_w, solar_radiation, grid_power_w,
-                    grid_import_kwh, grid_export_kwh
+                    grid_import_kwh, grid_export_kwh,
+                    power_l1_w, power_l2_w, power_l3_w
              FROM history_5min
              WHERE timestamp >= ? AND timestamp <= ?
              ORDER BY timestamp ASC'
@@ -303,10 +316,28 @@ function hp_explorer_mixed_series(PDO $pdo, int $start, int $end, $sanitizePac =
             $five[hp_bucket_5min_start($ts)] = $row;
         }
     } catch (Throwable $e) {
-        $five = [];
+        try {
+            $stmt = $pdo->prepare(
+                'SELECT timestamp, solar_power_w, solar_radiation, grid_power_w,
+                        grid_import_kwh, grid_export_kwh
+                 FROM history_5min
+                 WHERE timestamp >= ? AND timestamp <= ?
+                 ORDER BY timestamp ASC'
+            );
+            $stmt->execute([$startSql, $endSql]);
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $ts = strtotime((string)$row['timestamp']);
+                if ($ts === false) {
+                    continue;
+                }
+                $five[hp_bucket_5min_start($ts)] = $row;
+            }
+        } catch (Throwable $e2) {
+            $five = [];
+        }
     }
 
-    /** @var array<int, list<array{ts:int, solar:?float, grid:?float}>> $byBucket */
+    /** @var array<int, list<array{ts:int, solar:?float, grid:?float, l1:?float, l2:?float, l3:?float}>> $byBucket */
     $byBucket = [];
     foreach ($readings as $row) {
         $ts = strtotime((string)($row['timestamp'] ?? ''));
@@ -316,17 +347,23 @@ function hp_explorer_mixed_series(PDO $pdo, int $start, int $end, $sanitizePac =
         $bucket = hp_bucket_5min_start($ts);
         $solarRaw = $row['solar_power'] ?? null;
         $gridRaw = $row['active_power'] ?? null;
+        $l1Raw = $row['power_l1_w'] ?? null;
+        $l2Raw = $row['power_l2_w'] ?? null;
+        $l3Raw = $row['power_l3_w'] ?? null;
         $byBucket[$bucket][] = [
             'ts' => $ts,
             'solar' => ($solarRaw === null || $solarRaw === '') ? null : (float)$solarRaw,
             'grid' => ($gridRaw === null || $gridRaw === '') ? null : (float)$gridRaw,
+            'l1' => ($l1Raw === null || $l1Raw === '') ? null : (float)$l1Raw,
+            'l2' => ($l2Raw === null || $l2Raw === '') ? null : (float)$l2Raw,
+            'l3' => ($l3Raw === null || $l3Raw === '') ? null : (float)$l3Raw,
         ];
     }
 
     $bucketStarts = array_unique(array_merge(array_keys($byBucket), array_keys($five)));
     sort($bucketStarts, SORT_NUMERIC);
 
-    /** @var list<array{ts:int, source:string, solar:?float, grid:?float}> $rawPoints */
+    /** @var list<array{ts:int, source:string, solar:?float, grid:?float, l1:?float, l2:?float, l3:?float}> $rawPoints */
     $rawPoints = [];
     foreach ($bucketStarts as $bucket) {
         if ($bucket + 299 < $start || $bucket > $end) {
@@ -347,6 +384,9 @@ function hp_explorer_mixed_series(PDO $pdo, int $start, int $end, $sanitizePac =
                     'source' => '1min',
                     'solar' => $sample['solar'],
                     'grid' => $sample['grid'],
+                    'l1' => $sample['l1'],
+                    'l2' => $sample['l2'],
+                    'l3' => $sample['l3'],
                 ];
             }
             continue;
@@ -379,11 +419,17 @@ function hp_explorer_mixed_series(PDO $pdo, int $start, int $end, $sanitizePac =
             $row['grid_import_kwh'],
             $row['grid_export_kwh']
         );
+        $l1Raw = $row['power_l1_w'] ?? null;
+        $l2Raw = $row['power_l2_w'] ?? null;
+        $l3Raw = $row['power_l3_w'] ?? null;
         $rawPoints[] = [
             'ts' => $ts,
             'source' => '5min',
             'solar' => $solarW,
             'grid' => $gridNet,
+            'l1' => ($l1Raw === null || $l1Raw === '') ? null : (float)$l1Raw,
+            'l2' => ($l2Raw === null || $l2Raw === '') ? null : (float)$l2Raw,
+            'l3' => ($l3Raw === null || $l3Raw === '') ? null : (float)$l3Raw,
         ];
     }
 
@@ -428,6 +474,9 @@ function hp_explorer_mixed_series(PDO $pdo, int $start, int $end, $sanitizePac =
     $classicSolar = [];
     $classicHome = [];
     $classicGrid = [];
+    $phaseL1 = [];
+    $phaseL2 = [];
+    $phaseL3 = [];
     $sources = [];
 
     $prevTs = null;
@@ -458,11 +507,14 @@ function hp_explorer_mixed_series(PDO $pdo, int $start, int $end, $sanitizePac =
             $classicSolar[] = $nullPt;
             $classicHome[] = $nullPt;
             $classicGrid[] = $nullPt;
+            $phaseL1[] = $nullPt;
+            $phaseL2[] = $nullPt;
+            $phaseL3[] = $nullPt;
         }
 
         $parts = hp_balance_parts($pt['solar'], $pt['grid']);
         if ($parts !== null && $parts['consumption'] !== null) {
-            // Numeric bands only — nulls blank Apex stacked areas.
+            // Numeric bands only - nulls blank Apex stacked areas.
             $balanceSelf[] = ['x' => $ms, 'y' => hp_chart_watt0($parts['self_sufficient'])];
             $balanceGrid[] = ['x' => $ms, 'y' => hp_chart_watt0($parts['grid'])];
             $balanceSurplus[] = ['x' => $ms, 'y' => hp_chart_watt0($parts['surplus'])];
@@ -485,6 +537,20 @@ function hp_explorer_mixed_series(PDO $pdo, int $start, int $end, $sanitizePac =
         $classicSolar[] = ['x' => $ms, 'y' => $solarY];
         $classicHome[] = ['x' => $ms, 'y' => $homeY];
         $classicGrid[] = ['x' => $ms, 'y' => $gridY];
+
+        // A18: all three present or null gap (do not invent / bridge phases).
+        $pl1 = $pt['l1'] ?? null;
+        $pl2 = $pt['l2'] ?? null;
+        $pl3 = $pt['l3'] ?? null;
+        if ($pl1 !== null && $pl2 !== null && $pl3 !== null) {
+            $phaseL1[] = ['x' => $ms, 'y' => hp_chart_watt((float)$pl1)];
+            $phaseL2[] = ['x' => $ms, 'y' => hp_chart_watt((float)$pl2)];
+            $phaseL3[] = ['x' => $ms, 'y' => hp_chart_watt((float)$pl3)];
+        } else {
+            $phaseL1[] = ['x' => $ms, 'y' => null];
+            $phaseL2[] = ['x' => $ms, 'y' => null];
+            $phaseL3[] = ['x' => $ms, 'y' => null];
+        }
 
         $prevTs = $ts;
         $prevSource = $source;
@@ -512,6 +578,11 @@ function hp_explorer_mixed_series(PDO $pdo, int $start, int $end, $sanitizePac =
             'solar' => $classicSolar,
             'home' => $classicHome,
             'grid' => $classicGrid,
+        ],
+        'phases' => [
+            'l1' => $phaseL1,
+            'l2' => $phaseL2,
+            'l3' => $phaseL3,
         ],
         'sources' => $sources,
     ];

@@ -160,3 +160,49 @@ function hp_live_chart_balance_series(array $rows): array
         'surplus' => $surplus,
     ];
 }
+
+/**
+ * Apex datetime points for L1/L2/L3 (A18). Same 3-minute gap rule as classic.
+ * Incomplete phase trio at a sample is a null gap (no zero-fill).
+ *
+ * @param array<int, array<string, mixed>> $rows Oldest first.
+ * @return array{
+ *   l1: array<int, array{x: int, y: int|null}>,
+ *   l2: array<int, array{x: int, y: int|null}>,
+ *   l3: array<int, array{x: int, y: int|null}>
+ * }
+ */
+function hp_live_chart_phases_series(array $rows): array
+{
+    $l1 = [];
+    $l2 = [];
+    $l3 = [];
+    $prev = null;
+    foreach ($rows as $row) {
+        $ts = strtotime((string)($row['timestamp'] ?? ''));
+        if ($ts === false) {
+            continue;
+        }
+        if ($prev !== null && ($ts - $prev) > 180) {
+            $breakAt = ($prev * 1000) + 1000;
+            $l1[] = ['x' => $breakAt, 'y' => null];
+            $l2[] = ['x' => $breakAt, 'y' => null];
+            $l3[] = ['x' => $breakAt, 'y' => null];
+        }
+        $ms = $ts * 1000;
+        $a = $row['power_l1_w'] ?? null;
+        $b = $row['power_l2_w'] ?? null;
+        $c = $row['power_l3_w'] ?? null;
+        if ($a === null || $a === '' || $b === null || $b === '' || $c === null || $c === '') {
+            $l1[] = ['x' => $ms, 'y' => null];
+            $l2[] = ['x' => $ms, 'y' => null];
+            $l3[] = ['x' => $ms, 'y' => null];
+        } else {
+            $l1[] = ['x' => $ms, 'y' => (int)$a];
+            $l2[] = ['x' => $ms, 'y' => (int)$b];
+            $l3[] = ['x' => $ms, 'y' => (int)$c];
+        }
+        $prev = $ts;
+    }
+    return ['l1' => $l1, 'l2' => $l2, 'l3' => $l3];
+}

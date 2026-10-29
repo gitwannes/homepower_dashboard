@@ -111,6 +111,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'Timestamp',
                 'Net Grid (W)',
                 'Solar Power (W)',
+                'Phase L1 (W)',
+                'Phase L2 (W)',
+                'Phase L3 (W)',
                 'Import Peak (kWh)',
                 'Import Off peak (kWh)',
                 'Total Import (kWh)',
@@ -125,21 +128,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'Gas (m3)',
                 'Water (m3)',
             ], ';');
-            $stmt = $pdo->query(
-                'SELECT timestamp, active_power, solar_power,
-                        import_t1, import_t2, total_import,
-                        export_t1, export_t2, total_export,
-                        capacity_peak_w, solar_total_kwh,
-                        solar_radiation, temp_module, wind_speed,
-                        gas, water
-                 FROM readings
-                 ORDER BY id ASC'
-            );
+            try {
+                $stmt = $pdo->query(
+                    'SELECT timestamp, active_power, solar_power,
+                            power_l1_w, power_l2_w, power_l3_w,
+                            import_t1, import_t2, total_import,
+                            export_t1, export_t2, total_export,
+                            capacity_peak_w, solar_total_kwh,
+                            solar_radiation, temp_module, wind_speed,
+                            gas, water
+                     FROM readings
+                     ORDER BY id ASC'
+                );
+            } catch (Throwable $e) {
+                $stmt = $pdo->query(
+                    'SELECT timestamp, active_power, solar_power,
+                            import_t1, import_t2, total_import,
+                            export_t1, export_t2, total_export,
+                            capacity_peak_w, solar_total_kwh,
+                            solar_radiation, temp_module, wind_speed,
+                            gas, water
+                     FROM readings
+                     ORDER BY id ASC'
+                );
+            }
             while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
                 fputcsv($output, [
                     date('d/m/Y H:i:s', strtotime((string)$row['timestamp'])),
                     $row['active_power'],
                     $row['solar_power'] ?? 0,
+                    ($row['power_l1_w'] !== null && $row['power_l1_w'] !== '') ? (int)$row['power_l1_w'] : '',
+                    ($row['power_l2_w'] !== null && $row['power_l2_w'] !== '') ? (int)$row['power_l2_w'] : '',
+                    ($row['power_l3_w'] !== null && $row['power_l3_w'] !== '') ? (int)$row['power_l3_w'] : '',
                     number_format((float)$row['import_t1'], 3, ',', ''),
                     number_format((float)$row['import_t2'], 3, ',', ''),
                     ($row['total_import'] !== null) ? number_format((float)$row['total_import'], 3, ',', '') : '',

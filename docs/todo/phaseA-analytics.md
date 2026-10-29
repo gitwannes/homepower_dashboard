@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4**-**A13**, **A16**, **A17**, **A19 Done**; **A18**/**A20** kicked off; **A11**, **A14**, **A15** queued. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-29 (**A19** closed)  
+**Status:** **A4**-**A13**, **A16**, **A17**, **A18**, **A19 Done**; **A20** kicked off; **A11**, **A14**, **A15** queued. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-29 (**A18** closed)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py`
 
 ---
@@ -23,14 +23,14 @@
 | **A12** | Done | Capacity peak on summary + top-n. Product: [`docs/architecture.md`](../architecture.md) |
 | **A13** | Done | Grid import/export on summary and top-n. Product: [`docs/architecture.md`](../architecture.md) |
 | **A14** | open | Virtual kWh meters from Settings (bias to import / export / PV) |
-| **A15** | open | Settings save: probe every filled integration; fail -> modal, stay on page |
+| **A15** | open | Settings save: probe every filled integration; fail -> modal, stay on page. Kicked off |
 | **A16** | Done | Per-phase W on `readings` + logger. Product: [`docs/architecture.md`](../architecture.md) |
 | **A17** | Done | Rollup: per-phase W into `history_5min`. Product: [`docs/architecture.md`](../architecture.md) |
-| **A18** | open | UI: per-phase power. Depends on A16+A17. Kicked off |
+| **A18** | Done | UI: Phases view + Sum mountain; CSV phase cols. Product: [`docs/architecture.md`](../architecture.md) |
 | **A19** | Done | Analytics explorer: calendar-day **Today** preset (default). Product: [`docs/architecture.md`](../architecture.md) |
 | **A20** | open | Settings locked-by-default / Unlock then Save-if-dirty. Kicked off |
 
-**Parallel:** **A17**/**A19** closed. **A18** kicked off (needs A16+A17 data). **A11** Fluvius gas / wind. **A14** / **A15** / **A20** Settings-adjacent.
+**Parallel:** **A17**/**A18**/**A19** closed. **A15** / **A20** kicked off (both Settings Save). **A11** Fluvius gas / wind. **A14** Settings-adjacent.
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
@@ -712,13 +712,10 @@ Affinity **A**. Carry per-phase W from `readings` onto `history_5min` in the dow
 
 ## A18 - UI per-phase power
 
-**Status:** open (kickoff locked 2026-10-29; waiting `implement`)
+**Status:** Done (closed 2026-10-29)
 **Size:** **M**
 **Depends on:** **A16** + **A17** (Done)
-
-### Placement
-
-Affinity **A** (analytics / live UI). Chart or surface for L1/L2/L3 W from `readings` / `history_5min`. Spec at kickoff.
+**Product:** [`docs/architecture.md`](../architecture.md) (Phases view + CSV)
 
 ### Verbatim - 2026-10-29
 
@@ -726,47 +723,37 @@ Affinity **A** (analytics / live UI). Chart or surface for L1/L2/L3 W from `read
 
 > clode A17 & kickoff A18
 
-### Verified
+> all ok
 
-- 1-min: `readings.power_l1_w` / `_l2_` / `_l3_` (A16); sum == `active_power` when filled.
-- 5-min: same columns on `history_5min` (A17); sum == `grid_power_w` when filled; NULL when incomplete / non-P1.
-- Index already shows **live** L1/L2/L3 bars from `latest_state` P1 JSON (instant W/V/A) - not a history chart.
-- Explorer / index power charts today: Exchange / Balance / Classic only (no phase series).
-- Settings 1-min CSV does **not** include phase columns yet.
+> implement
 
-### Open questions (block implement)
+> can you add a very light filled mountain line on the phases graph that shows the total of L1+2+3
 
-1. **Where:** index live pulse only, analytics explorer only, or **both**?
-2. **Presentation:** new view mode **Phases** (fourth switch next to Exchange/Balance/Classic), or always-on overlay / separate card?
-3. **Series:** L1 / L2 / L3 only, or also net (`active_power` / `grid_power_w`)?
-4. **Chart style:** three bipolar lines (same signed W as net), stacked bars, or something else?
-5. **Gaps:** NULL phase samples = chart gap (same as missing grid), correct?
-6. **1-phase plants:** hide the Phases control entirely when recent data has no phase columns filled?
-7. **Settings CSV:** add the three phase columns to the 1-min download in this phase, or leave for later?
+> close A18
 
-### Kickoff locks (operator confirmed 2026-10-29 - "all ok")
+### Kickoff locks (operator confirmed)
 
 | # | Lock |
 |---|---|
-| 1 | **Both** index (2 h pulse) and analytics (mixed 1/5-min path) |
-| 2 | Fourth switch **Phases** (`?view=phases`) next to Exchange / Balance / Classic |
-| 3 | **L1 + L2 + L3 only** (no net line); tooltip may show sum |
-| 4 | **Three bipolar lines** (signed W, same convention as `active_power`) |
-| 5 | **NULL = gap** (no zero-fill) |
-| 6 | **Hide Phases** when the loaded window has no non-NULL phase samples |
-| 7 | Settings 1-min CSV includes `power_l1_w` / `power_l2_w` / `power_l3_w` (empty when NULL) |
-
-### Open questions
-
-None. Kickoff locked. Wait for operator `implement`.
+| 1 | Both index + analytics |
+| 2 | Fourth switch **Phases** (`?view=phases`) |
+| 3 | L1/L2/L3 lines; Sum as light filled mountain (post-ship add) |
+| 4 | Signed W bipolar lines |
+| 5 | NULL omitted (gap, no zero-fill) |
+| 6 | Hide Phases when window has no phase samples |
+| 7 | Settings 1-min CSV includes phase columns |
 
 ### DoD
 
-- [ ] Index + analytics: Phases view per locks
-- [ ] Uses stored `power_l*_w` (not only live P1 JSON)
-- [ ] Hide Phases when window has no phase data
-- [ ] Settings 1-min CSV phase columns
-- [ ] Product docs on close-out
+- [x] Index + analytics Phases view
+- [x] Stored `power_l*_w`; Sum mountain; hide when empty
+- [x] Settings CSV phase columns
+- [x] Live blank-chart fix (omit null markers for Apex)
+- [x] Product docs match shipped UI
+
+### Close-out (2026-10-29)
+
+Shipped: **Phases** on index (2 h) and analytics (mixed 1/5-min); light **Sum** area behind L1/L2/L3; CSV columns. No separate phase file to archive (section stays in this file).
 
 ---
 
