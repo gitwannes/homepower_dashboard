@@ -5,6 +5,7 @@
  * Device passwords are never written into the HTML.
  * A9 database download and restore are on this page.
  * A20: page starts locked; Unlock opens a timed edit window.
+ * A15: Save probes filled integrations and writes *_active flags.
  */
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
@@ -62,33 +63,86 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
     } elseif ($action === 'save') {
+        // A15 follow-up: ajax=1 returns JSON so a failed Save keeps the unlock window in the browser.
+        $saveAjax = isset($_POST['ajax']) && (string)$_POST['ajax'] === '1';
+        $saveRespond = function (bool $ok, string $message, string $redirect = '') use ($saveAjax): void {
+            if (!$saveAjax) {
+                return;
+            }
+            header('Content-Type: application/json; charset=UTF-8');
+            $payload = ['ok' => $ok, 'error' => $message];
+            if ($ok && $redirect !== '') {
+                $payload['redirect'] = $redirect;
+            }
+            echo json_encode($payload);
+            exit;
+        };
         if ($boot['mode'] === 'need_admin') {
             $error = 'Set an admin password first.';
+            $saveRespond(false, $error);
         } else {
             $adminPassword = isset($_POST['admin_password']) ? (string)$_POST['admin_password'] : '';
             $parsed = hp_settings_from_post($boot['stored']);
             if (!hp_admin_ok($pdo, $adminPassword)) {
                 $error = 'Admin password is wrong. Nothing was saved.';
                 $posted = $parsed['form'];
+                $saveRespond(false, $error);
             } elseif (count($parsed['errors']) > 0) {
                 $error = implode(' ', $parsed['errors']);
                 $posted = $parsed['form'];
+                $saveRespond(false, $error);
             } else {
-                $pdo->beginTransaction();
-                try {
-                    hp_write_settings($pdo, $parsed['settings']);
-                    hp_save_monthly($pdo, $parsed['monthly']);
-                    $pdo->commit();
-                } catch (Exception $e) {
-                    if ($pdo->inTransaction()) {
-                        $pdo->rollBack();
-                    }
-                    $error = 'Save failed.';
+                $plan = hp_integration_save_plan($parsed['settings']);
+                if (count($plan['errors']) > 0) {
+                    // Atomic: no DB write on partial fill (or any plan error).
+                    $error = implode(' ', $plan['errors']);
                     $posted = $parsed['form'];
-                }
-                if ($error === '') {
-                    header('Location: settings.php?saved=1');
-                    exit;
+                    $saveRespond(false, $error);
+                } else {
+                    @set_time_limit(120);
+                    $probeRun = hp_run_integration_probes($parsed['settings'], $plan['probe']);
+                    if (!$probeRun['ok']) {
+                        $error = 'Save blocked: could not run integration probes. ' . $probeRun['error'];
+                        $posted = $parsed['form'];
+                        $saveRespond(false, $error);
+                    } else {
+                        $flagged = hp_apply_integration_probe_flags(
+                            $parsed['settings'],
+                            $plan['inactive'],
+                            $probeRun['results']
+                        );
+                        $toWrite = $flagged['settings'];
+                        $pdo->beginTransaction();
+                        try {
+                            hp_write_settings($pdo, $toWrite);
+                            hp_save_monthly($pdo, $parsed['monthly']);
+                            if (count($flagged['warnings']) > 0) {
+                                hp_write_settings($pdo, [
+                                    'settings_probe_flash' => (string)json_encode($flagged['warnings']),
+                                ]);
+                            } else {
+                                // Clear any previous flash.
+                                hp_write_settings($pdo, ['settings_probe_flash' => '']);
+                            }
+                            $pdo->commit();
+                        } catch (Exception $e) {
+                            if ($pdo->inTransaction()) {
+                                $pdo->rollBack();
+                            }
+                            $error = 'Save failed.';
+                            $posted = $parsed['form'];
+                            $saveRespond(false, $error);
+                        }
+                        if ($error === '') {
+                            $q = count($flagged['warnings']) > 0 ? 'saved=1&probe_warn=1' : 'saved=1';
+                            $redir = 'settings.php?' . $q;
+                            if ($saveAjax) {
+                                $saveRespond(true, '', $redir);
+                            }
+                            header('Location: ' . $redir);
+                            exit;
+                        }
+                    }
                 }
             }
         }
@@ -268,6 +322,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+$probeWarnModal = [];
 if (isset($_GET['saved'])) {
     $notice = 'Settings saved. Titles and Summary PVGIS curve apply on the next page load. Plant limits and monthly target_pct apply after: python3 rollup.py -buildall';
 }
@@ -279,6 +334,18 @@ if (isset($_GET['restored'])) {
 }
 
 $stored = hp_load_stored($pdo);
+if (isset($_GET['probe_warn']) && isset($stored['settings_probe_flash']) && $stored['settings_probe_flash'] !== '') {
+    $decodedFlash = json_decode($stored['settings_probe_flash'], true);
+    if (is_array($decodedFlash)) {
+        $probeWarnModal = $decodedFlash;
+    }
+    try {
+        hp_write_settings($pdo, ['settings_probe_flash' => '']);
+        unset($stored['settings_probe_flash']);
+    } catch (Exception $e) {
+        // Flash clear is best-effort; modal can still show once.
+    }
+}
 $settings = $posted !== null ? $posted : hp_merge_settings($stored);
 $monthly = hp_monthly_kwh($pdo);
 if ($posted !== null && isset($posted['monthly']) && is_array($posted['monthly'])) {
@@ -368,19 +435,22 @@ function hp_settings_from_post(array $stored): array
         $smaExisting,
         $raw('sma_password'),
         isset($_POST['sma_password_touched']) && $_POST['sma_password_touched'] === '1',
-        $smaExisting !== ''
+        $smaExisting !== '',
+        isset($_POST['sma_password_clear']) && $_POST['sma_password_clear'] === '1'
     );
     $wbPassword = hp_resolve_password(
         $wbExisting,
         $raw('sunnywebbox_password'),
         isset($_POST['sunnywebbox_password_touched']) && $_POST['sunnywebbox_password_touched'] === '1',
-        $wbExisting !== ''
+        $wbExisting !== '',
+        isset($_POST['sunnywebbox_password_clear']) && $_POST['sunnywebbox_password_clear'] === '1'
     );
     $portalPassword = hp_resolve_password(
         $portalExisting,
         $raw('sunnyportal_password'),
         isset($_POST['sunnyportal_password_touched']) && $_POST['sunnyportal_password_touched'] === '1',
-        $portalExisting !== ''
+        $portalExisting !== '',
+        isset($_POST['sunnyportal_password_clear']) && $_POST['sunnyportal_password_clear'] === '1'
     );
 
     $settings = [
@@ -425,6 +495,26 @@ function hp_field(array $settings, string $key): string
 {
     return isset($settings[$key]) ? (string)$settings[$key] : '';
 }
+
+/**
+ * Status chip next to an integration heading (A15).
+ */
+function hp_integration_chip_html(string $state): string
+{
+    if ($state === 'active') {
+        return '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 border border-emerald-200">Active</span>';
+    }
+    if ($state === 'inactive') {
+        return '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-rose-50 text-rose-700 border border-rose-200">Inactive</span>';
+    }
+    return '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-slate-50 text-slate-500 border border-slate-200">Not configured</span>';
+}
+
+$chipP1 = hp_integration_chip_state($settings, $stored, 'p1');
+$chipSma = hp_integration_chip_state($settings, $stored, 'sma');
+$chipWb = hp_integration_chip_state($settings, $stored, 'sunnywebbox');
+$chipPortal = hp_integration_chip_state($settings, $stored, 'sunnyportal');
+$integrationLabels = hp_integration_labels();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -493,9 +583,18 @@ function hp_field(array $settings, string $key): string
 
         <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
             <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Devices</h2>
+            <p class="text-xs text-slate-500">Save probes each filled device. Active only after a successful probe. Fail or offline still saves credentials but leaves the integration inactive.</p>
+            <div class="flex items-center justify-between gap-2">
+                <span class="text-sm font-semibold">P1</span>
+                <?= hp_integration_chip_html($chipP1) ?>
+            </div>
             <label class="block text-sm font-semibold">P1 address
                 <input name="p1_ip" required disabled value="<?= hp_h(hp_field($settings, 'p1_ip')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
+            <div class="flex items-center justify-between gap-2 pt-2">
+                <span class="text-sm font-semibold">SMA inverter</span>
+                <?= hp_integration_chip_html($chipSma) ?>
+            </div>
             <label class="block text-sm font-semibold">SMA address
                 <input name="sma_ip" disabled value="<?= hp_h(hp_field($settings, 'sma_ip')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
@@ -503,42 +602,56 @@ function hp_field(array $settings, string $key): string
                 <input name="sma_user" disabled value="<?= hp_h(hp_field($settings, 'sma_user')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <div class="block text-sm font-semibold">SMA password
-                <div class="mt-1 flex gap-2">
-                    <input type="password" name="sma_password" id="sma_password" autocomplete="new-password" disabled data-secret-set="<?= $smaSet ? '1' : '0' ?>" placeholder="<?= $smaSet ? '********' : '' ?>" class="js-lock-field flex-1 border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <div class="mt-1 flex gap-2 flex-wrap">
+                    <input type="password" name="sma_password" id="sma_password" autocomplete="new-password" disabled data-secret-set="<?= $smaSet ? '1' : '0' ?>" placeholder="<?= $smaSet ? '********' : '' ?>" class="js-lock-field flex-1 min-w-[10rem] border border-slate-200 rounded-xl px-3 py-2 font-normal">
                     <input type="hidden" name="sma_password_touched" id="sma_password_touched" value="0">
+                    <input type="hidden" name="sma_password_clear" id="sma_password_clear" value="0">
                     <?php if ($smaSet): ?>
                         <button type="button" disabled class="js-edit-pw js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed" data-target="sma_password">Edit</button>
+                        <button type="button" disabled class="js-clear-pw js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed" data-target="sma_password">Clear</button>
                     <?php endif; ?>
                 </div>
+            </div>
+            <div class="flex items-center justify-between gap-2 pt-2">
+                <span class="text-sm font-semibold">Sunny WebBox</span>
+                <?= hp_integration_chip_html($chipWb) ?>
             </div>
             <label class="block text-sm font-semibold">Sunny WebBox address
                 <input name="sunnywebbox_ip" disabled value="<?= hp_h(hp_field($settings, 'sunnywebbox_ip')) ?>" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <div class="block text-sm font-semibold">Sunny WebBox password
-                <div class="mt-1 flex gap-2">
-                    <input type="password" name="sunnywebbox_password" id="sunnywebbox_password" autocomplete="new-password" disabled data-secret-set="<?= $webboxSet ? '1' : '0' ?>" placeholder="<?= $webboxSet ? '********' : '' ?>" class="js-lock-field flex-1 border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <div class="mt-1 flex gap-2 flex-wrap">
+                    <input type="password" name="sunnywebbox_password" id="sunnywebbox_password" autocomplete="new-password" disabled data-secret-set="<?= $webboxSet ? '1' : '0' ?>" placeholder="<?= $webboxSet ? '********' : '' ?>" class="js-lock-field flex-1 min-w-[10rem] border border-slate-200 rounded-xl px-3 py-2 font-normal">
                     <input type="hidden" name="sunnywebbox_password_touched" id="sunnywebbox_password_touched" value="0">
+                    <input type="hidden" name="sunnywebbox_password_clear" id="sunnywebbox_password_clear" value="0">
                     <?php if ($webboxSet): ?>
                         <button type="button" disabled class="js-edit-pw js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed" data-target="sunnywebbox_password">Edit</button>
+                        <button type="button" disabled class="js-clear-pw js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed" data-target="sunnywebbox_password">Clear</button>
                     <?php endif; ?>
                 </div>
             </div>
         </section>
 
         <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
-            <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Sunny Portal</h2>
-            <p class="text-xs text-slate-500">Optional. The one-time pull reads these. An empty timezone uses Europe/Paris. The password is never shown.</p>
+            <div class="flex items-center justify-between gap-2">
+                <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Sunny Portal</h2>
+                <?= hp_integration_chip_html($chipPortal) ?>
+            </div>
+            <p class="text-xs text-slate-500">Optional. The pull reads these when active. An empty timezone uses Europe/Paris. The password is never shown.</p>
             <label class="block text-sm font-semibold">Sunny Portal user
                 <input name="sunnyportal_user" disabled value="<?= hp_h(hp_field($settings, 'sunnyportal_user')) ?>" autocomplete="off" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
             </label>
             <div class="block text-sm font-semibold">Sunny Portal password
-                <div class="mt-1 flex gap-2">
-                    <input type="password" name="sunnyportal_password" id="sunnyportal_password" autocomplete="new-password" disabled data-secret-set="<?= $portalSet ? '1' : '0' ?>" placeholder="<?= $portalSet ? '********' : '' ?>" class="js-lock-field flex-1 border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                <div class="mt-1 flex gap-2 flex-wrap">
+                    <input type="password" name="sunnyportal_password" id="sunnyportal_password" autocomplete="new-password" disabled data-secret-set="<?= $portalSet ? '1' : '0' ?>" placeholder="<?= $portalSet ? '********' : '' ?>" class="js-lock-field flex-1 min-w-[10rem] border border-slate-200 rounded-xl px-3 py-2 font-normal">
                     <input type="hidden" name="sunnyportal_password_touched" id="sunnyportal_password_touched" value="0">
+                    <input type="hidden" name="sunnyportal_password_clear" id="sunnyportal_password_clear" value="0">
                     <?php if ($portalSet): ?>
                         <button type="button" disabled class="js-edit-pw js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed" data-target="sunnyportal_password">Edit</button>
+                        <button type="button" disabled class="js-clear-pw js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed" data-target="sunnyportal_password">Clear</button>
                     <?php endif; ?>
                 </div>
+                <p class="text-xs text-slate-500 mt-1">Clear removes the stored password on the next successful Save. To drop Portal entirely, Clear the password and empty user + plant id, then Save.</p>
             </div>
             <label class="block text-sm font-semibold">Sunny Portal plant id
                 <input name="sunnyportal_plant_id" disabled value="<?= hp_h(hp_field($settings, 'sunnyportal_plant_id')) ?>" autocomplete="off" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
@@ -608,7 +721,11 @@ function hp_field(array $settings, string $key): string
             <p class="text-xs text-slate-500">Titles apply on the next page load.</p>
         </section>
 
-        <button type="button" id="primarySettingsAction" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">Unlock settings</button>
+        <div class="flex flex-wrap items-center gap-3">
+            <button type="button" id="primarySettingsAction" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">Unlock settings</button>
+            <span id="unlockCountdown" class="hidden text-xs font-semibold text-slate-600 tabular-nums" aria-live="polite"></span>
+        </div>
+        <p id="saveInlineError" class="hidden text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-3"></p>
     </form>
 
     <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-3 shadow-sm">
@@ -639,6 +756,33 @@ function hp_field(array $settings, string $key): string
             </div>
         </form>
     </div>
+
+    <?php if (count($probeWarnModal) > 0): ?>
+    <div id="probeWarnModal" class="fixed inset-0 bg-slate-900/40 items-center justify-center p-4" style="display:flex; z-index:50">
+        <div class="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-md space-y-3 shadow-lg">
+            <h2 class="text-lg font-bold">Saved, but some integrations stay inactive</h2>
+            <p class="text-sm text-slate-600">Credentials were saved. Fix the issues below and Save again to activate.</p>
+            <ul class="space-y-2 text-sm">
+                <?php foreach ($probeWarnModal as $row): ?>
+                    <?php
+                    $wid = isset($row['id']) ? (string)$row['id'] : '';
+                    $wstatus = isset($row['status']) ? (string)$row['status'] : '';
+                    $wmsg = isset($row['message']) ? (string)$row['message'] : '';
+                    $wlabel = isset($integrationLabels[$wid]) ? $integrationLabels[$wid] : $wid;
+                    ?>
+                    <li class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                        <strong><?= hp_h($wlabel) ?></strong>
+                        <span class="text-xs uppercase tracking-wide opacity-80">(<?= hp_h($wstatus) ?>)</span>
+                        <div class="mt-0.5 font-normal"><?= hp_h($wmsg) ?></div>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+            <div class="flex justify-end">
+                <button type="button" id="probeWarnOk" class="px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">OK</button>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <div id="adminModal" class="fixed inset-0 bg-slate-900/40 items-center justify-center p-4" style="display:none">
         <form method="post" class="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-sm space-y-3 shadow-lg" autocomplete="off">
@@ -717,8 +861,53 @@ function hp_field(array $settings, string $key): string
         var unlocked = false;
         var unlockPassword = '';
         var unlockTimer = null;
+        var unlockTick = null;
+        var unlockUntil = 0;
         var baseline = '';
         var secretBaseline = {};
+        var saveInlineError = document.getElementById('saveInlineError');
+        var unlockCountdown = document.getElementById('unlockCountdown');
+        var saving = false;
+
+        function showSaveError(message) {
+            if (!saveInlineError) {
+                return;
+            }
+            saveInlineError.textContent = message || '';
+            if (message) {
+                saveInlineError.classList.remove('hidden');
+            } else {
+                saveInlineError.classList.add('hidden');
+            }
+        }
+
+        function formatUnlockRemaining(ms) {
+            var totalSec = Math.max(0, Math.ceil(ms / 1000));
+            var m = Math.floor(totalSec / 60);
+            var s = totalSec % 60;
+            return m + ':' + (s < 10 ? '0' : '') + s;
+        }
+
+        function refreshUnlockCountdown() {
+            if (!unlockCountdown) {
+                return;
+            }
+            if (!unlocked || unlockUntil <= 0) {
+                unlockCountdown.classList.add('hidden');
+                unlockCountdown.textContent = '';
+                return;
+            }
+            var left = unlockUntil - Date.now();
+            unlockCountdown.classList.remove('hidden');
+            unlockCountdown.textContent = 'Unlock ends in ' + formatUnlockRemaining(left);
+        }
+
+        function clearUnlockTick() {
+            if (unlockTick !== null) {
+                clearInterval(unlockTick);
+                unlockTick = null;
+            }
+        }
 
         function openGate(title, callback) {
             gateCallback = callback;
@@ -832,6 +1021,9 @@ function hp_field(array $settings, string $key): string
                 clearTimeout(unlockTimer);
                 unlockTimer = null;
             }
+            clearUnlockTick();
+            unlockUntil = 0;
+            refreshUnlockCountdown();
         }
 
         function lockPage() {
@@ -839,6 +1031,8 @@ function hp_field(array $settings, string $key): string
             unlocked = false;
             unlockPassword = '';
             adminPasswordField.value = '';
+            saving = false;
+            showSaveError('');
             timeoutModal.style.display = 'none';
             setControlsEnabled(false);
             // Restore secret fields to the loaded baseline (discard in-page edits).
@@ -852,6 +1046,10 @@ function hp_field(array $settings, string $key): string
                 input.placeholder = state.placeholder;
                 input.disabled = true;
                 document.getElementById(id + '_touched').value = '0';
+                var clearFlag = document.getElementById(id + '_clear');
+                if (clearFlag) {
+                    clearFlag.value = '0';
+                }
             });
             form.reset();
             // reset() restores HTML defaults; re-apply locked disabled state.
@@ -863,16 +1061,23 @@ function hp_field(array $settings, string $key): string
         function startUnlockWindow(password) {
             unlocked = true;
             unlockPassword = password;
+            showSaveError('');
             setControlsEnabled(true);
             baseline = snapshotForm();
             captureSecretBaseline();
             clearUnlockTimer();
+            unlockUntil = Date.now() + HP_SETTINGS_UNLOCK_MS;
             unlockTimer = setTimeout(onUnlockExpired, HP_SETTINGS_UNLOCK_MS);
+            unlockTick = setInterval(refreshUnlockCountdown, 1000);
+            refreshUnlockCountdown();
             refreshPrimaryButton();
         }
 
         function onUnlockExpired() {
             unlockTimer = null;
+            clearUnlockTick();
+            unlockUntil = 0;
+            refreshUnlockCountdown();
             if (!unlocked) {
                 return;
             }
@@ -894,11 +1099,50 @@ function hp_field(array $settings, string $key): string
             });
         }
 
+        function restoreLockFieldStateAfterAjax() {
+            // After enabling everything for FormData, put lock state back without discarding edits.
+            setControlsEnabled(true);
+        }
+
         function submitSave(password) {
-            clearUnlockTimer();
+            if (saving) {
+                return;
+            }
+            saving = true;
+            showSaveError('');
+            primaryBtn.disabled = true;
+            primaryBtn.textContent = 'Saving...';
             adminPasswordField.value = password;
             enableFieldsForSubmit();
-            form.submit();
+            var body = new FormData(form);
+            body.set('ajax', '1');
+            fetch('settings.php', {
+                method: 'POST',
+                body: body,
+                credentials: 'same-origin'
+            }).then(function (response) {
+                return response.json().then(function (data) {
+                    return { httpOk: response.ok, data: data };
+                }).catch(function () {
+                    throw new Error('Save returned a non-JSON response.');
+                });
+            }).then(function (pack) {
+                var data = pack.data || {};
+                if (data.ok && data.redirect) {
+                    // Successful Save: lock by navigating (A20 reload locked).
+                    window.location.href = data.redirect;
+                    return;
+                }
+                saving = false;
+                restoreLockFieldStateAfterAjax();
+                showSaveError(data.error || 'Save failed. Nothing was written.');
+                refreshPrimaryButton();
+            }).catch(function (err) {
+                saving = false;
+                restoreLockFieldStateAfterAjax();
+                showSaveError(err && err.message ? err.message : 'Save failed. Nothing was written.');
+                refreshPrimaryButton();
+            });
         }
 
         document.getElementById('gateCancel').addEventListener('click', closeGate);
@@ -1007,8 +1251,32 @@ function hp_field(array $settings, string $key): string
                 input.value = '';
                 input.placeholder = 'New password';
                 document.getElementById(targetId + '_touched').value = '1';
+                var clearFlag = document.getElementById(targetId + '_clear');
+                if (clearFlag) {
+                    clearFlag.value = '0';
+                }
                 refreshPrimaryButton();
                 input.focus();
+            });
+        });
+
+        Array.prototype.forEach.call(document.querySelectorAll('.js-clear-pw'), function (button) {
+            button.addEventListener('click', function () {
+                if (!unlocked) {
+                    return;
+                }
+                var targetId = button.getAttribute('data-target');
+                var input = document.getElementById(targetId);
+                input.disabled = false;
+                input.value = '';
+                input.placeholder = '(will clear on Save)';
+                input.setAttribute('data-secret-set', '0');
+                document.getElementById(targetId + '_touched').value = '1';
+                var clearFlag = document.getElementById(targetId + '_clear');
+                if (clearFlag) {
+                    clearFlag.value = '1';
+                }
+                refreshPrimaryButton();
             });
         });
 
@@ -1033,6 +1301,16 @@ function hp_field(array $settings, string $key): string
             capNode.textContent = String(Math.round(watts * 1.05));
         }
         maxInput.addEventListener('input', refreshCap);
+
+        var probeWarnOk = document.getElementById('probeWarnOk');
+        if (probeWarnOk) {
+            probeWarnOk.addEventListener('click', function () {
+                var modal = document.getElementById('probeWarnModal');
+                if (modal) {
+                    modal.style.display = 'none';
+                }
+            });
+        }
 
         // Page load: locked. Successful save redirects here already locked.
         refreshPrimaryButton();

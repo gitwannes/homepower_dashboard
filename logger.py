@@ -546,10 +546,27 @@ def run_poll():
         site_config.ensure_schema(conn)
         settings = site_config.load_settings(conn)
 
-        # P1 address comes from the Settings page (app_settings).
+        # P1 address + A15 active flags come from the Settings page (app_settings).
+        stored_flags = site_config.load_stored(conn)
+        active_check = dict(settings)
+        for _ak in site_config.INTEGRATION_ACTIVE_KEYS.values():
+            if _ak not in stored_flags:
+                active_check.pop(_ak, None)
+
         p1_ip = settings.get('p1_ip', '').strip()
         if not p1_ip:
             err_msg = "Configuration error: P1 address is not set. Open Settings in the dashboard."
+            log_event("ERROR", err_msg)
+            store_fatal_error(err_msg)
+            conn.close()
+            print(err_msg)
+            sys.exit(0)
+
+        if not site_config.integration_active(active_check, 'p1'):
+            err_msg = (
+                "P1 is inactive (last Settings probe failed or was offline). "
+                "Fix the P1 address on Settings and Save again."
+            )
             log_event("ERROR", err_msg)
             store_fatal_error(err_msg)
             conn.close()
@@ -599,13 +616,13 @@ def run_poll():
             print(err_msg)
             sys.exit(0)
 
-        # 4. Check Solar Addons (SMA & WebBox)
+        # 4. Check Solar Addons (SMA & WebBox) when active only (A15).
         alerts = []
 
-        # SMA Inverter (optional). Empty address means not configured.
+        # SMA Inverter (optional). Empty address or inactive => skip poll.
         sma_ip = settings.get('sma_ip', '').strip()
         sma_data = None
-        if sma_ip:
+        if sma_ip and site_config.integration_active(active_check, 'sma'):
             sma_user = settings.get('sma_user', '').strip() or 'usr'
             sma_pwd = settings.get('sma_password', '')
             sma_data, sma_alert = fetch_sma(sma_ip, sma_user, sma_pwd, last_state_data)
@@ -615,7 +632,7 @@ def run_poll():
         # Sunny WebBox (optional).
         wb_ip = settings.get('sunnywebbox_ip', '').strip()
         webbox_data = None
-        if wb_ip:
+        if wb_ip and site_config.integration_active(active_check, 'sunnywebbox'):
             wb_pwd = settings.get('sunnywebbox_password', '')
             webbox_data, wb_alert = fetch_webbox(wb_ip, wb_pwd, last_state_data)
             if wb_alert:

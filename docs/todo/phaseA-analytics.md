@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4**-**A13**, **A16**-**A20 Done**; **A15** kicked off; **A11**, **A14** queued. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-29 (**A20** closed)  
+**Status:** **A4**-**A13**, **A15**-**A20 Done**; **A14** kickoff locked; **A11**, **A21** queued. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-10-29 (**A14** kickoff locked)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py`
 
 ---
@@ -22,21 +22,54 @@
 | **A11** | open | Historical gas, wind, and similar series on the pages. Not P3. Not kicked off |
 | **A12** | Done | Capacity peak on summary + top-n. Product: [`docs/architecture.md`](../architecture.md) |
 | **A13** | Done | Grid import/export on summary and top-n. Product: [`docs/architecture.md`](../architecture.md) |
-| **A14** | open | Virtual kWh meters from Settings (bias to import / export / PV) |
-| **A15** | open | Settings save: probe + `*_active` flags (after A20). Kickoff almost locked |
+| **A14** | open | Virtual kWh meters: Settings + calc + debug page. Kickoff locked |
+| **A15** | Done | Settings save: probe + `*_active`; homepage errors; unlock stay on fail. Product: [`docs/architecture.md`](../architecture.md) |
 | **A16** | Done | Per-phase W on `readings` + logger. Product: [`docs/architecture.md`](../architecture.md) |
 | **A17** | Done | Rollup: per-phase W into `history_5min`. Product: [`docs/architecture.md`](../architecture.md) |
 | **A18** | Done | UI: Phases view + Sum mountain; CSV phase cols. Product: [`docs/architecture.md`](../architecture.md) |
 | **A19** | Done | Analytics explorer: calendar-day **Today** preset (default). Product: [`docs/architecture.md`](../architecture.md) |
 | **A20** | Done | Settings locked-by-default / Unlock timed window. Product: [`docs/architecture.md`](../architecture.md) |
+| **A21** | open | UI: virtual meters on Raw Meter Registers (+ further pages). After A14 |
 
-**Parallel:** **A20** Done (unlock UX). **A15** kicked off (probe on Save; after A20). **A11** Fluvius gas / wind. **A14** Settings-adjacent.
+**Parallel:** **A15**/**A20** Done. **A11** Fluvius gas / wind. **A14** / **A21** virtual meters.
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
 ---
 
 ## Verbatim inbox
+
+### 2026-10-29 - A14 kickoff locked (round 3)
+
+> 1: yes
+> 2: first save only - add button to re-bias on current reading (+ confirmation modal)
+> 3: UI in Q21
+> 4: all what you think is usefull to troubleshoot these virtual meters - no config, that is on the config page
+> 5: yes
+> 6: last readings
+
+A14 kickoff locked. Waiting `implement`. Raw Meter Registers display = **A21**.
+
+### 2026-10-29 - A14 kickoff round 2
+
+> 1: correct
+> 2: factor in % in settings, so 99.9996
+> 3: possible S0 = P1 lifetime import/export/net (3) + SMA total + webbox total = 5 possible sources (if available)
+> 4: add to settings: button "add virtual kWh meter" - then some field appear: name, source, bias, factor + info on source & virtual reading (to check if correct) + checkbox if this virtual reading should appear in "Raw Meter Registers"
+> 5: add PHP debug page
+
+Round 2 answers folded into A14 locks.
+
+### 2026-10-29 - A14 kickoff answers + triage virtual-meter UI (A21)
+
+> 1: it will track the same kWh reading from the source - meter but with a bias - I have several kWh meters which track yield - so it is just source + bias = reading for that virtual meter
+> 2: selectable in settings: all kWh meters (so those 3) ("add one" button)
+> 3: a constant offset + a percentage (with up to 4 decimems) of the new readings eg virtual meter 1 = yield minus 25000 kWh + 99,9996% of the additional yield kWh from now on
+> 4: for now: only in code, we will worry about UI later (triage this) - give code lines to display these readings and calculation (for troubleshooting)
+> 5: no need for rollup / history_5min / daily totals I think - confirm
+> 6: leave asis
+
+Placed UI follow-on: **A21**. See A14 / A21 sections.
 
 ### 2026-10-29 - close A17 + kickoff A18
 
@@ -802,89 +835,134 @@ Calendar-day **Today** preset (chip after 24 h, before 7 d) is the explorer defa
 
 ## A14 - Virtual kWh meters from Settings
 
-**Status:** open (triaged 2026-10-28, not kicked off)
+**Status:** open (kickoff locked 2026-10-29; waiting `implement`)
 **Size:** **M**
-**Depends on:** Settings (**A6** Done)
+**Depends on:** Settings (**A6** Done). Index **Raw Meter Registers** display = **A21**.
+**Prereqs:** **A6** Done - ok. Sequence vs **A11** / **A15**: leave as-is.
 
 ### Placement
 
-Configure virtual kWh meters on the Settings page with a bias toward import / export / PV. Spec at kickoff (storage, UI, who consumes the meters).
+Virtual kWh meters: Settings CRUD + live check, shared calc, PHP debug page (read-only). Store `show_in_raw_registers` flag; **do not** wire `index.php` Raw Meter Registers in A14 (**A21**). No warehouse writes.
 
-### Verbatim - 2026-10-28
+### Formula
 
-> [open]  virtual kWh meters from Settings (bias to import / export / PV)
+`V(t) = (S0 + C) + p * (S(t) - S0)`
 
----
+- `S(t)` = current source lifetime kWh (from **last `readings` row** for P1 / SMA / WebBox fields)
+- `S0` = frozen on **first save** of that meter only
+- **Re-bias** button: set `S0` to current source reading; **C** and factor unchanged; **confirmation modal** required
+- `C` = bias kWh (may be negative)
+- Factor in Settings = percent, up to 4 decimals (e.g. `99.9996`); `p = percent / 100`
 
-## A15 - Settings save probe integrations
-
-**Status:** open (kickoff 2026-10-29; awaiting confirm on consumer + post-save UX proposals)
-**Size:** **M** (Save probe + `*_active` + logger / portal / dashboard consumers)
-**Depends on:** Settings (**A6** Done); **A20** Done.
-**Prereqs:** **A6** / **A20** Done - ok.
-
-### Placement
-
-On Settings Save, probe every filled live integration. Partial fill blocks save. Fail/offline: still save credentials, set inactive. Active only after successful probe. Fluvius is CSV-only (not an active integration).
-
-### Verified (code / product docs)
-
-- Save writes `app_settings`; no probe; no `*_active` keys in `SETTING_DEFAULTS`.
-- Live integrations on Settings: P1, SMA, WebBox, Sunny Portal. Fluvius EANs filter CSV only.
-- `logger.py`: polls when IP set (P1 required for a successful poll cycle; SMA/WebBox optional).
-- `sunnyportal_pull.py`: uses portal settings; no active gate.
-- `need_config` boot mode: empty `p1_ip` only (`site_settings.php` / `site_config.has_p1`).
-- `powertests.py`: P1/SMA/WebBox stdout probes; `[ OFFLINE ]` vs `[FAIL]`.
+**P1 net** = import - export.
 
 ### Kickoff locks (operator 2026-10-29)
 
 | # | Lock |
 |---|---|
-| 1 | Probe on Save when filled: **P1, SMA, WebBox, Sunny Portal**. **Fluvius is not** an active integration (one-time CSV upload) - no probe, no `*_active`. |
-| 2 | Partial fill (e.g. user without password): warn, **block save**. |
-| 3 | Probe fail: **save** config, set integration **inactive**. Active only after successful test. |
-| 4 | Offline (e.g. SMA/WebBox night): warn, save, **do not enable**. |
-| 5 | Ship after **A20** (Done). |
-| 6 | Structured shared probe helpers (ok/fail/offline + message); Settings Save + `powertests.py` both use them. No stdout scrape. |
-| 7 | Active keys: one `*_active` (0/1) per live integration: `p1_active`, `sma_active`, `sunnywebbox_active`, `sunnyportal_active`. |
-| 8 | **P1 inactive:** dashboard opens as normal (`ready`, not `need_config`); **clear error**; graph for that period **empty**. |
-| 9 | **Every Save** re-probes all filled live integrations (including title-only edits). |
-| 10 | **Clear all fields** for an integration: force inactive, no probe. |
-| 11 | **Existing DBs:** missing flags -> treat as **active** if that integration looks filled. Next Settings Save probes and sets active/inactive from results. |
-| 12 | **Consumers / post-save UX:** pending operator confirm on proposals below. |
-
-### Proposal - consumers (confirm)
-
-| Integration | When inactive |
-|---|---|
-| **P1** | `logger` skips P1 poll (no new readings from P1). Index/analytics: clear error + empty graph for the live/window that needs P1. `need_config` only when `p1_ip` empty - not when inactive. |
-| **SMA** | `logger` skips SMA. |
-| **WebBox** | `logger` skips WebBox. |
-| **Sunny Portal** | `sunnyportal_pull` refuses new pulls (clear console/UI message). Rollup empty-fill from existing `sunnyportal_pv_5min` still runs. |
-| **Fluvius** | N/A - no flag; import/stitch unchanged. |
-| **powertests** | Ignores active flags (diagnose stored config anytime). |
-
-### Proposal - post-save UX (confirm)
-
-A20 already reloads Settings locked after Save. Fit:
-
-1. Persist settings + active flags (after probes).
-2. Reload locked Settings (A20).
-3. If any probed integration is inactive after this Save: **one dismissible modal** listing each fail/offline reason (saved but not enabled). Optional small status chips on the form when locked.
-4. If all probed OK (or nothing to probe): existing short "saved" notice only.
+| 1 | Formula above; percent factor with max 4 decimals; `p = percent/100`. |
+| 2 | Sources when present on last `readings` row: **P1 import**, **P1 export**, **P1 net**, **SMA total**, **WebBox total**. Omit unavailable from picker. First save requires a readable `S0`. |
+| 3 | Settings (Unlock / A20): **Add virtual kWh meter**; edit + delete; fields **name**, **source**, **bias**, **factor %**; live **source** + **virtual** readings for check; checkbox **show in Raw Meter Registers** (flag only; index UI = A21); **Re-bias on current reading** + confirm modal. |
+| 4 | PHP debug page `virtual_meters_debug.php`: Unlock-gated like Settings; **read-only** (no config). Show whatever is useful to troubleshoot: meter id/name, source key, `S`, `S0`, `C`, percent, `p`, `V`, delta `(S-S0)`, formula line, reading timestamp, raw-registers flag. Link from Settings virtual-meters section. |
+| 5 | Storage: table `virtual_kwh_meters` (not purgeable derived). Shared calc helper used by Settings + debug (+ A21 later). |
+| 6 | No writes to `history_5min` / daily / monthly / rollup. |
+| 7 | Changing source / bias / factor after first save does **not** auto-update `S0` (use Re-bias). |
 
 ### Open questions
 
-1. Confirm **consumer** proposal above (or amend)?
-2. Confirm **post-save UX** proposal above (or amend)?
+None - kickoff locked.
 
-### DoD (draft until consumer/UX confirm)
+### DoD
 
-- [ ] Partial fill blocks save; clear fields -> inactive
-- [ ] Save re-probes filled P1/SMA/WebBox/Sunny Portal; success -> active; fail/offline -> inactive + warn
-- [ ] Fluvius unchanged (no active/probe)
-- [ ] Consumers honor inactive per confirmed table; grandfather missing flags as active until next Save
-- [ ] Post-save UX per confirmed proposal; product docs on close-out
+- [ ] `virtual_kwh_meters` + shared calc (`V` from formula)
+- [ ] Settings: add / edit / delete; live source + virtual; Re-bias + confirm; raw-registers checkbox stored
+- [ ] `virtual_meters_debug.php` Unlock read-only troubleshooting
+- [ ] No index Raw Meter Registers wiring (A21); no warehouse writes
+- [ ] Product docs (`architecture.md`) match; phase pointers
+
+### Verbatim - 2026-10-28
+
+> [open]  virtual kWh meters from Settings (bias to import / export / PV)
+
+### Verbatim - 2026-10-29 (kickoff answers)
+
+> 1: it will track the same kWh reading from the source - meter but with a bias - I have several kWh meters which track yield - so it is just source + bias = reading for that virtual meter
+> 2: selectable in settings: all kWh meters (so those 3) ("add one" button)
+> 3: a constant offset + a percentage (with up to 4 decimems) of the new readings eg virtual meter 1 = yield minus 25000 kWh + 99,9996% of the additional yield kWh from now on
+> 4: for now: only in code, we will worry about UI later (triage this) - give code lines to display these readings and calculation (for troubleshooting)
+> 5: no need for rollup / history_5min / daily totals I think - confirm
+> 6: leave asis
+
+### Verbatim - 2026-10-29 (kickoff round 2)
+
+> 1: correct
+> 2: factor in % in settings, so 99.9996
+> 3: possible S0 = P1 lifetime import/export/net (3) + SMA total + webbox total = 5 possible sources (if available)
+> 4: add to settings: button "add virtual kWh meter" - then some field appear: name, source, bias, factor + info on source & virtual reading (to check if correct) + checkbox if this virtual reading should appear in "Raw Meter Registers"
+> 5: add PHP debug page
+
+### Verbatim - 2026-10-29 (kickoff round 3)
+
+> 1: yes
+> 2: first save only - add button to re-bias on current reading (+ confirmation modal)
+> 3: UI in Q21
+> 4: all what you think is usefull to troubleshoot these virtual meters - no config, that is on the config page
+> 5: yes
+> 6: last readings
+
+---
+
+## A21 - UI: virtual kWh meter readings
+
+**Status:** open (triaged 2026-10-29, not kicked off)
+**Size:** **S**
+**Depends on:** **A14**
+
+### Placement
+
+Show virtual meters with **show in Raw Meter Registers** on `index.php` **Raw Meter Registers** (and any further page surfaces locked at kickoff). A14 stores the flag only; Settings live check + debug page are A14.
+
+### Verbatim - 2026-10-29
+
+> 4: for now: only in code, we will worry about UI later (triage this) - give code lines to display these readings and calculation (for troubleshooting)
+
+### Verbatim - 2026-10-29 (A14 round 3)
+
+> 3: UI in Q21
+
+---
+
+## A15 - Settings save probe integrations
+
+**Status:** Done (closed 2026-10-29)
+**Size:** **M**
+**Depends on:** Settings (**A6** Done); **A20** Done.
+**Product:** [`docs/architecture.md`](../architecture.md) (Settings Save probes + `*_active`)
+
+### DoD
+
+- [x] Partial fill blocks save (atomic: no write); clear fields -> inactive
+- [x] Save re-probes filled P1/SMA/WebBox/Sunny Portal; success -> active; fail/offline -> inactive + warn/modal
+- [x] Fluvius unchanged (no active/probe)
+- [x] Status chips green / red / not configured
+- [x] Logger skips inactive SMA/WebBox; skips P1 poll when P1 inactive; portal pull refuses when inactive
+- [x] Homepage errors for each filled-but-inactive integration; empty graph when P1 inactive; hide yield when none
+- [x] Grandfather missing flags as active until next Save
+- [x] Failed Save keeps unlock + countdown; successful Save reloads locked; **Clear** for device/portal passwords
+- [x] Product docs on close-out
+
+### Shipped summary
+
+`integration_probes.py`; Settings Save AJAX + `*_active` chips; logger / portal / homepage consumers. Follow-up: unlock countdown, stay unlocked on failed Save, password **Clear**. Canonical behaviour: [`docs/architecture.md`](../architecture.md) (Settings table).
+
+### Verbatim - 2026-10-29 (consumer lock)
+
+> if P1 is active and SMA and/or sunny is not: don't poll them - P1 is enough for energy readings, not for sunny info - simply don't display yield info if there is none - and indeed: for all integrations which are filled in but not active: display error on homepage
+
+### Verbatim - 2026-10-29 (chips + SMA/WebBox clarify)
+
+> what is "SMA / WebBox -- Logger skips that device." ?
+> yes: add status chips (green/red/<not configured>)
 
 ### Verbatim - 2026-10-29 (kickoff round 2)
 

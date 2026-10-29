@@ -37,7 +37,7 @@ Never put real LAN IPs or site nicknames in committed files.
 |---|---|
 | `logger.py` | 1-minute poll / hot DB writer |
 | `index.php` | Live dashboard. 2-hour pulse; Exchange / Balance / Classic (Exchange default) |
-| `settings.php` | Admin password; locked config until Unlock; encrypted DB backup/restore; 1-min CSV (no password) |
+| `settings.php` | Admin password; Unlock + countdown; Save probes + `*_active` (AJAX; fail keeps unlock); Clear secrets; DB backup/restore; 1-min CSV (no password) |
 | `analytics.php` | Explorer (Today default + rolling presets, day pan, mixed 1/5-min, Exchange default), two-day compare, clear-sky envelope |
 | `summary.php` | Week / month / year / All years (last). Solar yield (default), grid import/export/net, or Capacity peak |
 | `topn.php` | Best/worst solar yield, grid net ranks, or highest Capacity peak months; metric-filtered all-time records |
@@ -45,7 +45,8 @@ Never put real LAN IPs or site nicknames in committed files.
 | `fluvius_import.py` | Fluvius CSV in `import_queue/fluvius/` → `fluvius_interval` (Settings EANs only) |
 | `sunnyportal_pull.py` | ennexOS PV → `sunnyportal_pv_5min` (`-pullall` / `-lastdays` / `-probe`) |
 | `rollup.py` | Warehouse: `-consolidate`, nightly `-daily`, rare `-buildall` (Sunny Portal solar empty-fill + Fluvius electricity) |
-| `powertests.py` / `powertests.php` | Live hardware probes |
+| `integration_probes.py` | Structured P1/SMA/WebBox/Portal probes (Settings Save + powertests) |
+| `powertests.py` / `powertests.php` | Live hardware probes (ignores active flags) |
 
 ## Docs
 

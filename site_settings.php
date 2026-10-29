@@ -377,10 +377,18 @@ function hp_write_settings(PDO $pdo, array $values): void
 
 /**
  * Stored device password, unless the operator unlocked the field and typed a new one.
- * An unlocked empty field does not clear the stored password.
+ * An unlocked empty field does not clear the stored password (use $clear for that).
  */
-function hp_resolve_password(string $existing, string $posted, bool $touched, bool $wasSet): string
-{
+function hp_resolve_password(
+    string $existing,
+    string $posted,
+    bool $touched,
+    bool $wasSet,
+    bool $clear = false
+): string {
+    if ($clear) {
+        return '';
+    }
     if (!$wasSet) {
         return $posted;
     }
@@ -394,6 +402,272 @@ function hp_nav_settings(): string
 {
     return '<a href="settings.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">'
         . '<i data-lucide="settings" class="w-3.5 h-3.5 text-slate-500"></i> Settings</a>';
+}
+
+/**
+ * A15 live integrations (Fluvius is CSV-only and has no active flag).
+ *
+ * @return array<string, string> id => active settings key
+ */
+function hp_integration_active_keys(): array
+{
+    return [
+        'p1' => 'p1_active',
+        'sma' => 'sma_active',
+        'sunnywebbox' => 'sunnywebbox_active',
+        'sunnyportal' => 'sunnyportal_active',
+    ];
+}
+
+/**
+ * @return array<string, string> id => label
+ */
+function hp_integration_labels(): array
+{
+    return [
+        'p1' => 'P1',
+        'sma' => 'SMA',
+        'sunnywebbox' => 'Sunny WebBox',
+        'sunnyportal' => 'Sunny Portal',
+    ];
+}
+
+/**
+ * @param array<string, string> $settings
+ */
+function hp_integration_filled(array $settings, string $name): bool
+{
+    if ($name === 'p1') {
+        return trim((string)($settings['p1_ip'] ?? '')) !== '';
+    }
+    if ($name === 'sma') {
+        return trim((string)($settings['sma_ip'] ?? '')) !== '';
+    }
+    if ($name === 'sunnywebbox') {
+        return trim((string)($settings['sunnywebbox_ip'] ?? '')) !== '';
+    }
+    if ($name === 'sunnyportal') {
+        return trim((string)($settings['sunnyportal_user'] ?? '')) !== ''
+            || trim((string)($settings['sunnyportal_password'] ?? '')) !== ''
+            || trim((string)($settings['sunnyportal_plant_id'] ?? '')) !== '';
+    }
+    return false;
+}
+
+/**
+ * Grandfather: filled + missing/empty active key => active.
+ *
+ * @param array<string, string> $settings merged or stored
+ * @param array<string, string>|null $stored raw rows; when set, missing key uses grandfather
+ */
+function hp_integration_active(array $settings, string $name, ?array $stored = null): bool
+{
+    if (!hp_integration_filled($settings, $name)) {
+        return false;
+    }
+    $keys = hp_integration_active_keys();
+    if (!isset($keys[$name])) {
+        return false;
+    }
+    $key = $keys[$name];
+    if ($stored !== null && !array_key_exists($key, $stored)) {
+        return true;
+    }
+    if (!array_key_exists($key, $settings)) {
+        return true;
+    }
+    $raw = trim((string)$settings[$key]);
+    if ($raw === '') {
+        return true;
+    }
+    return $raw === '1';
+}
+
+/**
+ * Chip state for Settings UI: empty | active | inactive.
+ *
+ * @param array<string, string> $settings
+ * @param array<string, string> $stored
+ */
+function hp_integration_chip_state(array $settings, array $stored, string $name): string
+{
+    if (!hp_integration_filled($settings, $name)) {
+        return 'empty';
+    }
+    return hp_integration_active($settings, $name, $stored) ? 'active' : 'inactive';
+}
+
+/**
+ * Partial-fill errors and which integrations to probe vs force-inactive.
+ *
+ * @param array<string, string> $settings resolved form (passwords already resolved)
+ * @return array{errors: string[], probe: string[], inactive: string[]}
+ */
+function hp_integration_save_plan(array $settings): array
+{
+    $errors = [];
+    $probe = [];
+    $inactive = [];
+
+    // P1 is required by the form; always probe when address present.
+    if (trim((string)($settings['p1_ip'] ?? '')) !== '') {
+        $probe[] = 'p1';
+    } else {
+        $inactive[] = 'p1';
+    }
+
+    $smaIp = trim((string)($settings['sma_ip'] ?? ''));
+    $smaUser = trim((string)($settings['sma_user'] ?? ''));
+    $smaPw = (string)($settings['sma_password'] ?? '');
+    $smaAny = $smaIp !== '' || $smaUser !== '' || $smaPw !== '';
+    if ($smaAny) {
+        if ($smaIp === '' || $smaPw === '') {
+            $errors[] = 'SMA is partial: address and password are both required (or clear all SMA fields).';
+        } else {
+            $probe[] = 'sma';
+        }
+    } else {
+        $inactive[] = 'sma';
+    }
+
+    $wbIp = trim((string)($settings['sunnywebbox_ip'] ?? ''));
+    $wbPw = (string)($settings['sunnywebbox_password'] ?? '');
+    $wbAny = $wbIp !== '' || $wbPw !== '';
+    if ($wbAny) {
+        if ($wbIp === '' || $wbPw === '') {
+            $errors[] = 'Sunny WebBox is partial: address and password are both required (or clear both).';
+        } else {
+            $probe[] = 'sunnywebbox';
+        }
+    } else {
+        $inactive[] = 'sunnywebbox';
+    }
+
+    $portalUser = trim((string)($settings['sunnyportal_user'] ?? ''));
+    $portalPw = (string)($settings['sunnyportal_password'] ?? '');
+    $portalPlant = trim((string)($settings['sunnyportal_plant_id'] ?? ''));
+    $portalAny = $portalUser !== '' || $portalPw !== '' || $portalPlant !== '';
+    if ($portalAny) {
+        if ($portalUser === '' || $portalPw === '' || $portalPlant === '') {
+            $errors[] = 'Sunny Portal is partial: user, password, and plant id are all required (or clear all portal fields).';
+        } else {
+            $probe[] = 'sunnyportal';
+        }
+    } else {
+        $inactive[] = 'sunnyportal';
+    }
+
+    return ['errors' => $errors, 'probe' => $probe, 'inactive' => $inactive];
+}
+
+/**
+ * Run integration_probes.py with JSON on stdin. Returns per-id status/message.
+ *
+ * @param array<string, string> $settings
+ * @param string[] $probeIds
+ * @return array{ok: bool, results: array<string, array{status: string, message: string}>, error: string}
+ */
+function hp_run_integration_probes(array $settings, array $probeIds): array
+{
+    if (count($probeIds) === 0) {
+        return ['ok' => true, 'results' => [], 'error' => ''];
+    }
+    $script = __DIR__ . '/integration_probes.py';
+    if (!is_file($script)) {
+        return ['ok' => false, 'results' => [], 'error' => 'integration_probes.py is missing.'];
+    }
+    $py = hp_python_bin();
+    $payload = json_encode([
+        'probe' => array_values($probeIds),
+        'settings' => $settings,
+    ]);
+    if ($payload === false) {
+        return ['ok' => false, 'results' => [], 'error' => 'Could not encode probe payload.'];
+    }
+    $cmd = escapeshellarg($py) . ' ' . escapeshellarg($script);
+    $descriptors = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+    $proc = proc_open($cmd, $descriptors, $pipes, __DIR__);
+    if (!is_resource($proc)) {
+        return ['ok' => false, 'results' => [], 'error' => 'Could not start the probe process.'];
+    }
+    fwrite($pipes[0], $payload);
+    fclose($pipes[0]);
+    $stdout = stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[2]);
+    $code = proc_close($proc);
+    if ($stdout === false || trim($stdout) === '') {
+        $hint = is_string($stderr) ? trim($stderr) : '';
+        return [
+            'ok' => false,
+            'results' => [],
+            'error' => 'Probe returned no output.' . ($hint !== '' ? ' ' . $hint : ''),
+        ];
+    }
+    $decoded = json_decode($stdout, true);
+    if (!is_array($decoded)) {
+        return ['ok' => false, 'results' => [], 'error' => 'Probe returned invalid JSON.'];
+    }
+    if (isset($decoded['error'])) {
+        return ['ok' => false, 'results' => [], 'error' => (string)$decoded['error']];
+    }
+    if ($code !== 0) {
+        return ['ok' => false, 'results' => [], 'error' => 'Probe exited with code ' . $code . '.'];
+    }
+    $results = [];
+    foreach ($decoded as $id => $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $results[(string)$id] = [
+            'status' => isset($row['status']) ? (string)$row['status'] : 'fail',
+            'message' => isset($row['message']) ? (string)$row['message'] : '',
+        ];
+    }
+    return ['ok' => true, 'results' => $results, 'error' => ''];
+}
+
+/**
+ * Apply probe / clear plan onto settings active flags.
+ *
+ * @param array<string, string> $settings
+ * @param string[] $forceInactive
+ * @param array<string, array{status: string, message: string}> $probeResults
+ * @return array{settings: array<string, string>, warnings: array<int, array{id: string, status: string, message: string}>}
+ */
+function hp_apply_integration_probe_flags(array $settings, array $forceInactive, array $probeResults): array
+{
+    $keys = hp_integration_active_keys();
+    $warnings = [];
+    foreach ($forceInactive as $id) {
+        if (isset($keys[$id])) {
+            $settings[$keys[$id]] = '0';
+        }
+    }
+    foreach ($probeResults as $id => $row) {
+        if (!isset($keys[$id])) {
+            continue;
+        }
+        $status = $row['status'];
+        if ($status === 'ok') {
+            $settings[$keys[$id]] = '1';
+        } else {
+            $settings[$keys[$id]] = '0';
+            if ($status !== 'skipped') {
+                $warnings[] = [
+                    'id' => (string)$id,
+                    'status' => $status,
+                    'message' => $row['message'],
+                ];
+            }
+        }
+    }
+    return ['settings' => $settings, 'warnings' => $warnings];
 }
 
 /**

@@ -8,8 +8,23 @@ $hp = hp_boot();
 hp_require_ready($hp);
 $dbFile = $hp['db'];
 $hpSettings = $hp['settings'];
+$hpStored = $hp['stored'];
 $refreshRate = 60;
 $openRawModal = isset($_GET['rawreadings']);
+
+// A15: filled-but-inactive integrations -> homepage errors; P1 inactive empties the pulse chart.
+$integrationLabels = hp_integration_labels();
+$inactiveIntegrationErrors = [];
+foreach (hp_integration_active_keys() as $intId => $_activeKey) {
+    if (hp_integration_filled($hpSettings, $intId) && !hp_integration_active($hpSettings, $intId, $hpStored)) {
+        $label = $integrationLabels[$intId] ?? $intId;
+        $inactiveIntegrationErrors[] = $label . ' is configured but inactive. Open Settings, fix credentials if needed, and Save to re-probe.';
+    }
+}
+$p1IntegrationActive = hp_integration_active($hpSettings, 'p1', $hpStored);
+$smaIntegrationActive = hp_integration_active($hpSettings, 'sma', $hpStored);
+$webboxIntegrationActive = hp_integration_active($hpSettings, 'sunnywebbox', $hpStored);
+$showLiveYield = $smaIntegrationActive || $webboxIntegrationActive;
 
 // 1. Action Handler: Force Poll
 if (isset($_GET['action']) && $_GET['action'] === 'poll') {
@@ -178,11 +193,28 @@ $sma = $state['sma_data'] ?? null;
 $webbox = $state['webbox_data'] ?? null;
 $calc = $state['calculated'] ?? null;
 $alerts = $state['alerts'] ?? [];
-$hasSolar = !empty($state['has_solar']);
-$hasSma = !empty($state['has_sma']);
-$hasWebbox = !empty($state['has_webbox']);
+$hasSolar = !empty($state['has_solar']) && $showLiveYield;
+$hasSma = !empty($state['has_sma']) && $smaIntegrationActive;
+$hasWebbox = !empty($state['has_webbox']) && $webboxIntegrationActive;
 $webboxDevices = $webbox['devices'] ?? [];
 $sensorbox = $webbox['sensorbox'] ?? null;
+
+// P1 inactive: keep the page shell but clear the live pulse (lock 8 / 15).
+if (!$p1IntegrationActive) {
+    $displayHistory = [];
+    $chartGrid = [];
+    $chartSolar = [];
+    $chartHome = [];
+    $chartBalance = [
+        'production' => [],
+        'consumption' => [],
+        'self_sufficient' => [],
+        'grid' => [],
+        'surplus' => [],
+    ];
+    $chartPhases = ['l1' => [], 'l2' => [], 'l3' => []];
+    $hasPhaseChartData = false;
+}
 
 // Dynamic Water & Gas presence check
 $hasWater = false;
@@ -362,9 +394,17 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         </div>
     </header>
 
-    <!-- Top Alert Banners (Inverter Auth Warnings) -->
-    <?php if (!empty($alerts)): ?>
+    <!-- Top Alert Banners: inactive integrations (A15) + inverter auth warnings -->
+    <?php if (!empty($inactiveIntegrationErrors) || !empty($alerts)): ?>
         <div class="space-y-2">
+            <?php foreach ($inactiveIntegrationErrors as $alt): ?>
+                <div class="bg-rose-50 border-l-4 border-rose-500 p-3.5 rounded-r-xl shadow-sm text-rose-800 flex items-center justify-between text-xs sm:text-sm font-semibold">
+                    <div class="flex items-center gap-2.5">
+                        <i data-lucide="alert-triangle" class="w-4 h-4 text-rose-600 flex-shrink-0"></i>
+                        <span><?= htmlspecialchars($alt) ?></span>
+                    </div>
+                </div>
+            <?php endforeach; ?>
             <?php foreach ($alerts as $alt): ?>
                 <div class="bg-rose-50 border-l-4 border-rose-500 p-3.5 rounded-r-xl shadow-sm text-rose-800 flex items-center justify-between text-xs sm:text-sm font-semibold">
                     <div class="flex items-center gap-2.5">

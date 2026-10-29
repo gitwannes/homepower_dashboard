@@ -43,6 +43,15 @@ SETTING_DEFAULTS = {
     'pac_rad_floor': str(DEFAULT_RAD_FLOOR),
     'fluvius_ean_electricity': '',
     'fluvius_ean_gas': '',
+    # A15: active flags are written on Save probe. Absent key + filled = grandfather active.
+}
+
+# Live integrations that support *_active (Fluvius is CSV-only, not listed).
+INTEGRATION_ACTIVE_KEYS = {
+    'p1': 'p1_active',
+    'sma': 'sma_active',
+    'sunnywebbox': 'sunnywebbox_active',
+    'sunnyportal': 'sunnyportal_active',
 }
 
 
@@ -110,15 +119,31 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 def sunnyportal_login() -> Dict[str, str]:
     """User, password, plant id, and timezone from the Settings page.
 
-    Raises SystemExit when user, password, or plant id is empty.
+    Raises SystemExit when user, password, or plant id is empty, or when
+    sunnyportal_active is explicitly off after a failed Save probe.
     Timezone defaults to Europe/Paris.
     """
     conn = sqlite3.connect(resolve_db_path(), timeout=30.0)
     try:
         ensure_schema(conn)
         settings = load_settings(conn)
+        stored = load_stored(conn)
     finally:
         conn.close()
+    # Grandfather: missing active key in stored rows counts as active when filled.
+    check = dict(settings)
+    for key in INTEGRATION_ACTIVE_KEYS.values():
+        if key not in stored:
+            check.pop(key, None)
+    if not integration_active(check, 'sunnyportal'):
+        if integration_filled(settings, 'sunnyportal'):
+            raise SystemExit(
+                'Sunny Portal is inactive (last Settings probe failed or was offline). '
+                'Fix credentials on Settings and Save again.'
+            )
+        raise SystemExit(
+            'Sunny Portal is not configured. Set user, password, and plant id on Settings.'
+        )
     user = settings.get('sunnyportal_user', '').strip()
     password = settings.get('sunnyportal_password', '').strip()
     plant_id = settings.get('sunnyportal_plant_id', '').strip()
@@ -164,6 +189,39 @@ def is_configured(conn: sqlite3.Connection) -> bool:
     """True when a P1 address has been imported or saved."""
     stored = load_stored(conn)
     return stored.get('p1_ip', '').strip() != ''
+
+
+def integration_filled(settings: Dict[str, str], name: str) -> bool:
+    """True when the integration has enough stored fields to count as configured."""
+    if name == 'p1':
+        return (settings.get('p1_ip') or '').strip() != ''
+    if name == 'sma':
+        return (settings.get('sma_ip') or '').strip() != ''
+    if name == 'sunnywebbox':
+        return (settings.get('sunnywebbox_ip') or '').strip() != ''
+    if name == 'sunnyportal':
+        return (
+            (settings.get('sunnyportal_user') or '').strip() != ''
+            or (settings.get('sunnyportal_password') or '').strip() != ''
+            or (settings.get('sunnyportal_plant_id') or '').strip() != ''
+        )
+    return False
+
+
+def integration_active(settings: Dict[str, str], name: str) -> bool:
+    """Active only when filled and flag is 1, or filled with missing flag (grandfather)."""
+    if not integration_filled(settings, name):
+        return False
+    key = INTEGRATION_ACTIVE_KEYS.get(name)
+    if key is None:
+        return False
+    if key not in settings:
+        # load_settings merges defaults only; absent means never written -> grandfather.
+        return True
+    raw = (settings.get(key) or '').strip()
+    if raw == '':
+        return True
+    return raw == '1'
 
 
 def _bounded_int(raw: str, default: int, low: int, high: int) -> int:

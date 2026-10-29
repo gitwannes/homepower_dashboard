@@ -87,7 +87,7 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
       - **A13 Done:** the same page ranks highest net import and highest net export from `daily_history` / `monthly_history` (20 days, 10 months, 10 years). Both day lists omit today. No second ranking table.
       - **A7 Done:** all-time singles on `topn.php` (`top_records`); `-daily` beat + `-buildalltoprecords`.
       - **A12 Done:** Capacity peak ranks (top 10 months); records filtered by metric (yield / peak; wind waits for A11).
-- [x] Settings (`settings.php`): admin password on first open; locked-by-default Unlock window; devices, titles, monthly expected kWh, spike cap, and night gates in `meter_history.db`. Encrypted full-database download and restore (`db_backup.py`); 1-min CSV export without password. See [`architecture.md`](architecture.md).
+- [x] Settings (`settings.php`): admin password on first open; locked-by-default Unlock window (countdown); devices, titles, monthly expected kWh, spike cap, and night gates in `meter_history.db`. Save probes P1/SMA/WebBox/Portal and writes `*_active` (`integration_probes.py`); partial fill is atomic. Encrypted full-database download and restore (`db_backup.py`); 1-min CSV export without password. See [`architecture.md`](architecture.md).
 - [x] Verify analytics / summary with populated rollups (A2/A3 + operator smoke).
 
 ---
