@@ -74,6 +74,7 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 ## PHASE 2: MODERN UI & ANALYTICS SUITE (PRESENTATION)
 - [x] Multi-page dashboard:
       - Live (`index.php`): 2-hour pulse of 1-minute readings; Exchange / Balance / Classic (Exchange default). Exploration (`analytics.php`), period summaries (`summary.php`).
+      - Weather (`weather.php`): explorer + Week / Month / Year / **All years** (A25) from daily/monthly extremes; records on-page.
       - Cross-navigation between hubs.
 - [x] Day Explorer on `analytics.php` (**A5b** + **A19**):
       - Exchange / Balance / Classic explorer: rolling presets plus calendar-day **Today** (default; chip after 24 h); day pan with arrow caps; mixed 1-min / 5-min (rule V). Serial Apex mounts (explorer then compare).

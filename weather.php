@@ -5,6 +5,7 @@
  *
  * Intraday samples come from history_5min + live readings. Week/month cards
  * read daily_history extremes; year cards read monthly_history (A23).
+ * All years card aggregates monthly extremes per calendar year (A25; rollup only).
  * Open day/month may merge live readings. All-time records from top_records.
  */
 date_default_timezone_set('Europe/Brussels');
@@ -329,6 +330,73 @@ function weather_year_rows(PDO $pdo, string $year): array
 }
 
 /**
+ * Per-calendar-year weather extremes from monthly_history (A25).
+ * Axis = first..last year that has any monthly_history row; years with no
+ * weather extremes stay null (not omitted, not zero). Rollup only.
+ *
+ * @return list<array{date:string, wind_ms:?float, gust_ms:?float, ambient_max_c:?float, ambient_min_c:?float, module_max_c:?float, radiation_wm2:?float}>
+ */
+function weather_all_years_rows(PDO $pdo): array
+{
+    $minYear = null;
+    $maxYear = null;
+    try {
+        $stmt = $pdo->query(
+            "SELECT MIN(substr(year_month, 1, 4)) AS y_min,
+                    MAX(substr(year_month, 1, 4)) AS y_max
+             FROM monthly_history
+             WHERE year_month IS NOT NULL AND length(year_month) >= 4"
+        );
+        $bounds = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (is_array($bounds) && $bounds['y_min'] !== null && $bounds['y_max'] !== null) {
+            $minYear = (int)$bounds['y_min'];
+            $maxYear = (int)$bounds['y_max'];
+        }
+    } catch (Throwable $e) {
+        return [];
+    }
+    if ($minYear === null || $maxYear === null || $minYear > $maxYear) {
+        return [];
+    }
+
+    /** @var array<string, array<string, ?float>> $byYear */
+    $byYear = [];
+    try {
+        $stmt = $pdo->query(
+            'SELECT year_month, wind_speed_max_ms, wind_gust_max_ms,
+                    temp_ambient_max, temp_ambient_min,
+                    temp_module_max, solar_radiation_max_wm2
+             FROM monthly_history
+             WHERE year_month IS NOT NULL AND length(year_month) >= 4'
+        );
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $y = substr((string)$row['year_month'], 0, 4);
+            if (!preg_match('/^\d{4}$/', $y)) {
+                continue;
+            }
+            weather_period_merge_day($byYear, $y, weather_extreme_fields_from_row($row));
+        }
+    } catch (Throwable $e) {
+        // monthly weather cols missing until rollup ensure + rebuild.
+    }
+
+    $rows = [];
+    for ($y = $minYear; $y <= $maxYear; $y++) {
+        $key = (string)$y;
+        $vals = $byYear[$key] ?? [
+            'wind_ms' => null,
+            'gust_ms' => null,
+            'ambient_max_c' => null,
+            'ambient_min_c' => null,
+            'module_max_c' => null,
+            'radiation_wm2' => null,
+        ];
+        $rows[] = array_merge(['date' => $key], $vals);
+    }
+    return $rows;
+}
+
+/**
  * Keep missing weather readings null; never turn them into zero.
  *
  * @param mixed $value
@@ -574,6 +642,19 @@ if (isset($_GET['ajax'])) {
                 $label = $period;
                 $rows = weather_year_rows($pdo, $period);
                 $atCurrent = $period >= $currentYear;
+            } elseif ($mode === 'allyears') {
+                // Static card: no delta / period stepping (A25).
+                $rows = weather_all_years_rows($pdo);
+                $period = 'allyears';
+                $label = 'All years';
+                $atCurrent = true;
+                if (count($rows) > 0) {
+                    $from = $rows[0]['date'] . '-01-01';
+                    $to = $rows[count($rows) - 1]['date'] . '-12-31';
+                } else {
+                    $from = '';
+                    $to = '';
+                }
             } else {
                 http_response_code(400);
                 echo json_encode(['error' => 'Unsupported period mode']);
@@ -583,7 +664,7 @@ if (isset($_GET['ajax'])) {
                 $rows = ($from !== null && $to !== null) ? weather_period_rows($pdo, $from, $to) : [];
                 $atCurrent = $period >= $currentWeek;
             }
-            if ($from === null || $to === null) {
+            if ($mode !== 'allyears' && ($from === null || $to === null)) {
                 http_response_code(400);
                 echo json_encode(['error' => 'Invalid period']);
                 exit;
@@ -612,6 +693,7 @@ $records = [];
 $weekRows = [];
 $monthRows = [];
 $yearRows = [];
+$allYearsRows = [];
 $weekPeriod = weather_iso_week_label();
 $monthPeriod = date('Y-m');
 $yearPeriod = date('Y');
@@ -662,6 +744,7 @@ if (file_exists($dbFile)) {
                 $monthRows = weather_period_rows($pdo, $monthFrom, $monthTo);
             }
             $yearRows = weather_year_rows($pdo, $yearPeriod);
+            $allYearsRows = weather_all_years_rows($pdo);
         }
     } catch (Throwable $e) {
         // Empty cards below explain that no weather rollups are available.
@@ -912,6 +995,13 @@ $recordUnits = [
             <p class="text-xs text-slate-400 mb-3">Monthly weather extremes (one bar per calendar month).</p>
             <div id="yearChart" class="w-full h-[330px]"></div>
         </section>
+        <section class="card border-t-4 border-t-emerald-600">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                <h2 class="text-lg font-bold text-slate-900">All years</h2>
+            </div>
+            <p class="text-xs text-slate-400 mb-3">Yearly weather extremes from monthly rollups (one bar per calendar year).</p>
+            <div id="allyearsChart" class="w-full h-[330px]"></div>
+        </section>
     </div>
     <?php endif; ?>
 </div>
@@ -930,8 +1020,8 @@ $recordUnits = [
         month: <?= json_encode($monthPeriod, JSON_UNESCAPED_SLASHES) ?>,
         year: <?= json_encode($yearPeriod, JSON_UNESCAPED_SLASHES) ?>
     };
-    /** @type {{week: object|null, month: object|null, year: object|null}} */
-    let periodCharts = { week: null, month: null, year: null };
+    /** @type {{week: object|null, month: object|null, year: object|null, allyears: object|null}} */
+    let periodCharts = { week: null, month: null, year: null, allyears: null };
     // scale: wind | temp | rad - never share radiation with m/s (flattens wind).
     const seriesMeta = {
         wind_ms: { name: 'Wind', color: '#0284c7', unit: 'm/s', scale: 'wind' },
@@ -1089,8 +1179,8 @@ $recordUnits = [
     }
 
     /**
-     * Daily/monthly bars on separate scales. mode is week|month|year.
-     * @param {'week'|'month'|'year'} mode
+     * Daily/monthly/yearly bars on separate scales.
+     * @param {'week'|'month'|'year'|'allyears'} mode
      * @param {Array<object>} rows
      * @returns {void}
      */
@@ -1148,14 +1238,18 @@ $recordUnits = [
             series.push({ name: def.name, data: rows.map((row) => row[def.key]) });
             colors.push(def.color);
         });
+        // Week/month: YYYY-MM-DD -> MM-DD; year: YYYY-MM -> MM; allyears: keep YYYY.
+        const categories = rows.map((row) => {
+            const d = String(row.date);
+            return mode === 'allyears' ? d : d.slice(5);
+        });
         periodCharts[mode] = new ApexCharts(host, {
             chart: { type: 'bar', height: 330, toolbar: { show: false }, animations: { enabled: false } },
             series,
             colors,
             plotOptions: { bar: { columnWidth: '72%', borderRadius: 2 } },
             dataLabels: { enabled: false },
-            // Week/month dates are YYYY-MM-DD; year rows are YYYY-MM. slice(5) -> MM-DD or MM.
-            xaxis: { categories: rows.map((row) => String(row.date).slice(5)), labels: { rotate: -45 } },
+            xaxis: { categories, labels: { rotate: -45 } },
             yaxis,
             legend: { position: 'top' },
             // Bar charts default intersect:true; Apex throws if shared is also true.
@@ -1178,7 +1272,7 @@ $recordUnits = [
     }
 
     /**
-     * @param {'week'|'month'|'year'} mode
+     * @param {'week'|'month'|'year'|'allyears'} mode
      * @param {number} [delta]
      * @returns {Promise<void>}
      */
@@ -1188,10 +1282,11 @@ $recordUnits = [
             query.set('week', periodState.week);
         } else if (mode === 'month') {
             query.set('month', periodState.month);
-        } else {
+        } else if (mode === 'year') {
             query.set('year', periodState.year);
         }
-        if (delta) {
+        // allyears: static; no period / delta query params.
+        if (delta && mode !== 'allyears') {
             query.set('delta', String(delta));
         }
         const labelEl = document.getElementById(mode + 'Label');
@@ -1201,14 +1296,16 @@ $recordUnits = [
             if (!response.ok || payload.error) {
                 throw new Error(payload.error || 'Period request failed');
             }
-            periodState[mode] = payload.period;
-            if (labelEl) {
-                labelEl.textContent = payload.label || payload.period;
+            if (mode !== 'allyears') {
+                periodState[mode] = payload.period;
+                if (labelEl) {
+                    labelEl.textContent = payload.label || payload.period;
+                }
+                updatePeriodNav(mode, payload.at_current === true);
             }
-            updatePeriodNav(mode, payload.at_current === true);
             renderPeriodChart(mode, payload.rows || []);
         } catch (error) {
-            if (labelEl) {
+            if (labelEl && mode !== 'allyears') {
                 labelEl.textContent = periodState[mode];
             }
             const host = document.querySelector('#' + mode + 'Chart');
@@ -1290,6 +1387,7 @@ $recordUnits = [
         renderPeriodChart('week', <?= json_encode($weekRows, JSON_UNESCAPED_SLASHES) ?>);
         renderPeriodChart('month', <?= json_encode($monthRows, JSON_UNESCAPED_SLASHES) ?>);
         renderPeriodChart('year', <?= json_encode($yearRows, JSON_UNESCAPED_SLASHES) ?>);
+        renderPeriodChart('allyears', <?= json_encode($allYearsRows, JSON_UNESCAPED_SLASHES) ?>);
         updatePeriodNav('week', periodState.week >= currentIsoWeek);
         updatePeriodNav('month', periodState.month >= currentYearMonth);
         updatePeriodNav('year', periodState.year >= currentYear);

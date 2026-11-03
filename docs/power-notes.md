@@ -184,7 +184,7 @@ Shipped (P3):
 	electricity quarters stitched into history_5min on -daily / -buildall
 	gas stays in fluvius_interval (not on history_5min)
 	UI Capacity peak: A12 Done (summary + top-n)
-	UI historical gas / wind / weather: A11 Done; weather daily/monthly rollup cutover: A23 Done
+	UI historical gas / wind / weather: A11 Done; weather daily/monthly rollup cutover: A23 Done; weather All years card: A25 Done
 
 Still open:
 	portal script for last-x-days pull

@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) â Analytics UI + plant config
 
-**Status:** **A4**-**A24** + **A11** + **A23** Done; **A25** locked; **A26** open. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-11-03 (**A24** Done)  
+**Status:** **A4**-**A25** + **A11** + **A23** Done; **A26** open. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-11-03 (**A25** Done)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py` - `weather.php`
 
 ---
@@ -33,16 +33,28 @@
 | **A22** | Done | bugfix: analytics load; Virtual 'best-day' -> Top-N; PVGIS week/month |
 | **A23** | Done | Weather extremes on daily/monthly; weather.php periods read rollups |
 | **A24** | Done | bugfix: clear_sky envelopes rad>floor (WebBox kept) |
-| **A25** | locked | weather.php All years card (monthly_history extremes) |
+| **A25** | Done | weather.php All years card (monthly_history extremes) |
 | **A26** | open | bugfix: clear_sky envelope harden (June evening jump) |
 
-**Parallel:** **A14**-**A24** + **A11** + **A23** Done. **A25** locked (`implement` unblocked). **A26** open (envelope harden).
+**Parallel:** **A14**-**A25** + **A11** + **A23** Done. **A26** open (envelope harden).
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
 ---
 
 ## Verbatim inbox
+
+### 2026-11-03 - close A25
+
+> close A25
+
+Last DoD. Product docs match shipped All years card. Phase file stays in-repo (**A26** open).
+
+### 2026-11-03 - implement A25
+
+> implement A25
+
+`weather.php` All years card + `weather_all_years_rows` + `ajax=period&mode=allyears`. Architecture updated. Operator smoke then `close A25`.
 
 ### 2026-11-03 - close A24
 
@@ -167,7 +179,7 @@ Placed: **A22** (affinity **A**). Powertests later dropped at kickoff. No code u
 > and Q21
 > A21
 
-A14, A21, A11, A22, A23, and A24 closed (Last DoD). Product: [`docs/architecture.md`](../architecture.md). `phaseA-analytics.md` stays in-repo while **A25**/**A26** are open - do not archive the whole file yet.
+A14, A21, A11, A22, A23, A24, and A25 closed (Last DoD). Product: [`docs/architecture.md`](../architecture.md). `phaseA-analytics.md` stays in-repo while **A26** is open - do not archive the whole file yet.
 
 ### 2026-11-03 - A21 ship (raw registers virtual + optional)
 
@@ -697,7 +709,7 @@ Settings downloads and restores an encrypted copy of the whole database. `db_bac
 
 ### Done summary
 
-Shipped gas/water on summary/topn/index (m3; Fluvius gas not on `history_5min`) and standalone `weather.php` (explorer + Week/Month/Year + records). Weather period rollups completed in **A23**. WanOS ambient source: **W2**. All-years weather card: **A25**.
+Shipped gas/water on summary/topn/index (m3; Fluvius gas not on `history_5min`) and standalone `weather.php` (explorer + Week/Month/Year/All years + records). Weather period rollups completed in **A23**; All years card in **A25**. WanOS ambient source: **W2**.
 
 ### DoD
 
@@ -1296,41 +1308,31 @@ See Verbatim inbox **A24 triage/kickoff**, first implement, **rad gate amend**, 
 
 ## A25 - weather.php All years card
 
-**Status:** **locked** 2026-11-03 - **A24** Done; say `implement` to code.  
+**Status:** **Done** 2026-11-03 (Last DoD / operator close)  
 **Size:** S  
-**Depends on:** **A23** Done (`monthly_history` weather extremes). **A24** Done (L7 satisfied).
+**Product:** [`docs/architecture.md`](../architecture.md) � `weather.php`
 
-### Placement
+### Done summary
 
-Affinity **A**. Follow-on to A11/A23: Summary has All years; weather currently stops at Year.
+Static **All years** card after Year on `weather.php`. Bars = per-calendar-year `MAX`/`MIN` of `monthly_history` weather extremes (rollup only; no live merge). Axis = first..last year with any monthly row; empty weather years stay null. Same six series + channel gates; SSR + `ajax=period&mode=allyears`.
 
-### Locked
+### Locked decisions (record)
 
-| # | Lock | Source |
-|---|---|---|
-| L1 | Card after Year; static **All years** chrome (title only; no prev/next / Jump) - Summary-style. | operator "1: ok" |
-| L2 | Aggregate per calendar year from `monthly_history`: `MAX` of monthly maxes; `MIN` of `temp_ambient_min`. No new tables / no rollup schema change. | operator "2: confirmed" |
-| L3 | Rollup only - do **not** merge live `readings` into the open year. | operator "3: rollup only" |
-| L4 | Same six period series + channel gates as Week/Month/Year (Wind max, Gust, Ambient max/min, Module max, Radiation max). | operator "4: yes" |
-| L5 | Keep AJAX consistency: `ajax=period&mode=allyears` (plus SSR first paint). | operator "5: keep consistency" |
-| L6 | Year axis spans first..last calendar year with any `monthly_history` row in scope; years with no weather extremes stay as **null** bars (not omitted, not zero). | operator "6: keep null for empty years" |
-| L7 | Implement only after **A24** closed. | operator "7: after A24" - **satisfied** |
-
-### Open questions
-
-None.
+| # | Lock |
+|---|---|
+| L1-L7 | As locked 2026-11-03 (static card; monthly aggregate; rollup only; same series; AJAX allyears; null empty years; after A24). |
 
 ### DoD
 
-- [ ] `weather.php` All years card after Year; no nav arrows
-- [ ] Year bars from `monthly_history` extremes (L2/L3/L6); same series gates (L4)
-- [ ] SSR + `ajax=period&mode=allyears` (L5)
-- [ ] Architecture `weather.php` row documents All years
-- [ ] Last DoD docs audit
+- [x] `weather.php` All years card after Year; no nav arrows
+- [x] Year bars from `monthly_history` extremes (L2/L3/L6); same series gates (L4)
+- [x] SSR + `ajax=period&mode=allyears` (L5)
+- [x] Architecture / README / power-notes / roadmap match shipped behaviour
+- [x] Operator close / Last DoD (2026-11-03)
 
 ### Verbatim
 
-See Verbatim inbox **2026-11-03 - triage A25** and **A25 kickoff answers**.
+See Verbatim inbox **2026-11-03 - triage A25**, **A25 kickoff answers**, **implement A25**, and **close A25**.
 
 ---
 
