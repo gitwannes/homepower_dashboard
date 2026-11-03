@@ -3,6 +3,7 @@
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
 require_once __DIR__ . '/live_chart.php';
+require_once __DIR__ . '/gas_water.php';
 
 $hp = hp_boot();
 hp_require_ready($hp);
@@ -110,6 +111,10 @@ $chartBalance = [
 ];
 $chartPhases = ['l1' => [], 'l2' => [], 'l3' => []];
 $hasPhaseChartData = false;
+$chartGasRate = [];
+$chartWaterRate = [];
+$showGasPulse = false;
+$showWaterPulse = false;
 // A5b: fixed 2-hour live pulse (exploration lives on analytics).
 $nowPulse = time();
 $chartWindow = [
@@ -185,6 +190,37 @@ if (!$fatalError) {
                 $hasPhaseChartData = hp_phases_series_has_data($chartPhases);
                 if ($chartView === 'phases' && !$hasPhaseChartData) {
                     $chartView = 'exchange';
+                }
+
+                // A11: same 2 h window as Grid exchange - instant m3/h from 1-min counter deltas.
+                $chartGasRate = gw_live_rate_series(
+                    $pdo,
+                    'gas',
+                    (int)$chartWindow['start'],
+                    (int)$chartWindow['end']
+                );
+                $chartWaterRate = gw_live_rate_series(
+                    $pdo,
+                    'water',
+                    (int)$chartWindow['start'],
+                    (int)$chartWindow['end']
+                );
+                $showGasPulse = false;
+                foreach ($chartGasRate as $pt) {
+                    if (isset($pt[1]) && $pt[1] !== null) {
+                        $showGasPulse = true;
+                        break;
+                    }
+                }
+                // Water pulse only when live P1 lists water_meter (not old phantom water=0 rows).
+                $showWaterPulse = false;
+                if (gw_water_available($pdo)) {
+                    foreach ($chartWaterRate as $pt) {
+                        if (isset($pt[1]) && $pt[1] !== null) {
+                            $showWaterPulse = true;
+                            break;
+                        }
+                    }
                 }
 
                 $stmt = $pdo->query("SELECT id, first_seen, last_seen, status, count, message FROM system_logs ORDER BY id DESC LIMIT 50");
@@ -384,6 +420,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
             <a href="topn.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                 <i data-lucide="trophy" class="w-3.5 h-3.5 text-amber-500"></i> Top-N
             </a>
+            <?= hp_nav_weather() ?>
             <?= hp_nav_settings() ?>
             <button type="button" onclick="openRawModal()" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all cursor-pointer">
                 <i data-lucide="table-properties" class="w-3.5 h-3.5 text-blue-600"></i> Raw readings
@@ -955,10 +992,45 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
     </div>
     <?php endif; ?>
 
+    <?php if ($showGasPulse || $showWaterPulse): ?>
+    <!-- A11: gas / water instant rate - same 2 h span as Grid exchange -->
+    <div class="grid grid-cols-1 <?= ($showGasPulse && $showWaterPulse) ? 'lg:grid-cols-2' : '' ?> gap-6">
+        <?php if ($showGasPulse): ?>
+        <div class="card border-t-4 border-t-amber-500">
+            <div class="flex items-center justify-between gap-2 mb-2">
+                <div>
+                    <h2 class="card-title !mb-0">
+                        <i data-lucide="flame" class="w-4 h-4 text-amber-500"></i>
+                        Gas rate
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-0.5">Last 2 hours. Instantaneous m³/h from P1 1-min deltas.</p>
+                </div>
+                <a href="summary.php?metric=gas" class="text-xs font-semibold text-amber-700 hover:underline">Summary</a>
+            </div>
+            <div id="gasRateChart" class="w-full h-[220px]"></div>
+        </div>
+        <?php endif; ?>
+        <?php if ($showWaterPulse): ?>
+        <div class="card border-t-4 border-t-cyan-500">
+            <div class="flex items-center justify-between gap-2 mb-2">
+                <div>
+                    <h2 class="card-title !mb-0">
+                        <i data-lucide="droplet" class="w-4 h-4 text-cyan-500"></i>
+                        Water rate
+                    </h2>
+                    <p class="text-xs text-slate-400 mt-0.5">Last 2 hours. Instantaneous m³/h from P1 1-min deltas.</p>
+                </div>
+                <a href="summary.php?metric=water" class="text-xs font-semibold text-cyan-700 hover:underline">Summary</a>
+            </div>
+            <div id="waterRateChart" class="w-full h-[220px]"></div>
+        </div>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
+
     <!-- System Info Footer -->
     <div class="card bg-slate-50/70 border-0 shadow-none !py-3">
-        <div class="flex flex-wrap items-center justify-between gap-4 text-xs text-slate-500">
-            <!-- Left Side: Devices & DB status -->
+        <div class="flex flex-wrap items-center gap-4 text-xs text-slate-500">
             <div class="flex items-center gap-6 flex-wrap">
                 <span class="flex items-center gap-1.5">
                     <i data-lucide="wifi" class="w-3.5 h-3.5 text-slate-400"></i> P1 <strong><?= htmlspecialchars($p1['wifi_ssid']) ?></strong> (<?= htmlspecialchars($p1['wifi_strength']) ?>%)
@@ -991,13 +1063,6 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                     <span>DB:</span>
                     <code class="text-[10px] bg-slate-200/60 group-hover:bg-blue-100 group-hover:text-blue-700 px-1.5 py-0.5 rounded font-mono transition-colors"><?= htmlspecialchars($dbFile) ?></code>
                 </button>
-            </div>
-
-            <!-- Right Side: Hardware Diagnostics Link (powertests.php) -->
-            <div class="flex items-center">
-                <a href="powertests.php" title="Run Power Hardware Diagnostics (powertests)" class="inline-flex items-center justify-center p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-slate-200/60 transition-colors cursor-pointer">
-                    <i data-lucide="wrench" class="w-4 h-4"></i>
-                </a>
             </div>
         </div>
     </div>
@@ -1818,6 +1883,59 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
 
     updateLiveViewChrome();
     renderLiveHistoryChart();
+
+    /**
+     * Instant m3/h filled area for the same 2 h window as Grid exchange (A11).
+     *
+     * @param {string} hostSel
+     * @param {Array<[number, number|null]>} seriesData
+     * @param {string} name
+     * @param {string} color
+     */
+    function renderUtilityRateChart(hostSel, seriesData, name, color) {
+        const host = document.querySelector(hostSel);
+        if (!host || !Array.isArray(seriesData) || seriesData.length === 0) {
+            return;
+        }
+        new ApexCharts(host, {
+            series: [{ name: name, data: seriesData }],
+            chart: {
+                type: 'area',
+                height: 220,
+                toolbar: { show: false },
+                animations: { enabled: false },
+                zoom: { enabled: false }
+            },
+            colors: [color],
+            dataLabels: { enabled: false },
+            stroke: { curve: 'stepline', width: 2 },
+            fill: { type: 'solid', opacity: 0.25 },
+            xaxis: {
+                type: 'datetime',
+                min: chartStartMs,
+                max: chartEndMs,
+                labels: { datetimeUTC: false, format: 'HH:mm', style: { fontSize: '11px', colors: '#94a3b8' } }
+            },
+            yaxis: {
+                min: 0,
+                title: { text: 'm3/h', style: { color: '#94a3b8', fontSize: '10px' } },
+                labels: { formatter: (v) => Number(v).toFixed(2) }
+            },
+            grid: { borderColor: '#f1f5f9' },
+            tooltip: {
+                x: { format: 'dd MMM HH:mm' },
+                y: { formatter: (v) => (v == null || Number.isNaN(Number(v)) ? '-' : (Number(v).toFixed(3) + ' m3/h')) }
+            },
+            legend: { show: false }
+        }).render();
+    }
+
+    <?php if ($showGasPulse): ?>
+    renderUtilityRateChart('#gasRateChart', <?= json_encode($chartGasRate) ?>, 'Gas (m3/h)', '#d97706');
+    <?php endif; ?>
+    <?php if ($showWaterPulse): ?>
+    renderUtilityRateChart('#waterRateChart', <?= json_encode($chartWaterRate) ?>, 'Water (m3/h)', '#06b6d4');
+    <?php endif; ?>
     <?php endif; ?>
 
     // Auto-refresh logic

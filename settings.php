@@ -820,9 +820,15 @@ $integrationLabels = hp_integration_labels();
             <p class="text-xs text-slate-500">Titles apply on the next page load.</p>
         </section>
 
-        <div class="flex flex-wrap items-center gap-3">
-            <button type="button" id="primarySettingsAction" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">Unlock settings</button>
-            <span id="unlockCountdown" class="hidden text-xs font-semibold text-slate-600 tabular-nums" aria-live="polite"></span>
+        <div class="flex flex-col gap-3">
+            <a href="powertests.php" class="inline-flex items-center gap-2 self-start text-sm font-semibold text-slate-600 hover:text-indigo-600 transition-colors">
+                Hardware diagnostics
+                <i data-lucide="wrench" class="w-4 h-4"></i>
+            </a>
+            <div class="flex flex-wrap items-center gap-3">
+                <button type="button" id="primarySettingsAction" class="px-4 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold">Unlock settings</button>
+                <span id="unlockCountdown" class="hidden text-xs font-semibold text-slate-600 tabular-nums" aria-live="polite"></span>
+            </div>
         </div>
         <p id="saveInlineError" class="hidden text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-3"></p>
     </form>
@@ -957,6 +963,10 @@ $integrationLabels = hp_integration_labels();
 
     <script>
     (function () {
+        if (typeof lucide !== 'undefined' && lucide.createIcons) {
+            lucide.createIcons();
+        }
+
         /**
          * Unlock window length in milliseconds.
          * Sourced from PHP HP_SETTINGS_UNLOCK_SECONDS (default 300 = 5 minutes).

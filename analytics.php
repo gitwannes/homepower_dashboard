@@ -1,13 +1,15 @@
 <?php
 # --- file: analytics.php ---
 /**
- * Historical exploration: intraday, two-day overlay, clear-sky envelope.
- * Period rollups live on summary.php.
+ * Historical exploration: intraday power explorer + two-day overlay.
+ * Period rollups live on summary.php. Virtual 'best-day' lives on topn.php (A22).
  */
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
+require_once __DIR__ . '/pac_quality.php';
 require_once __DIR__ . '/balance_chart.php';
 require_once __DIR__ . '/explorer_chart.php';
+require_once __DIR__ . '/gas_water.php';
 
 $hp = hp_boot();
 hp_require_ready($hp);
@@ -15,109 +17,6 @@ hp_publish_pac($hp['settings']);
 $dbFile = $hp['db'];
 $chartView = hp_chart_view();
 $explorerWindow = hp_explorer_window();
-
-/**
- * @param mixed $w PAC watts
- * @param int|null $hour 0..23 from timestamp (null = skip night gate)
- * @param mixed $rad solar_radiation W/m2 (null treated as 0 when hour set)
- * @return float|null null if missing, spike, deep night, or shoulder with no sun
- */
-function sanitize_pac_w($w, $hour = null, $rad = null)
-{
-    if ($w === null || $w === '') {
-        return null;
-    }
-    $v = (float)$w;
-    $cap = isset($GLOBALS['HP_PAC_CAP']) ? (float)$GLOBALS['HP_PAC_CAP'] : (12000.0 * 1.05);
-    if ($v <= 0 || $v > $cap) {
-        return null;
-    }
-    if ($hour !== null) {
-        $h = (int)$hour;
-        $nightStart = isset($GLOBALS['HP_PAC_NIGHT_START']) ? (int)$GLOBALS['HP_PAC_NIGHT_START'] : 22;
-        $nightEnd = isset($GLOBALS['HP_PAC_NIGHT_END']) ? (int)$GLOBALS['HP_PAC_NIGHT_END'] : 5;
-        $shoulderStart = isset($GLOBALS['HP_PAC_SHOULDER_START']) ? (int)$GLOBALS['HP_PAC_SHOULDER_START'] : 20;
-        $shoulderEnd = isset($GLOBALS['HP_PAC_SHOULDER_END']) ? (int)$GLOBALS['HP_PAC_SHOULDER_END'] : 6;
-        $radFloor = isset($GLOBALS['HP_PAC_RAD']) ? (float)$GLOBALS['HP_PAC_RAD'] : 5.0;
-        // Deep night: never trust PAC (hour >= start OR hour < end).
-        if ($h >= $nightStart || $h < $nightEnd) {
-            return null;
-        }
-        $r = ($rad === null || $rad === '') ? 0.0 : (float)$rad;
-        // Shoulder evening/morning: PAC without light.
-        if ($r <= $radFloor && ($h >= $shoulderStart || $h < $shoulderEnd)) {
-            return null;
-        }
-    }
-    return $v;
-}
-
-/**
- * Median of a numeric list (empty -> 0).
- *
- * @param list<float> $vals
- */
-function median_float(array $vals): float
-{
-    $n = count($vals);
-    if ($n === 0) {
-        return 0.0;
-    }
-    sort($vals, SORT_NUMERIC);
-    $mid = (int)floor($n / 2);
-    if ($n % 2 === 1) {
-        return (float)$vals[$mid];
-    }
-    return ((float)$vals[$mid - 1] + (float)$vals[$mid]) / 2.0;
-}
-
-/**
- * Drop PAC needles vs local median (not max). Twin adjacent spikes defeat max-of-neighbors;
- * median + a few passes catches them. Mutates $pac / $pacDates in place.
- *
- * @param list<float> $pac
- * @param list<string|null> $pacDates
- */
-function despike_pac_series(array &$pac, array &$pacDates, int $radius = 4, float $ratio = 1.15, int $passes = 4): void
-{
-    $n = count($pac);
-    if ($n < 3) {
-        return;
-    }
-    for ($pass = 0; $pass < $passes; $pass++) {
-        $cleaned = $pac;
-        $changed = false;
-        for ($i = 0; $i < $n; $i++) {
-            if ($pac[$i] <= 0) {
-                continue;
-            }
-            $lo = max(0, $i - $radius);
-            $hi = min($n - 1, $i + $radius);
-            $neigh = [];
-            for ($j = $lo; $j <= $hi; $j++) {
-                if ($j === $i) {
-                    continue;
-                }
-                if ($pac[$j] > 0) {
-                    $neigh[] = $pac[$j];
-                }
-            }
-            if (count($neigh) < 2) {
-                continue;
-            }
-            $ref = median_float($neigh);
-            if ($ref > 0 && $pac[$i] > $ref * $ratio) {
-                $cleaned[$i] = $ref;
-                $pacDates[$i] = null;
-                $changed = true;
-            }
-        }
-        $pac = $cleaned;
-        if (!$changed) {
-            break;
-        }
-    }
-}
 
 if (isset($_GET['ajax'])) {
     header('Content-Type: application/json');
@@ -211,6 +110,15 @@ if (isset($_GET['ajax'])) {
                 $win['end'],
                 'sanitize_pac_w'
             );
+            // A11: gas/water strip shares this exact window (no separate range chips).
+            $waterOk = gw_water_available($pdo);
+            $utility = [
+                'water_available' => $waterOk,
+                'gas' => gw_utility_window_curve($pdo, 'gas', (int)$win['start'], (int)$win['end']),
+                'water' => $waterOk
+                    ? gw_utility_window_curve($pdo, 'water', (int)$win['start'], (int)$win['end'])
+                    : ['source' => 'none', 'points' => [], 'unit' => 'm3/h'],
+            ];
             echo json_encode([
                 'ok' => true,
                 'start' => $win['start'],
@@ -224,6 +132,7 @@ if (isset($_GET['ajax'])) {
                 'phases' => $payload['phases'] ?? ['l1' => [], 'l2' => [], 'l3' => []],
                 'has_phases' => hp_phases_series_has_data($payload['phases'] ?? []),
                 'sources' => $payload['sources'],
+                'utility' => $utility,
             ]);
             exit;
         }
@@ -364,97 +273,6 @@ if (isset($_GET['ajax'])) {
             exit;
         }
 
-        // month=1..12 or month=0 / all = whole-year composite (MAX across months per timepoint)
-        if ($action === 'envelope' && isset($_GET['month'])) {
-            $monthRaw = strtolower(trim((string)$_GET['month']));
-            $wholeYear = ($monthRaw === '0' || $monthRaw === 'all' || $monthRaw === 'year');
-            $month = (int)$monthRaw;
-            if (!$wholeYear && ($month < 1 || $month > 12)) {
-                echo json_encode(['error' => 'Invalid month']);
-                exit;
-            }
-            $categories = [];
-            $pac = [];
-            $rad = [];
-            $pacDates = [];
-            for ($tp = 0; $tp < 288; $tp++) {
-                $h = (int)floor($tp / 12);
-                $mi = ($tp % 12) * 5;
-                $categories[] = sprintf('%02d:%02d', $h, $mi);
-                $pac[] = 0.0;
-                $rad[] = 0.0;
-                $pacDates[] = null;
-            }
-            $filled = 0;
-            try {
-                if ($wholeYear) {
-                    $stmt = $pdo->query(
-                        'SELECT timepoint, max_pac_w, max_pac_date, max_rad_wm2, month
-                         FROM clear_sky_envelopes ORDER BY timepoint ASC, month ASC'
-                    );
-                } else {
-                    $stmt = $pdo->prepare(
-                        'SELECT timepoint, max_pac_w, max_pac_date, max_rad_wm2, month
-                         FROM clear_sky_envelopes WHERE month = ? ORDER BY timepoint ASC'
-                    );
-                    $stmt->execute([$month]);
-                }
-                while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-                    $tp = (int)$row['timepoint'];
-                    if ($tp < 0 || $tp > 287) {
-                        continue;
-                    }
-                    if ($row['max_pac_w'] !== null) {
-                        $v = sanitize_pac_w($row['max_pac_w']);
-                        if ($v !== null && $v >= $pac[$tp]) {
-                            $pac[$tp] = $v;
-                            $pacDates[$tp] = $row['max_pac_date'];
-                            if ($wholeYear && !empty($row['month'])) {
-                                $pacDates[$tp] = $row['max_pac_date']
-                                    ? ($row['max_pac_date'] . ' (m' . (int)$row['month'] . ')')
-                                    : ('m' . (int)$row['month']);
-                            }
-                        }
-                        if ($v !== null) {
-                            $filled++;
-                        }
-                    }
-                    if ($row['max_rad_wm2'] !== null) {
-                        $rv = (float)$row['max_rad_wm2'];
-                        if ($rv > $rad[$tp]) {
-                            $rad[$tp] = $rv;
-                        }
-                    }
-                }
-            } catch (Exception $e) {
-                echo json_encode([
-                    'error' => 'clear_sky_envelopes missing - run rollup.py -buildall',
-                    'detail' => $e->getMessage(),
-                ]);
-                exit;
-            }
-            // Soft despike: hard cap alone leaves mid-range corrupt surges (e.g. ~8 kW needles).
-            despike_pac_series($pac, $pacDates);
-
-            // Count slots that actually have power (avoid counting zero-filled blanks as filled)
-            $nonzero = 0;
-            foreach ($pac as $v) {
-                if ($v > 0) {
-                    $nonzero++;
-                }
-            }
-            echo json_encode([
-                'month' => $wholeYear ? 0 : $month,
-                'label' => $wholeYear ? 'Whole year' : $month,
-                'filled' => $nonzero,
-                'categories' => $categories,
-                'max_pac_w' => $pac,
-                'max_rad_wm2' => $rad,
-                'max_pac_date' => $pacDates,
-            ]);
-            exit;
-        }
-
         echo json_encode(['error' => 'Unknown action']);
     } catch (Exception $e) {
         echo json_encode(['error' => $e->getMessage()]);
@@ -557,7 +375,7 @@ $defaultCompare2 = $twoDaysAgo;
                 </a>
                 <div>
                     <h1 class="text-2xl font-black text-slate-900 tracking-tight">Historical Analytics</h1>
-                    <p class="text-xs text-slate-400 mt-0.5">Balance explorer, day compare, clear-sky envelope</p>
+                    <p class="text-xs text-slate-400 mt-0.5">Balance explorer and day compare</p>
                 </div>
             </div>
         </div>
@@ -571,6 +389,7 @@ $defaultCompare2 = $twoDaysAgo;
             <a href="topn.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                 <i data-lucide="trophy" class="w-3.5 h-3.5 text-amber-500"></i> Top-N
             </a>
+            <?= hp_nav_weather() ?>
             <?= hp_nav_settings() ?>
         </div>
     </header>
@@ -658,6 +477,27 @@ $defaultCompare2 = $twoDaysAgo;
         <div id="chart-intraday" class="w-full h-[400px]"></div>
     </div>
 
+    <!-- A11: gas / water rate under the power explorer; same from/to window -->
+    <div id="utility-explorer-card" class="card border-t-4 border-t-amber-500">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2">
+            <div>
+                <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                    <i data-lucide="flame" class="w-5 h-5 text-amber-500" id="utilityExplorerIcon"></i>
+                    <span id="utilityExplorerTitle">Gas rate</span>
+                </h2>
+                <p class="text-xs text-slate-400 mt-0.5">
+                    Same window as the chart above. Instantaneous m³/h (P1), or Fluvius hour volumes for gas when P1 is missing.
+                </p>
+            </div>
+            <div class="metric-switch" role="group" aria-label="Utility meter">
+                <button type="button" id="utility-metric-gas" class="metric-on" aria-pressed="true" onclick="setUtilityMetric('gas')">Gas</button>
+                <button type="button" id="utility-metric-water" class="is-hidden" aria-pressed="false" onclick="setUtilityMetric('water')">Water</button>
+            </div>
+        </div>
+        <div id="utility-source-label" class="text-[11px] text-slate-400 font-mono mb-1"></div>
+        <div id="chart-utility" class="w-full h-[220px]"></div>
+    </div>
+
     <div class="card border-t-4 border-t-indigo-500">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
             <div>
@@ -697,43 +537,6 @@ $defaultCompare2 = $twoDaysAgo;
         <div id="chart-compare" class="w-full h-[400px]"></div>
     </div>
 
-    <div class="card border-t-4 border-t-sky-500">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
-            <div>
-                <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
-                    <i data-lucide="cloud-sun" class="w-5 h-5 text-sky-500"></i> Clear-sky Envelope
-                </h2>
-                <p class="text-xs text-slate-400">
-                    All-time max AC power at each 5-min slot
-                    (<code>clear_sky_envelopes</code>).
-                </p>
-            </div>
-            <div class="flex flex-wrap items-center gap-2">
-                <button type="button" class="nav-arrow" onclick="stepEnvelope(-1)" title="Previous" aria-label="Previous period">
-                    <i data-lucide="chevron-left" class="w-5 h-5"></i>
-                </button>
-                <select id="envelopeMonth" class="text-sm px-3 py-1.5 border border-slate-200 rounded-lg text-slate-700 bg-slate-50 min-w-[8rem]"
-                        onchange="loadEnvelope()">
-                    <option value="0">Whole year</option>
-                    <?php
-                    $monthNames = [1=>'January',2=>'February',3=>'March',4=>'April',5=>'May',6=>'June',
-                                   7=>'July',8=>'August',9=>'September',10=>'October',11=>'November',12=>'December'];
-                    $curM = (int)date('n');
-                    foreach ($monthNames as $num => $name) {
-                        $sel = ($num === $curM) ? ' selected' : '';
-                        echo "<option value=\"{$num}\"{$sel}>{$name}</option>\n";
-                    }
-                    ?>
-                </select>
-                <button type="button" class="nav-arrow" onclick="stepEnvelope(1)" title="Next" aria-label="Next period">
-                    <i data-lucide="chevron-right" class="w-5 h-5"></i>
-                </button>
-            </div>
-        </div>
-        <div id="chart-envelope" class="w-full h-[400px]"></div>
-        <div id="envelope-warning" class="hidden text-xs text-amber-600 bg-amber-50 border border-amber-200 p-3 rounded-xl mt-4"></div>
-    </div>
-
 </div>
 
 <script>
@@ -743,7 +546,6 @@ $defaultCompare2 = $twoDaysAgo;
 
     let chartIntraday = null;
     let chartCompare = null;
-    let chartEnvelope = null;
     /** @type {{min: string|null, max: string|null}} */
     let dayRange = { min: null, max: null };
 
@@ -787,28 +589,14 @@ $defaultCompare2 = $twoDaysAgo;
             if (raw == null) continue;
             const name = series[s].name || '';
             const color = colors[s] || '#64748b';
-            let extra = '';
-            if (opts.pacDates && opts.pacDates[i]) {
-                extra = ' (on ' + opts.pacDates[i] + ')';
-            }
             rows += '<div class="apexcharts-tooltip-series-group" style="display:flex;align-items:center;gap:6px;padding:2px 0">'
                 + '<span style="width:8px;height:8px;border-radius:50%;background:' + color + ';flex-shrink:0"></span>'
                 + '<span style="font-size:12px;color:#0f172a"><strong>' + name + ':</strong> '
-                + Math.round(Number(raw)) + ' W' + extra + '</span></div>';
+                + Math.round(Number(raw)) + ' W</span></div>';
         }
         return '<div class="apexcharts-tooltip-title" style="font-family:inherit;font-size:12px;margin-bottom:4px">'
             + (time ? ('Time: ' + time) : '')
             + '</div>' + rows;
-    }
-
-    function stepEnvelope(delta) {
-        const sel = document.getElementById('envelopeMonth');
-        const opts = Array.from(sel.options).map((o) => o.value);
-        let idx = opts.indexOf(sel.value);
-        if (idx < 0) idx = 0;
-        idx = (idx + delta + opts.length) % opts.length;
-        sel.value = opts[idx];
-        loadEnvelope();
     }
 
     const baseChartOptions = {
@@ -873,6 +661,9 @@ $defaultCompare2 = $twoDaysAgo;
     let explorerCustom = <?= $explorerWindow['custom'] ? 'true' : 'false' ?>;
     let explorerDayMode = <?= !empty($explorerWindow['day_mode']) ? 'true' : 'false' ?>;
     let explorerPayload = null;
+    /** @type {'gas'|'water'} */
+    let utilityMetric = 'gas';
+    let utilityChart = null;
     /** @type {{min: string|null, max: string|null}} */
     let explorerDayBounds = { min: null, max: null };
 
@@ -1572,11 +1363,7 @@ $defaultCompare2 = $twoDaysAgo;
             const data = await res.json();
             if (data.error) {
                 console.error('explorer ajax error', data.error);
-                const host = document.querySelector('#chart-intraday');
-                if (host) {
-                    host.innerHTML = '<p class="text-sm text-rose-600 p-6">Explorer error: '
-                        + String(data.error) + '</p>';
-                }
+                showExplorerError('Explorer error: ' + String(data.error));
                 return;
             }
             explorerStart = data.start;
@@ -1596,13 +1383,144 @@ $defaultCompare2 = $twoDaysAgo;
             }
             updateDayViewChrome();
             await renderExplorerChart();
+            renderUtilityExplorer();
         } catch (err) {
             console.error('explorer load failed', err);
-            const host = document.querySelector('#chart-intraday');
-            if (host) {
-                host.innerHTML = '<p class="text-sm text-rose-600 p-6">Failed to load explorer data.</p>';
+            showExplorerError('Failed to load explorer data.');
+        }
+    }
+
+    /**
+     * Soft-fail: replace explorer host with a message; never leave a destroyed blank chart.
+     *
+     * @param {string} message
+     */
+    function showExplorerError(message) {
+        if (chartIntraday) {
+            chartIntraday.destroy();
+            chartIntraday = null;
+        }
+        const host = document.querySelector('#chart-intraday');
+        if (host) {
+            host.innerHTML = '<p class="text-sm text-rose-600 p-6">' + message + '</p>';
+        }
+    }
+
+    /**
+     * Gas/water rate under the power explorer - same from/to as Exchange (A11).
+     */
+    function setUtilityMetric(next) {
+        const chosen = next === 'water' ? 'water' : 'gas';
+        const util = explorerPayload && explorerPayload.utility ? explorerPayload.utility : null;
+        if (chosen === 'water' && util && util.water_available === false) {
+            return;
+        }
+        if (chosen === utilityMetric) {
+            return;
+        }
+        utilityMetric = chosen;
+        renderUtilityExplorer();
+    }
+
+    function renderUtilityExplorer() {
+        const util = explorerPayload && explorerPayload.utility ? explorerPayload.utility : null;
+        const waterBtn = document.getElementById('utility-metric-water');
+        const gasBtn = document.getElementById('utility-metric-gas');
+        const title = document.getElementById('utilityExplorerTitle');
+        const icon = document.getElementById('utilityExplorerIcon');
+        const srcLabel = document.getElementById('utility-source-label');
+        const host = document.querySelector('#chart-utility');
+        const waterOk = !!(util && util.water_available);
+        if (waterBtn) {
+            waterBtn.classList.toggle('is-hidden', !waterOk);
+        }
+        if (!waterOk && utilityMetric === 'water') {
+            utilityMetric = 'gas';
+        }
+        if (gasBtn) {
+            gasBtn.classList.toggle('metric-on', utilityMetric === 'gas');
+            gasBtn.setAttribute('aria-pressed', utilityMetric === 'gas' ? 'true' : 'false');
+        }
+        if (waterBtn) {
+            waterBtn.classList.toggle('metric-on', utilityMetric === 'water');
+            waterBtn.setAttribute('aria-pressed', utilityMetric === 'water' ? 'true' : 'false');
+        }
+        const isGas = utilityMetric === 'gas';
+        if (title) {
+            title.textContent = isGas ? 'Gas rate' : 'Water rate';
+        }
+        if (icon) {
+            icon.setAttribute('data-lucide', isGas ? 'flame' : 'droplet');
+            icon.classList.toggle('text-amber-500', isGas);
+            icon.classList.toggle('text-cyan-500', !isGas);
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons();
             }
         }
+        const card = document.getElementById('utility-explorer-card');
+        if (card) {
+            card.classList.toggle('border-t-amber-500', isGas);
+            card.classList.toggle('border-t-cyan-500', !isGas);
+        }
+        const seriesWrap = util ? (isGas ? util.gas : util.water) : null;
+        const points = seriesWrap && Array.isArray(seriesWrap.points) ? seriesWrap.points : [];
+        const source = seriesWrap && seriesWrap.source ? seriesWrap.source : 'none';
+        if (srcLabel) {
+            const srcMap = {
+                p1_1min: 'Source: P1 1-min',
+                p1_5min: 'Source: P1 5-min',
+                fluvius_hour: 'Source: Fluvius hour',
+                none: 'No data in this window'
+            };
+            srcLabel.textContent = srcMap[source] || source;
+        }
+        if (!host) {
+            return;
+        }
+        if (utilityChart) {
+            utilityChart.destroy();
+            utilityChart = null;
+        }
+        host.innerHTML = '';
+        if (!points.length || source === 'none') {
+            host.innerHTML = '<p class="text-sm text-slate-400 p-4">No '
+                + (isGas ? 'gas' : 'water') + ' samples in this window.</p>';
+            return;
+        }
+        const color = isGas ? '#d97706' : '#06b6d4';
+        const name = isGas ? 'Gas (m3/h)' : 'Water (m3/h)';
+        utilityChart = new ApexCharts(host, {
+            series: [{ name: name, data: points }],
+            chart: {
+                type: 'area',
+                height: 220,
+                toolbar: { show: false },
+                animations: { enabled: false },
+                zoom: { enabled: false }
+            },
+            colors: [color],
+            dataLabels: { enabled: false },
+            stroke: { curve: 'stepline', width: 2 },
+            fill: { type: 'solid', opacity: 0.25 },
+            xaxis: {
+                type: 'datetime',
+                min: explorerStart * 1000,
+                max: explorerEnd * 1000,
+                labels: { datetimeUTC: false, format: 'HH:mm', style: { fontSize: '11px', colors: '#94a3b8' } }
+            },
+            yaxis: {
+                min: 0,
+                title: { text: 'm3/h', style: { color: '#94a3b8', fontSize: '10px' } },
+                labels: { formatter: (v) => Number(v).toFixed(2) }
+            },
+            grid: { borderColor: '#f1f5f9' },
+            tooltip: {
+                x: { format: 'dd MMM HH:mm' },
+                y: { formatter: (v) => (v == null || Number.isNaN(Number(v)) ? '-' : (Number(v).toFixed(3) + ' m3/h')) }
+            },
+            legend: { show: false }
+        });
+        utilityChart.render();
     }
 
     let compareLoadTimer = null;
@@ -1612,9 +1530,7 @@ $defaultCompare2 = $twoDaysAgo;
         const d1 = document.getElementById('compareText1').value.trim();
         const d2 = document.getElementById('compareText2').value.trim();
         if (!isValidIsoDate(d1) || !isValidIsoDate(d2)) {
-            if (host) {
-                host.innerHTML = '<p class="text-sm text-slate-400 p-6">Pick two valid dates (YYYY-MM-DD).</p>';
-            }
+            showCompareMessage('<p class="text-sm text-slate-400 p-6">Pick two valid dates (YYYY-MM-DD).</p>');
             return;
         }
 
@@ -1624,12 +1540,12 @@ $defaultCompare2 = $twoDaysAgo;
             );
             const data = await res.json();
             if (data.error) {
-                host.innerHTML = '<p class="text-sm text-rose-600 p-6">Compare error: '
-                    + String(data.error) + '</p>';
+                showCompareMessage('<p class="text-sm text-rose-600 p-6">Compare error: '
+                    + String(data.error) + '</p>');
                 return;
             }
             if (!Array.isArray(data.categories) || !data.categories.length) {
-                host.innerHTML = '<p class="text-sm text-slate-400 p-6">No compare slots returned.</p>';
+                showCompareMessage('<p class="text-sm text-slate-400 p-6">No compare slots returned.</p>');
                 return;
             }
 
@@ -1658,7 +1574,9 @@ $defaultCompare2 = $twoDaysAgo;
                 chartCompare.destroy();
                 chartCompare = null;
             }
-            host.innerHTML = '';
+            if (host) {
+                host.innerHTML = '';
+            }
             chartCompare = new ApexCharts(host, options);
             await chartCompare.render();
             if (chartCompare && typeof chartCompare.windowResize === 'function') {
@@ -1666,9 +1584,23 @@ $defaultCompare2 = $twoDaysAgo;
             }
         } catch (err) {
             console.error('compare load failed', err);
-            if (host) {
-                host.innerHTML = '<p class="text-sm text-rose-600 p-6">Failed to load two-day overlay.</p>';
-            }
+            showCompareMessage('<p class="text-sm text-rose-600 p-6">Failed to load two-day overlay.</p>');
+        }
+    }
+
+    /**
+     * Soft-fail for compare: destroy then show HTML (never leave a blank destroyed chart).
+     *
+     * @param {string} html
+     */
+    function showCompareMessage(html) {
+        if (chartCompare) {
+            chartCompare.destroy();
+            chartCompare = null;
+        }
+        const host = document.querySelector('#chart-compare');
+        if (host) {
+            host.innerHTML = html;
         }
     }
 
@@ -1677,78 +1609,17 @@ $defaultCompare2 = $twoDaysAgo;
         compareLoadTimer = setTimeout(() => { loadComparison(); }, 200);
     }
 
-    async function loadEnvelope() {
-        const month = document.getElementById('envelopeMonth').value;
-        const warn = document.getElementById('envelope-warning');
-        const host = document.querySelector('#chart-envelope');
-        warn.classList.add('hidden');
-        warn.textContent = '';
-
-        let data;
-        try {
-            const res = await fetch(`analytics.php?ajax=envelope&month=${encodeURIComponent(month)}`);
-            data = await res.json();
-        } catch (e) {
-            warn.textContent = 'Failed to load envelope data.';
-            warn.classList.remove('hidden');
-            return;
-        }
-
-        if (data.error) {
-            warn.textContent = data.error + (data.detail ? ' (' + data.detail + ')' : '');
-            warn.classList.remove('hidden');
-            if (chartEnvelope) { chartEnvelope.destroy(); chartEnvelope = null; }
-            return;
-        }
-        if (!data.filled) {
-            warn.textContent = 'No envelope data for this period in clear_sky_envelopes. Re-run: python3 rollup.py -buildall';
-            warn.classList.remove('hidden');
-            if (chartEnvelope) { chartEnvelope.destroy(); chartEnvelope = null; }
-            return;
-        }
-
-        const pacDates = data.max_pac_date || [];
-        const seriesName = (data.month === 0) ? 'Whole-year max PAC (W)' : 'Max PAC (W)';
-        const options = {
-            chart: {
-                type: 'area',
-                height: 400,
-                toolbar: { show: true },
-                animations: { enabled: false },
-                redrawOnParentResize: true,
-                redrawOnWindowResize: true
-            },
-            series: [{ name: seriesName, data: data.max_pac_w }],
-            colors: ['#0ea5e9'],
-            dataLabels: { enabled: false },
-            stroke: { curve: 'smooth', width: 2 },
-            fill: {
-                type: 'gradient',
-                gradient: { shadeIntensity: 1, opacityFrom: 0.35, opacityTo: 0.05, stops: [0, 100] }
-            },
-            xaxis: { type: 'category', categories: data.categories, labels: timeAxisLabels },
-            yaxis: {
-                title: { text: 'PAC (W)', style: { color: '#94a3b8', fontSize: '10px' } },
-                labels: { style: { colors: '#94a3b8', fontSize: '10px' } }
-            },
-            grid: { borderColor: '#f1f5f9', strokeDashArray: 4 },
-            tooltip: {
-                custom: function (opts) {
-                    opts.pacDates = pacDates;
-                    return pacTooltip(opts);
-                }
-            }
-        };
-        if (chartEnvelope) {
-            chartEnvelope.destroy();
-            chartEnvelope = null;
-        }
-        host.innerHTML = '';
-        chartEnvelope = new ApexCharts(host, options);
-        await chartEnvelope.render();
-        if (chartEnvelope && typeof chartEnvelope.windowResize === 'function') {
-            chartEnvelope.windowResize();
-        }
+    /**
+     * Yield two animation frames so Apex finishes layout before the next mount (A22 blank-chart harden).
+     *
+     * @returns {Promise<void>}
+     */
+    function yieldForChartPaint() {
+        return new Promise((resolve) => {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => resolve());
+            });
+        });
     }
 
     document.addEventListener('DOMContentLoaded', async () => {
@@ -1770,11 +1641,10 @@ $defaultCompare2 = $twoDaysAgo;
         updateDayViewChrome();
         updateExplorerPanButtons();
         lucide.createIcons();
-        // One Apex mount at a time. Parallel explorer + compare + envelope often
-        // left the first charts blank until a later pan re-rendered alone.
+        // A22: one Apex mount at a time. Envelope moved to Top-N; yield between explorer and compare.
         await loadExplorer();
+        await yieldForChartPaint();
         await loadComparison();
-        await loadEnvelope();
     });
 </script>
 

@@ -76,10 +76,10 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
       - Live (`index.php`): 2-hour pulse of 1-minute readings; Exchange / Balance / Classic (Exchange default). Exploration (`analytics.php`), period summaries (`summary.php`).
       - Cross-navigation between hubs.
 - [x] Day Explorer on `analytics.php` (**A5b** + **A19**):
-      - Exchange / Balance / Classic explorer: rolling presets plus calendar-day **Today** (default; chip after 24 h); day pan with arrow caps; mixed 1-min / 5-min (rule V). Clear-sky envelope is a separate chart.
+      - Exchange / Balance / Classic explorer: rolling presets plus calendar-day **Today** (default; chip after 24 h); day pan with arrow caps; mixed 1-min / 5-min (rule V). Serial Apex mounts (explorer then compare).
 - [x] Two-Day Overlay on `analytics.php`.
 - [x] Summary period views (`summary.php`):
-      - Week, month, year, then **All years** last (lifetime bars vs live `expected_monthly` PVGIS year baseline; omit PVGIS when all months are 0).
+      - Week, month, year, then **All years** last (lifetime bars vs live `expected_monthly` PVGIS; week/month use daily-share line; omit PVGIS when expected is 0).
       - **A13 Done:** Solar yield / Grid switch. Grid mode is grouped bars (import, export, net). A second switch shows all three, import/export only, or net only.
       - **A12 Done:** Capacity peak (`?metric=peak`) from Fluvius `piekvermogen` (kW); open month = live P1; year + All years only; Max/Average on All years (shared Y). Deep link `?month=` also sets week + year.
 - [x] Hall of Fame / Top 10:
@@ -87,6 +87,7 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
       - **A13 Done:** the same page ranks highest net import and highest net export from `daily_history` / `monthly_history` (20 days, 10 months, 10 years). Both day lists omit today. No second ranking table.
       - **A7 Done:** all-time singles on `topn.php` (`top_records`); `-daily` beat + `-buildalltoprecords`.
       - **A12 Done:** Capacity peak ranks (top 10 months); records filtered by metric (yield / peak; wind waits for A11).
+      - **A22:** Virtual 'best-day' (from `clear_sky_envelopes`) on solar Top-N; removed from analytics.
 - [x] Settings (`settings.php`): admin password on first open; locked-by-default Unlock window (countdown); devices, titles, monthly expected kWh, spike cap, and night gates in `meter_history.db`. Save probes P1/SMA/WebBox/Portal and writes `*_active` (`integration_probes.py`); partial fill is atomic. Virtual kWh meters (A14) + optional Raw Meter Registers rows (A21). Encrypted full-database download and restore (`db_backup.py`); 1-min CSV export without password. See [`architecture.md`](architecture.md).
 - [x] Verify analytics / summary with populated rollups (A2/A3 + operator smoke).
 

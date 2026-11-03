@@ -25,6 +25,7 @@ import fluvius_import
 import phase_power
 import site_config
 import sunnyportal_pull
+import utility_volume
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = site_config.resolve_db_path()
@@ -136,7 +137,9 @@ def init_analytical_db(conn: sqlite3.Connection) -> None:
                 temp_ambient_max REAL,
                 temp_module_max REAL,
                 wind_gust_max_ms REAL,
-                solar_radiation_max_wm2 REAL
+                solar_radiation_max_wm2 REAL,
+                gas_m3 REAL,
+                water_m3 REAL
             )
         """)
         # Speeds Hall of Fame / Top Days (ORDER BY solar_yield_kwh DESC LIMIT n).
@@ -155,9 +158,12 @@ def init_analytical_db(conn: sqlite3.Connection) -> None:
                 total_export_kwh REAL,
                 max_peak_w REAL,
                 max_temp_module REAL,
-                max_wind_gust REAL
+                max_wind_gust REAL,
+                gas_m3 REAL,
+                water_m3 REAL
             )
         """)
+        utility_volume.ensure_utility_volume_columns(conn)
 
         # 4. Clear Sky Envelopes (The Theoretical Best Curve)
         conn.execute("""
@@ -386,7 +392,9 @@ def build_daily_history(
                     MIN(temp_ambient) AS t_amb_min,
                     MAX(temp_ambient) AS t_amb_max,
                     MAX(temp_module) AS t_mod_max,
-                    MAX(COALESCE(wind_gust, wind_speed)) AS wind_max,
+                    -- Gust only. Do not fall back to wind_speed or Gust toggles
+                    -- light up while history_5min.wind_gust stays null.
+                    MAX(wind_gust) AS wind_max,
                     MAX(COALESCE(solar_radiation_max, solar_radiation)) AS rad_max
                 FROM base
                 GROUP BY dt
@@ -452,6 +460,11 @@ def build_daily_history(
         """)
         fluvius_import.insert_missing_override_days(conn)
 
+    # A11: period m3 from P1 counters (+ Fluvius gas fallback). After the solar/grid upsert
+    # so INSERT OR REPLACE above does not wipe gas_m3 / water_m3 on existing DBs that
+    # still lack those columns in the REPLACE column list.
+    utility_volume.apply_utility_day_volumes(conn, days_back=days_back)
+
     duration = time.time() - start_time
     count = conn.execute("SELECT COUNT(*) FROM daily_history").fetchone()[0]
     if days_back:
@@ -467,13 +480,15 @@ def build_daily_history(
 def build_monthly_history(conn: sqlite3.Connection, step: int = 3) -> None:
     """Rolls up daily totals into months and tracks against PVGIS expected baselines."""
     start_time = time.time()
-    
+    utility_volume.ensure_utility_volume_columns(conn)
+
     with conn:
         conn.execute("""
             INSERT OR REPLACE INTO monthly_history (
                 year_month, total_solar_kwh, expected_kwh, target_pct,
                 total_import_kwh, total_export_kwh,
-                max_peak_w, max_temp_module, max_wind_gust
+                max_peak_w, max_temp_module, max_wind_gust,
+                gas_m3, water_m3
             )
             SELECT 
                 substr(d.date, 1, 7) AS ym,
@@ -482,7 +497,9 @@ def build_monthly_history(conn: sqlite3.Connection, step: int = 3) -> None:
                 CASE WHEN exp.expected_kwh > 0 THEN ROUND((SUM(d.solar_yield_kwh) / exp.expected_kwh) * 100, 1) ELSE 0 END,
                 ROUND(SUM(d.grid_import_kwh), 1),
                 ROUND(SUM(d.grid_export_kwh), 1),
-                MAX(d.solar_peak_w), MAX(d.temp_module_max), MAX(d.wind_gust_max_ms)
+                MAX(d.solar_peak_w), MAX(d.temp_module_max), MAX(d.wind_gust_max_ms),
+                ROUND(SUM(d.gas_m3), 3),
+                ROUND(SUM(d.water_m3), 3)
             FROM daily_history d
             LEFT JOIN expected_monthly exp ON exp.month = CAST(substr(d.date, 6, 2) AS INTEGER) AND exp.inclination = 30
             GROUP BY ym;
@@ -1054,11 +1071,14 @@ def downsample_live_readings(
                     ELSE NULL
                 END"""
 
+    # SensorBox live columns on readings (radiation / module / wind) must land on
+    # history_5min or weather.php only sees radiation from this path.
     sql = f"""
             INSERT INTO history_5min (
                 timestamp, grid_power_w, import_t1, import_t2, export_t1, export_t2,
                 total_import, total_export, capacity_peak_w, gas, water,
-                solar_power_w, solar_total_kwh, solar_radiation, sample_count, data_source,
+                solar_power_w, solar_total_kwh, solar_radiation,
+                temp_module, wind_speed, sample_count, data_source,
                 power_l1_w, power_l2_w, power_l3_w
             )
             SELECT
@@ -1070,6 +1090,7 @@ def downsample_live_readings(
                 MAX(gas), MAX(water),
                 ROUND(AVG(solar_power)), MAX(solar_total_kwh),
                 AVG(solar_radiation),
+                AVG(temp_module), AVG(wind_speed),
                 COUNT(*), 'live_p1',
                 {phase_avg_l1},
                 {phase_avg_l2},
@@ -1098,6 +1119,8 @@ def downsample_live_readings(
                 END,
                 solar_total_kwh = COALESCE(excluded.solar_total_kwh, history_5min.solar_total_kwh),
                 solar_radiation = COALESCE(excluded.solar_radiation, history_5min.solar_radiation),
+                temp_module     = COALESCE(excluded.temp_module, history_5min.temp_module),
+                wind_speed      = COALESCE(excluded.wind_speed, history_5min.wind_speed),
                 sample_count    = excluded.sample_count,
                 data_source     = CASE
                     WHEN history_5min.data_source = 'webbox_archive' THEN 'merged'

@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-11-03 (**A14** + **A21** closed)
+**Last updated:** 2026-11-03 (**A22** coding; **W1** historical + **W2** triaged)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -64,10 +64,12 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| 1 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 2 | open | M | **W1** | WanOS: this app pushes on `-daily` and when raw readings are opened | [`phaseW-wanos.md`](phaseW-wanos.md) |
-| 3 | open | M | **Ops5** | Daily DB dump to Settings Synology path; `powerbackup-YYMMDD-HHMMSS.sql.zip`; keep last 14 (replaces Hyper Backup) | [`roadmap.md`](../roadmap.md) |
-| 4 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
+| 1 | open | L | **A11** | Historical gas, wind, weather page; gas/water on summary/topn/index. Shipped 2026-11-03; awaiting close | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 2 | coding | M | **A22** | bugfix: analytics load; Virtual best-day rename+top-n; PVGIS week/month | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 3 | open | M | **W1** | WanOS: push on `-daily`, raw readings opened, and historical | [`phaseW-wanos.md`](phaseW-wanos.md) |
+| 4 | open | M | **W2** | WanOS ambient temps: daily + one-off historical → `weather.php` | [`phaseW-wanos.md`](phaseW-wanos.md) |
+| 5 | open | M | **Ops5** | Daily DB dump to Settings Synology path; `powerbackup-YYMMDD-HHMMSS.sql.zip`; keep last 14 (replaces Hyper Backup) | [`roadmap.md`](../roadmap.md) |
+| 6 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
 
 ---
 
@@ -89,4 +91,4 @@ Open Ops rows are also in **Sequence** (same ids). Done Ops stay in **Done** onl
 | **M** | Migration + public-repo hygiene + local sync | [`_archive/phaseM-migration.md`](_archive/phaseM-migration.md) (**archived**) |
 | **A** | Aggregation warehouse + analytics UI | [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md) (A0–A3 Done) · [`phaseA-analytics.md`](phaseA-analytics.md) (A4+) |
 | **P** | Cloud / utility portal ingest (P1–P3 Done — move file offline when convenient) | [`phaseP-portals.md`](phaseP-portals.md) |
-| **W** | WanOS outbound bridge (push from this app) | [`phaseW-wanos.md`](phaseW-wanos.md) |
+| **W** | WanOS bridge (push to WanOS; ambient pull for weather) | [`phaseW-wanos.md`](phaseW-wanos.md) |

@@ -416,9 +416,11 @@ def fetch_webbox(ip, password, last_state):
             )
 
             if is_sensor:
-                s_rad = 0.0
+                # Missing channels stay None (NULL in readings) - never invent 0.
+                # Live SensorBox has no ambient / gust channels in this parser.
+                s_rad = None
                 s_mod = None
-                s_wnd = 0.0
+                s_wnd = None
                 for c in channels:
                     meta = (c.get("meta") or "").lower()
                     cname = (c.get("name") or "").lower()
@@ -431,7 +433,7 @@ def fetch_webbox(ip, password, last_state):
                     # Solar Radiation (W/m²)
                     if 'intsolirr' in meta or ('solirr' in meta and 'ext' not in meta) or ('rad' in meta and 'ext' not in meta):
                         s_rad = fval
-                    elif 'extsolirr' in meta and s_rad == 0.0:
+                    elif 'extsolirr' in meta and s_rad is None:
                         s_rad = fval
 
                     # Module Temperature (°C) - matches 'TmpMdul C'
@@ -446,14 +448,21 @@ def fetch_webbox(ip, password, last_state):
                     'key': d_key,
                     'name': d_name,
                     'radiation': s_rad,
-                    'temp_module': s_mod if s_mod is not None else 0.0,
-                    'wind_speed': s_wnd
+                    'temp_module': s_mod,
+                    'wind_speed': s_wnd,
                 }
+                summary_bits = []
+                if s_rad is not None:
+                    summary_bits.append(f"{s_rad:,.0f} W/m²")
+                if s_mod is not None:
+                    summary_bits.append(f"{s_mod:.1f} °C")
+                if s_wnd is not None:
+                    summary_bits.append(f"{s_wnd:.1f} m/s")
                 parsed_devices.append({
                     'key': d_key,
                     'name': d_name,
                     'type': 'sensor',
-                    'summary': f"{s_rad:,.0f} W/m² · {s_mod if s_mod is not None else 0.0:.1f} °C · {s_wnd:.1f} m/s"
+                    'summary': " · ".join(summary_bits) if summary_bits else "SensorBox",
                 })
 
             else:

@@ -1,19 +1,94 @@
 <?php
 # --- file: summary.php ---
 /**
- * Period summaries (week / month / year / all-years) from daily_history / monthly_history.
+ * Period summaries (day / week / month / year / all-years) from rollup history.
  * Prev/next arrows wrap within available data periods (not used on All years).
- * (Day mode removed: a single daily_history bar is not useful; use analytics intraday for one day.)
+ * Gas adds an interval-volume day area chart; other metrics start at week or year.
  * metric=grid: import, export, and net (yellow). metric=peak: Fluvius Capacity peak kW (A12).
- * Default metric is solar yield. Chart order: week, month, year, then All years last.
+ * Gas / water use m3 volume. Default metric is solar yield.
+ * Solar week/month charts include a PVGIS daily-share line (A22).
  */
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
 require_once __DIR__ . '/capacity_peak.php';
+require_once __DIR__ . '/gas_water.php';
 
 $hp = hp_boot();
 hp_require_ready($hp);
 $dbFile = $hp['db'];
+
+/**
+ * Daily PVGIS share for a calendar date: expected_monthly(month) / days-in-that-month.
+ * Cached per YYYY-MM. Null when the month has no expected row.
+ *
+ * @param array<string, float|null> $cache
+ */
+function summary_pvgis_daily_share(PDO $pdo, string $dateYmd, array &$cache): ?float
+{
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateYmd)) {
+        return null;
+    }
+    $ym = substr($dateYmd, 0, 7);
+    if (array_key_exists($ym, $cache)) {
+        return $cache[$ym];
+    }
+    $year = (int)substr($ym, 0, 4);
+    $mNum = (int)substr($ym, 5, 2);
+    $daysInMonth = (int)(new DateTime(sprintf('%04d-%02d-01', $year, $mNum)))->format('t');
+    if ($daysInMonth < 1) {
+        $cache[$ym] = null;
+        return null;
+    }
+    try {
+        $exp = $pdo->prepare(
+            'SELECT expected_kwh FROM expected_monthly WHERE month = ? AND inclination = 30'
+        );
+        $exp->execute([$mNum]);
+        $er = $exp->fetch(PDO::FETCH_ASSOC);
+        if (!$er || $er['expected_kwh'] === null) {
+            $cache[$ym] = null;
+            return null;
+        }
+        $monthTotal = (float)$er['expected_kwh'];
+        if ($monthTotal <= 0) {
+            $cache[$ym] = null;
+            return null;
+        }
+        $cache[$ym] = $monthTotal / $daysInMonth;
+        return $cache[$ym];
+    } catch (Exception $e) {
+        $cache[$ym] = null;
+        return null;
+    }
+}
+
+/**
+ * Build expected[] aligned to $dates (YYYY-MM-DD), plus sum for stats.
+ *
+ * @param list<string> $dates
+ * @return array{expected: list<float|null>, expected_kwh: float|null}
+ */
+function summary_pvgis_for_dates(PDO $pdo, array $dates): array
+{
+    $cache = [];
+    $expected = [];
+    $sum = 0.0;
+    $any = false;
+    foreach ($dates as $d) {
+        $share = summary_pvgis_daily_share($pdo, $d, $cache);
+        if ($share === null) {
+            $expected[] = null;
+        } else {
+            $expected[] = round($share, 3);
+            $sum += $share;
+            $any = true;
+        }
+    }
+    return [
+        'expected' => $expected,
+        'expected_kwh' => $any ? round($sum, 2) : null,
+    ];
+}
 
 /**
  * @param PDO $pdo
@@ -82,12 +157,12 @@ function summary_iso_week_dates(string $weekLabel): array
 }
 
 /**
- * solar, grid, or peak (Capacity peak). Any other value stays on solar yield.
+ * Supported summary metric. Any other value stays on solar yield.
  */
 function summary_metric(): string
 {
     $metric = isset($_GET['metric']) ? (string)$_GET['metric'] : 'solar';
-    if ($metric === 'grid' || $metric === 'peak') {
+    if (in_array($metric, ['grid', 'peak', 'gas', 'water'], true)) {
         return $metric;
     }
     return 'solar';
@@ -157,7 +232,26 @@ if (isset($_GET['ajax'])) {
             $peakMonths = capacity_peak_months_display($pdo);
             $periods['peak_years'] = capacity_peak_years($peakMonths);
             $periods['peak_month_count'] = count($peakMonths);
+            $periods['gas_available'] = gw_gas_available($pdo);
+            $periods['water_available'] = gw_water_available($pdo);
             echo json_encode($periods);
+            exit;
+        }
+
+        // --- Gas day: interval volume area curve ---
+        if ($action === 'day' && isset($_GET['date']) && summary_metric() === 'gas') {
+            $date = (string)$_GET['date'];
+            $curve = gw_gas_day_curve($pdo, $date);
+            echo json_encode([
+                'period' => $date,
+                'label' => $date,
+                'metric' => 'gas',
+                'categories' => [],
+                'values' => $curve['points'],
+                'total_m3' => $curve['total_m3'],
+                'source' => $curve['source'],
+                'unit' => 'm3',
+            ]);
             exit;
         }
 
@@ -165,6 +259,20 @@ if (isset($_GET['ajax'])) {
         if ($action === 'week' && isset($_GET['week'])) {
             $week = (string)$_GET['week'];
             $days = summary_iso_week_dates($week);
+            $metric = summary_metric();
+            if ($metric === 'gas' || $metric === 'water') {
+                $series = gw_daily_series($pdo, $days, $metric . '_m3');
+                echo json_encode([
+                    'period' => $week,
+                    'label' => $week . ' (Mon-Sun)',
+                    'categories' => $series['categories'],
+                    'values' => $series['values'],
+                    'total_m3' => $series['total'],
+                    'metric' => $metric,
+                    'unit' => 'm3',
+                ]);
+                exit;
+            }
             if (summary_metric() === 'grid') {
                 // Seven slots, including days with no row. A missing register is a gap.
                 $categories = [];
@@ -212,6 +320,7 @@ if (isset($_GET['ajax'])) {
                 $peak[] = $row && $row['solar_peak_w'] !== null ? (float)$row['solar_peak_w'] : null;
                 $total += $y;
             }
+            $pvgis = summary_pvgis_for_dates($pdo, $days);
             echo json_encode([
                 'period' => $week,
                 'label' => $week . ' (Mon-Sun)',
@@ -219,6 +328,8 @@ if (isset($_GET['ajax'])) {
                 'yield' => $yield,
                 'peak' => $peak,
                 'total_kwh' => round($total, 2),
+                'expected' => $pvgis['expected'],
+                'expected_kwh' => $pvgis['expected_kwh'],
             ]);
             exit;
         }
@@ -228,6 +339,27 @@ if (isset($_GET['ajax'])) {
             $month = (string)$_GET['month']; // YYYY-MM
             if (!preg_match('/^\d{4}-\d{2}$/', $month)) {
                 echo json_encode(['error' => 'Invalid month']);
+                exit;
+            }
+            $metric = summary_metric();
+            if ($metric === 'gas' || $metric === 'water') {
+                $first = new DateTime($month . '-01');
+                $last = (clone $first)->modify('last day of this month');
+                $dates = [];
+                while ($first <= $last) {
+                    $dates[] = $first->format('Y-m-d');
+                    $first->modify('+1 day');
+                }
+                $series = gw_daily_series($pdo, $dates, $metric . '_m3');
+                echo json_encode([
+                    'period' => $month,
+                    'label' => $month,
+                    'categories' => $series['categories'],
+                    'values' => $series['values'],
+                    'total_m3' => $series['total'],
+                    'metric' => $metric,
+                    'unit' => 'm3',
+                ]);
                 exit;
             }
             if (summary_metric() === 'grid') {
@@ -283,7 +415,7 @@ if (isset($_GET['ajax'])) {
                     $maxPeak = $p;
                 }
             }
-            $expected = null;
+            $expectedMonth = null;
             try {
                 $mNum = (int)substr($month, 5, 2);
                 $exp = $pdo->prepare(
@@ -291,11 +423,13 @@ if (isset($_GET['ajax'])) {
                 );
                 $exp->execute([$mNum]);
                 $er = $exp->fetch(PDO::FETCH_ASSOC);
-                if ($er) {
-                    $expected = (float)$er['expected_kwh'];
+                if ($er && (float)$er['expected_kwh'] > 0) {
+                    $expectedMonth = (float)$er['expected_kwh'];
                 }
             } catch (Exception $e) {
             }
+            // Daily-share line for the chart; month total for stats (same as Settings month expected).
+            $pvgis = summary_pvgis_for_dates($pdo, $categories);
             echo json_encode([
                 'period' => $month,
                 'label' => $month,
@@ -304,13 +438,28 @@ if (isset($_GET['ajax'])) {
                 'peak' => $peak,
                 'total_kwh' => round($total, 2),
                 'peak_max_w' => $maxPeak,
-                'expected_kwh' => $expected,
+                'expected' => $pvgis['expected'],
+                'expected_kwh' => $expectedMonth,
             ]);
             exit;
         }
 
         // --- All years: one bar per calendar year + flat PVGIS year baseline ---
         if ($action === 'all') {
+            $metric = summary_metric();
+            if ($metric === 'gas' || $metric === 'water') {
+                $series = gw_all_years_series($pdo, $metric . '_m3');
+                echo json_encode([
+                    'period' => 'all',
+                    'label' => 'All years',
+                    'categories' => $series['categories'],
+                    'values' => $series['values'],
+                    'total_m3' => $series['total'],
+                    'metric' => $metric,
+                    'unit' => 'm3',
+                ]);
+                exit;
+            }
             if (summary_metric() === 'peak') {
                 $months = capacity_peak_months_display($pdo);
                 $agg = summary_peak_agg();
@@ -465,6 +614,20 @@ if (isset($_GET['ajax'])) {
             $year = (string)$_GET['year'];
             if (!preg_match('/^\d{4}$/', $year)) {
                 echo json_encode(['error' => 'Invalid year']);
+                exit;
+            }
+            $metric = summary_metric();
+            if ($metric === 'gas' || $metric === 'water') {
+                $series = gw_year_series($pdo, $year, $metric . '_m3');
+                echo json_encode([
+                    'period' => $year,
+                    'label' => $year,
+                    'categories' => $series['categories'],
+                    'values' => $series['values'],
+                    'total_m3' => $series['total'],
+                    'metric' => $metric,
+                    'unit' => 'm3',
+                ]);
                 exit;
             }
             if (summary_metric() === 'peak') {
@@ -700,6 +863,7 @@ if (isset($_GET['ajax'])) {
             <a id="nav-topn" href="topn.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">
                 <i data-lucide="trophy" class="w-3.5 h-3.5 text-amber-500"></i> Top-N
             </a>
+            <?= hp_nav_weather() ?>
             <?= hp_nav_settings() ?>
         </div>
     </header>
@@ -709,6 +873,8 @@ if (isset($_GET['ajax'])) {
             <button type="button" id="metric-solar" class="metric-on" aria-pressed="true" onclick="setMetric('solar')">Solar yield</button>
             <button type="button" id="metric-grid" aria-pressed="false" onclick="setMetric('grid')">Grid import / export</button>
             <button type="button" id="metric-peak" aria-pressed="false" onclick="setMetric('peak')">Capacity peak</button>
+            <button type="button" id="metric-gas" class="is-hidden" aria-pressed="false" onclick="setMetric('gas')">Gas</button>
+            <button type="button" id="metric-water" class="is-hidden" aria-pressed="false" onclick="setMetric('water')">Water</button>
         </div>
         <div id="bars-wrap" class="metric-switch is-hidden" role="group" aria-label="Grid bars">
             <button type="button" id="bars-all" class="metric-on" aria-pressed="true" onclick="setBars('all')">All</button>
@@ -719,6 +885,27 @@ if (isset($_GET['ajax'])) {
 
     <div id="summary-warning" class="hidden text-xs text-amber-600 bg-amber-50 border border-amber-200 p-3 rounded-xl">
         No daily rollups yet. Run <code>python3 rollup.py -buildall</code> (or <code>-daily</code>) first.
+    </div>
+
+    <!-- Gas only: interval volume for one day -->
+    <div id="card-day" class="card border-t-4 border-t-amber-500 is-hidden">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+            <h2 class="text-lg font-bold text-slate-900">Day</h2>
+            <div class="flex items-center gap-3">
+                <button type="button" class="jump-btn" onclick="goToCurrent('day')" title="Jump to today">Today</button>
+                <button type="button" class="nav-arrow" onclick="stepSection('day', -1)" aria-label="Previous day">
+                    <i data-lucide="chevron-left" class="w-5 h-5"></i>
+                </button>
+                <div class="min-w-[9rem] text-center">
+                    <div id="day-label" class="text-sm font-bold text-slate-900 font-mono">-</div>
+                </div>
+                <button type="button" class="nav-arrow" onclick="stepSection('day', 1)" aria-label="Next day">
+                    <i data-lucide="chevron-right" class="w-5 h-5"></i>
+                </button>
+            </div>
+        </div>
+        <div id="day-stats" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3 text-sm"></div>
+        <div id="chart-day" class="w-full h-[320px]"></div>
     </div>
 
     <!-- Week (hidden in Capacity peak mode) -->
@@ -805,13 +992,13 @@ if (isset($_GET['ajax'])) {
 <script>
     lucide.createIcons();
 
-    /** @type {{weeks: string[], months: string[], years: string[], peak_years?: string[], peak_month_count?: number}} */
+    /** @type {{dates?: string[], weeks: string[], months: string[], years: string[], peak_years?: string[], peak_month_count?: number, gas_available?: boolean, water_available?: boolean}} */
     let periods = { weeks: [], months: [], years: [], peak_years: [], peak_month_count: 0 };
-    /** @type {{week: string|null, month: string|null, year: string|null}} */
-    let current = { week: null, month: null, year: null };
-    /** @type {{all: any, week: any, month: any, year: any}} */
-    let charts = { all: null, week: null, month: null, year: null };
-    /** @type {'solar'|'grid'|'peak'} */
+    /** @type {{day: string|null, week: string|null, month: string|null, year: string|null}} */
+    let current = { day: null, week: null, month: null, year: null };
+    /** @type {{all: any, day: any, week: any, month: any, year: any}} */
+    let charts = { all: null, day: null, week: null, month: null, year: null };
+    /** @type {'solar'|'grid'|'peak'|'gas'|'water'} */
     let metric = 'solar';
     /** @type {'all'|'registers'|'net'} */
     let bars = 'all';
@@ -828,6 +1015,7 @@ if (isset($_GET['ajax'])) {
     };
 
     function keysFor(mode) {
+        if (mode === 'day') return (periods.dates || []).map(String);
         if (mode === 'week') return (periods.weeks || []).map(String);
         if (mode === 'month') return (periods.months || []).map(String);
         if (mode === 'year' && metric === 'peak') {
@@ -971,7 +1159,10 @@ if (isset($_GET['ajax'])) {
     function goToCurrent(mode) {
         const now = new Date();
         let want;
-        if (mode === 'week') {
+        if (mode === 'day') {
+            want = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0')
+                + '-' + String(now.getDate()).padStart(2, '0');
+        } else if (mode === 'week') {
             want = isoWeekKey(now);
         } else if (mode === 'month') {
             want = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
@@ -1002,16 +1193,39 @@ if (isset($_GET['ajax'])) {
         `).join('');
     }
 
-    function setBarChart(mode, categories, seriesData, name) {
+    /**
+     * Yield bars with optional PVGIS daily-share line (A22 week/month).
+     *
+     * @param {string} mode
+     * @param {string[]} categories
+     * @param {number[]} seriesData
+     * @param {string} name
+     * @param {Array<number|null>|undefined} expected
+     */
+    function setBarChart(mode, categories, seriesData, name, expected) {
         const host = document.querySelector('#chart-' + mode);
         if (charts[mode]) { charts[mode].destroy(); charts[mode] = null; }
+        const exp = Array.isArray(expected) ? expected : [];
+        const hasExpected = exp.some((v) => v != null && Number(v) > 0);
+        const series = [{ name: name, type: 'column', data: seriesData }];
+        if (hasExpected) {
+            series.push({ name: 'PVGIS expected', type: 'line', data: exp });
+        }
         charts[mode] = new ApexCharts(host, {
             ...baseChartOptions,
-            series: [{ name: name, data: seriesData }],
-            chart: { ...baseChartOptions.chart, type: 'bar', height: 320 },
-            colors: ['#10b981'],
+            series: series,
+            chart: { type: 'line', height: 320, toolbar: { show: false }, animations: { enabled: false } },
+            stroke: hasExpected
+                ? { width: [0, 3], curve: 'straight', dashArray: [0, 8] }
+                : { width: [0], curve: 'straight' },
+            colors: hasExpected ? ['#10b981', '#cbd5e1'] : ['#10b981'],
             xaxis: { ...baseChartOptions.xaxis, categories: categories },
-            tooltip: { y: { formatter: (v) => `${Number(v).toFixed(2)} kWh` } }
+            yaxis: { title: { text: 'Yield (kWh)', style: { color: '#94a3b8', fontSize: '10px' } } },
+            tooltip: {
+                shared: true,
+                intersect: false,
+                y: { formatter: (v) => (v == null || Number.isNaN(Number(v)) ? '-' : `${Number(v).toFixed(2)} kWh`) }
+            }
         });
         charts[mode].render();
     }
@@ -1070,12 +1284,22 @@ if (isset($_GET['ajax'])) {
         return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 3 })} kW`;
     }
 
+    /**
+     * @param {number|null|undefined} value
+     * @returns {string}
+     */
+    function fmtM3(value) {
+        if (value == null || Number.isNaN(Number(value))) return '-';
+        return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 3 })} m3`;
+    }
+
     function metricQuery() {
         if (metric === 'grid') return '&metric=grid';
         if (metric === 'peak') {
             const agg = peakAgg === 'avg' ? '&peak_agg=avg' : '';
             return '&metric=peak' + agg;
         }
+        if (metric === 'gas' || metric === 'water') return '&metric=' + metric;
         return '';
     }
 
@@ -1083,18 +1307,32 @@ if (isset($_GET['ajax'])) {
         const solarBtn = document.getElementById('metric-solar');
         const gridBtn = document.getElementById('metric-grid');
         const peakBtn = document.getElementById('metric-peak');
+        const gasBtn = document.getElementById('metric-gas');
+        const waterBtn = document.getElementById('metric-water');
+        gasBtn.classList.toggle('is-hidden', !periods.gas_available);
+        waterBtn.classList.toggle('is-hidden', !periods.water_available);
         solarBtn.classList.toggle('metric-on', metric === 'solar');
         gridBtn.classList.toggle('metric-on', metric === 'grid');
         peakBtn.classList.toggle('metric-on', metric === 'peak');
+        gasBtn.classList.toggle('metric-on', metric === 'gas');
+        waterBtn.classList.toggle('metric-on', metric === 'water');
         solarBtn.setAttribute('aria-pressed', metric === 'solar' ? 'true' : 'false');
         gridBtn.setAttribute('aria-pressed', metric === 'grid' ? 'true' : 'false');
         peakBtn.setAttribute('aria-pressed', metric === 'peak' ? 'true' : 'false');
+        gasBtn.setAttribute('aria-pressed', metric === 'gas' ? 'true' : 'false');
+        waterBtn.setAttribute('aria-pressed', metric === 'water' ? 'true' : 'false');
+        document.getElementById('card-day').classList.toggle('is-hidden', metric !== 'gas');
         document.getElementById('card-week').classList.toggle('is-hidden', metric === 'peak');
         document.getElementById('card-month').classList.toggle('is-hidden', metric === 'peak');
         const blurb = document.getElementById('summary-blurb');
         const allBlurb = document.getElementById('all-blurb');
         const topn = document.getElementById('nav-topn');
-        if (metric === 'grid') {
+        if (metric === 'gas' || metric === 'water') {
+            const label = metric === 'gas' ? 'Gas' : 'Water';
+            blurb.textContent = label + ' volume (m3) by period';
+            allBlurb.textContent = label + ' volume per calendar year';
+            topn.href = 'topn.php?metric=' + metric;
+        } else if (metric === 'grid') {
             blurb.textContent = 'Import, export, and net (yellow) bars for week, month, year, and all years';
             allBlurb.textContent = 'Import, export, and net (yellow) per calendar year';
             topn.href = 'topn.php?metric=grid' + (bars === 'all' ? '' : '&bars=' + encodeURIComponent(bars));
@@ -1137,13 +1375,61 @@ if (isset($_GET['ajax'])) {
 
     function writeViewUrl() {
         const url = new URL(window.location.href);
-        if (metric === 'grid' || metric === 'peak') url.searchParams.set('metric', metric);
+        if (metric !== 'solar') url.searchParams.set('metric', metric);
         else url.searchParams.delete('metric');
         if (bars === 'all') url.searchParams.delete('bars');
         else url.searchParams.set('bars', bars);
         if (metric === 'peak' && peakAgg === 'avg') url.searchParams.set('peak_agg', 'avg');
         else url.searchParams.delete('peak_agg');
         history.replaceState(null, '', url);
+    }
+
+    /**
+     * Volume bars for gas or water.
+     *
+     * @param {string} chartKey
+     * @param {string} hostSel
+     * @param {string[]} categories
+     * @param {Array<number|null>} values
+     */
+    function setVolumeBars(chartKey, hostSel, categories, values) {
+        const host = document.querySelector(hostSel);
+        if (charts[chartKey]) { charts[chartKey].destroy(); charts[chartKey] = null; }
+        const label = metric === 'gas' ? 'Gas' : 'Water';
+        const color = metric === 'gas' ? '#d97706' : '#06b6d4';
+        charts[chartKey] = new ApexCharts(host, {
+            ...baseChartOptions,
+            series: [{ name: label + ' (m3)', data: values }],
+            chart: { ...baseChartOptions.chart, type: 'bar', height: 320, toolbar: { show: false } },
+            colors: [color],
+            plotOptions: { bar: { borderRadius: 3, columnWidth: '72%' } },
+            xaxis: { ...baseChartOptions.xaxis, categories: categories },
+            yaxis: { ...baseChartOptions.yaxis, min: 0, title: { text: 'm3' } },
+            tooltip: { y: { formatter: (v) => fmtM3(v) } }
+        });
+        charts[chartKey].render();
+    }
+
+    /**
+     * Filled interval-volume area chart for one gas day.
+     *
+     * @param {Array<[number, number|null]>} points
+     */
+    function setGasDayArea(points) {
+        const host = document.querySelector('#chart-day');
+        if (charts.day) { charts.day.destroy(); charts.day = null; }
+        charts.day = new ApexCharts(host, {
+            ...baseChartOptions,
+            series: [{ name: 'Gas interval (m3)', data: points }],
+            chart: { ...baseChartOptions.chart, type: 'area', height: 320, toolbar: { show: false } },
+            colors: ['#d97706'],
+            stroke: { curve: 'stepline', width: 2 },
+            fill: { type: 'solid', opacity: 0.35 },
+            xaxis: { type: 'datetime', labels: { datetimeUTC: false } },
+            yaxis: { ...baseChartOptions.yaxis, min: 0, title: { text: 'm3' } },
+            tooltip: { x: { format: 'HH:mm' }, y: { formatter: (v) => fmtM3(v) } }
+        });
+        charts.day.render();
     }
 
     /**
@@ -1259,11 +1545,21 @@ if (isset($_GET['ajax'])) {
         if (gen !== loadGen) return;
         if (data.error || !(data.categories || []).length) {
             clearChart('all');
-            if (metric === 'grid') {
+            if (metric === 'gas' || metric === 'water') {
+                renderStats('all-stats', [{ label: metric === 'gas' ? 'Gas' : 'Water', value: 'No volume data' }]);
+            } else if (metric === 'grid') {
                 renderStats('all-stats', [{ label: 'Grid', value: 'No import / export' }]);
             } else if (metric === 'peak') {
                 renderStats('all-stats', [{ label: 'Capacity peak', value: 'No Fluvius months' }]);
             }
+            return;
+        }
+        if (metric === 'gas' || metric === 'water') {
+            renderStats('all-stats', [
+                { label: 'Lifetime', value: fmtM3(data.total_m3) },
+                { label: 'Years', value: String((data.categories || []).length) }
+            ]);
+            setVolumeBars('all', '#chart-all', data.categories || [], data.values || []);
             return;
         }
         if (metric === 'peak') {
@@ -1312,6 +1608,7 @@ if (isset($_GET['ajax'])) {
         document.getElementById(mode + '-label').textContent = key;
 
         let url = '';
+        if (mode === 'day') url = `summary.php?ajax=day&date=${encodeURIComponent(key)}`;
         if (mode === 'week') url = `summary.php?ajax=week&week=${encodeURIComponent(key)}`;
         if (mode === 'month') url = `summary.php?ajax=month&month=${encodeURIComponent(key)}`;
         if (mode === 'year') url = `summary.php?ajax=year&year=${encodeURIComponent(key)}`;
@@ -1322,6 +1619,25 @@ if (isset($_GET['ajax'])) {
         if (ticket !== loadGen) return;
         if (data.error) return;
         document.getElementById(mode + '-label').textContent = data.label || key;
+
+        if (metric === 'gas' && mode === 'day') {
+            renderStats('day-stats', [
+                { label: 'Total gas', value: fmtM3(data.total_m3) },
+                { label: 'Source', value: String(data.source || 'none').replace(/_/g, ' ') }
+            ]);
+            setGasDayArea(data.values || []);
+            return;
+        }
+
+        if (metric === 'gas' || metric === 'water') {
+            const countLabel = mode === 'year' ? 'Months' : 'Days';
+            renderStats(mode + '-stats', [
+                { label: (metric === 'gas' ? 'Gas' : 'Water') + ' total', value: fmtM3(data.total_m3) },
+                { label: countLabel, value: String((data.categories || []).length) }
+            ]);
+            setVolumeBars(mode, '#chart-' + mode, data.categories || [], data.values || []);
+            return;
+        }
 
         if (metric === 'peak') {
             if (mode !== 'year') return;
@@ -1352,16 +1668,17 @@ if (isset($_GET['ajax'])) {
                 { label: 'Total yield', value: `${Number(data.total_kwh).toFixed(2)} kWh` },
                 { label: 'Days', value: String((data.categories || []).length) }
             ];
-            if (mode === 'month' && data.expected_kwh != null) {
-                stats.push({ label: 'PVGIS month', value: `${Number(data.expected_kwh).toFixed(1)} kWh` });
-                const pct = data.expected_kwh > 0 ? (100 * data.total_kwh / data.expected_kwh) : 0;
+            if (data.expected_kwh != null && Number(data.expected_kwh) > 0) {
+                const pvgisLabel = mode === 'week' ? 'PVGIS week' : 'PVGIS month';
+                stats.push({ label: pvgisLabel, value: `${Number(data.expected_kwh).toFixed(1)} kWh` });
+                const pct = 100 * data.total_kwh / data.expected_kwh;
                 stats.push({ label: 'vs PVGIS', value: `${pct.toFixed(1)} %` });
             }
             if (data.peak_max_w != null) {
                 stats.push({ label: 'Peak', value: `${Math.round(data.peak_max_w)} W` });
             }
             renderStats(mode + '-stats', stats);
-            setBarChart(mode, data.categories, data.yield, 'Yield (kWh)');
+            setBarChart(mode, data.categories, data.yield, 'Yield (kWh)', data.expected);
             return;
         }
 
@@ -1388,6 +1705,10 @@ if (isset($_GET['ajax'])) {
 
     async function reloadCharts() {
         const gen = ++loadGen;
+        if (metric === 'gas' && current.day) {
+            await loadSection('day', gen);
+            if (gen !== loadGen) return;
+        }
         if (metric !== 'peak') {
             if (current.week) await loadSection('week', gen);
             if (gen !== loadGen) return;
@@ -1400,7 +1721,7 @@ if (isset($_GET['ajax'])) {
     }
 
     function setMetric(next) {
-        const chosen = next === 'grid' || next === 'peak' ? next : 'solar';
+        const chosen = ['grid', 'peak', 'gas', 'water'].includes(next) ? next : 'solar';
         if (chosen === metric) return;
         metric = chosen;
         if (metric === 'peak') {
@@ -1447,13 +1768,18 @@ if (isset($_GET['ajax'])) {
     document.addEventListener('DOMContentLoaded', async () => {
         const params0 = new URLSearchParams(window.location.search);
         const m0 = params0.get('metric');
-        metric = m0 === 'grid' || m0 === 'peak' ? m0 : 'solar';
+        metric = ['grid', 'peak', 'gas', 'water'].includes(m0) ? m0 : 'solar';
         const bars0 = params0.get('bars');
         bars = bars0 === 'registers' || bars0 === 'net' ? bars0 : 'all';
         peakAgg = params0.get('peak_agg') === 'avg' ? 'avg' : 'max';
         paintMetricSwitch();
         const res = await fetch('summary.php?ajax=meta');
         periods = await res.json();
+        if ((metric === 'gas' && !periods.gas_available) || (metric === 'water' && !periods.water_available)) {
+            metric = 'solar';
+            writeViewUrl();
+        }
+        paintMetricSwitch();
         const hasRollups = !periods.error
             && ((periods.weeks || []).length || (periods.months || []).length || (periods.years || []).length);
         const hasPeak = (periods.peak_month_count || 0) > 0
@@ -1469,6 +1795,7 @@ if (isset($_GET['ajax'])) {
             lucide.createIcons();
             return;
         }
+        current.day = (periods.dates || []).length ? periods.dates[periods.dates.length - 1] : null;
         current.week = periods.weeks.length ? periods.weeks[periods.weeks.length - 1] : null;
         current.month = periods.months.length ? periods.months[periods.months.length - 1] : null;
         if (metric === 'peak') {

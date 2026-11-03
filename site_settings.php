@@ -448,6 +448,44 @@ function hp_nav_settings(): string
 }
 
 /**
+ * True when top_records has at least one weather single (A11 nav gate).
+ * Empty set => hide Weather link; matches weather.php "No weather records yet".
+ */
+function hp_weather_nav_available(?PDO $pdo = null): bool
+{
+    try {
+        $db = $pdo ?? hp_pdo();
+        $stmt = $db->query(
+            "SELECT 1 FROM top_records
+             WHERE record_id IN (
+                 'max_wind_ms', 'max_temp_c', 'min_temp_c', 'max_module_temp_c'
+             )
+             AND record_value IS NOT NULL
+             LIMIT 1"
+        );
+        return $stmt !== false && $stmt->fetchColumn() !== false;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+/**
+ * Weather nav pill, or empty when there are no weather top_records yet.
+ */
+function hp_nav_weather(bool $current = false): string
+{
+    if (!hp_weather_nav_available()) {
+        return '';
+    }
+    if ($current) {
+        return '<span class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-sky-600 text-white shadow-sm">'
+            . '<i data-lucide="cloud-sun" class="w-3.5 h-3.5"></i> Weather</span>';
+    }
+    return '<a href="weather.php" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 shadow-sm transition-all">'
+        . '<i data-lucide="cloud-sun" class="w-3.5 h-3.5 text-sky-500"></i> Weather</a>';
+}
+
+/**
  * A15 live integrations (Fluvius is CSV-only and has no active flag).
  *
  * @return array<string, string> id => active settings key

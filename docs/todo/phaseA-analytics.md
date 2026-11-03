@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
-# Phase A (continued) — Analytics UI + plant config
+# Phase A (continued) â Analytics UI + plant config
 
-**Status:** **A4**-**A21 Done**; **A11** queued. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-11-03 (**A14** + **A21** closed)  
+**Status:** **A4**-**A21 Done**; **A11** shipped (awaiting close); **A22** kickoff. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-11-03 (**A22** kickoff)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py`
 
 ---
@@ -19,7 +19,7 @@
 | **A8** | Done | Live chart clock window. Product: [`docs/architecture.md`](../architecture.md) |
 | **A9** | Done | Settings encrypted backup download + restore. Product: [`docs/architecture.md`](../architecture.md) |
 | **A10** | Done | Warehouse rebuild. Product: [`docs/architecture.md`](../architecture.md) (Rollup CLI) |
-| **A11** | open | Historical gas, wind, and similar series on the pages. Not P3. Not kicked off |
+| **A11** | Shipped | Historical gas, water, weather page; awaiting close |
 | **A12** | Done | Capacity peak on summary + top-n. Product: [`docs/architecture.md`](../architecture.md) |
 | **A13** | Done | Grid import/export on summary and top-n. Product: [`docs/architecture.md`](../architecture.md) |
 | **A14** | Done | Virtual kWh meters: Settings + calc + debug. Product: [`docs/architecture.md`](../architecture.md) |
@@ -30,14 +30,48 @@
 | **A19** | Done | Analytics explorer: calendar-day **Today** preset (default). Product: [`docs/architecture.md`](../architecture.md) |
 | **A20** | Done | Settings locked-by-default / Unlock timed window. Product: [`docs/architecture.md`](../architecture.md) |
 | **A21** | Done | Raw Meter Registers: virtual meters + optional rows. Product: [`docs/architecture.md`](../architecture.md) |
+| **A22** | coding | bugfix: analytics load; Virtual 'best-day' -> Top-N; PVGIS week/month |
 
-**Parallel:** **A14**-**A21** Done. **A11** Fluvius gas / wind.
+**Parallel:** **A14**-**A21** Done. **A11** Fluvius gas / wind. **A22** UI bugfix bundle (powertests dropped).
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
 ---
 
 ## Verbatim inbox
+
+### 2026-11-03 - A22 implement (Q2 locked)
+
+> fix in this scope
+
+Q2 load/blank-chart scope accepted. Coding authorized.
+
+### 2026-11-03 - A22 kickoff answers (partial; Q2 advice)
+
+> 1: blank charts
+> 2: ??
+> 3: ok
+> 4: ok
+
+Q1/Q3/Q4 locked. Q2 advice accepted on implement command.
+
+### 2026-11-03 - A22 kickoff (rename lock + drop powertests)
+
+> not "Best-day envelope" but "Virtual 'best-day'"
+> drop move powertests
+> kickoff
+
+Powertests item dropped from **A22**. UI rename locked: **Virtual 'best-day'**. Open Qs in A22 section.
+
+### 2026-11-03 - triage A22 (UI bugfix bundle)
+
+> triage into 1 bugix phase:
+> move powertests icon to settings page
+> analytics page: often doenst load or loads slow
+> clear-sky envelopes: rename (give proposal) & move to top-n: give advice
+> PVGIS shows on all years & year but not week & month
+
+Placed: **A22** (affinity **A**). Powertests later dropped at kickoff. No code until kickoff locks + `implement`.
 
 ### 2026-11-03 - close A14 + A21
 
@@ -180,7 +214,7 @@ Operator: fold into **Ops5** (replaces Hyper Backup scope). Detail: [`roadmap.md
 > - add , next to PV power generation, power pull from net and net power usage (more or less the graph like HomeWizard-graph.jpg - image is saved in \docs\todo in repo)
 > - add to .env (or maybe split env and config, to assess at kickoff): max converter power (and remove spikes based on this), expected power generation for the plant (now hardcoded)
 
-### 2026-10-23 — A4 kickoff answers + top_records triage
+### 2026-10-23 â A4 kickoff answers + top_records triage
 
 > 1: top 20 day, top 10 mointh & year
 > 2: ??
@@ -193,11 +227,11 @@ Operator: fold into **Ops5** (replaces Hyper Backup scope). Detail: [`roadmap.md
 > 2A
 > 7B + add to triage to either drop or change
 
-### 2026-10-25 — fold into A6
+### 2026-10-25 â fold into A6
 
 > A6: fold into this: configuration page to configure all this, including everything that is in .env / give options, suggestions, base on industry standard
 
-### 2026-10-25 — A6 answers (configure all)
+### 2026-10-25 â A6 answers (configure all)
 
 > when this is deplyed on a new machine, the user does not have access to .env - how does a new user configure passwords?
 > I want the user to be able to confug ALL
@@ -205,40 +239,40 @@ Operator: fold into **Ops5** (replaces Hyper Backup scope). Detail: [`roadmap.md
 > 4: spike = max inverter AC 105M
 > 5 also on the pase
 
-### 2026-10-25 — A6 admin password
+### 2026-10-25 â A6 admin password
 
 > 1: admin password - if no admin yet (current .env): ask at first page open
 > 2: don't show passwords, show * (stars), but allow the pws to be changed, then entering the admin pw is needed
 
-### 2026-10-25 — A6 password edit + save gate
+### 2026-10-25 â A6 password edit + save gate
 
 > password fields: are NOT editable unless right-click on them and choose "edit", then a modal appears where the admin pw is asked - then the field becomes editable and can be saved
 > 1: Admin password on every settings save: yes
 > 2: admin pw first, then config page
 
-### 2026-10-25 — A6 password fields (unset + Edit control)
+### 2026-10-25 â A6 password fields (unset + Edit control)
 
 > 1: if unset: direct edit will be possible (save still requires admin pw)
 > 2: yes, no right-click
 
-### 2026-10-25 — A6 empty password + change admin password
+### 2026-10-25 â A6 empty password + change admin password
 
 > 1: if left empty: do not change pw
 > 2: yes: change admin pw opens a modal: current pw, enter new pw twice, then enter
 
-### 2026-10-25 — triage (live chart axis)
+### 2026-10-25 â triage (live chart axis)
 
 > triage: live dashboard: Solar & Consumption Profile (Last 2 Hours)
 > 	make sure the X-asis is to scale: display only last 2 hours and if there is no reading, don't display a line there
 > 	change the viewport: not just 2 hours, but allow to zoom in/out to max 1 week of 1-minute data
 > 	so remove the " (Last 2 Hours)" from the title
 
-### 2026-10-25 — triage (DB backup)
+### 2026-10-25 â triage (DB backup)
 
 > also triage: download backup of entire DB, same functionality/way of working as the budget download
 > ask questions
 
-### 2026-10-25 — A9 answers
+### 2026-10-25 â A9 answers
 
 > DB_BACKUP_ENCRYPTION_KEY will stay in .env - after A6 this is the only variable that stays in .env (it is not user configurable)
 > 1: new letter: A9
@@ -249,12 +283,12 @@ Operator: fold into **Ops5** (replaces Hyper Backup scope). Detail: [`roadmap.md
 > 6: in .env, not comitted to GIT
 > 7: plain sql in the DB only - synctool already copies fo local PC: confirm
 
-### 2026-10-25 — A9 gate + sync pull
+### 2026-10-25 â A9 gate + sync pull
 
 > 1: when download and restore: ask for admin pw
 > 2: yes, p1-sync should also pull the db
 
-### 2026-10-27 — A8 / A9 kickoff answers
+### 2026-10-27 â A8 / A9 kickoff answers
 
 Questions were: (1) zoom (2) X-axis when the window is not full (3) gap rule (4) titles (5) browser file (6) restore swap (7) when the synctool pulls.
 
@@ -268,16 +302,16 @@ Questions were: (1) zoom (2) X-axis when the window is not full (3) gap rule (4)
 > 6A + ask very specifically whether the user is sure to restore and that eveyrthing currently iin the DB will be destroyed
 > 7A
 
-### 2026-10-27 — A9 filename + who creates it
+### 2026-10-27 â A9 filename + who creates it
 
 > 1: timestamped copy - all copies remain (pull only)
 > 2: backup is created by PHP, then sync copies all .bak (filename meter_history.db.<timestamp>.bak eg meter_history.db.261027-083600.bak
 
-### 2026-10-27 — A9 download is the encrypted zip
+### 2026-10-27 â A9 download is the encrypted zip
 
 > well, as with budget, that bak must be zipped and encrypted with the DB_BACKUP_ENCRYPTION_KEY in .env - that zipped and encrypted file must be downloaded, not the actual backup - the bacup is deleted, ony the zipped/encrypted file is downloaded
 
-### 2026-10-27 — A9 no synctool pull
+### 2026-10-27 â A9 no synctool pull
 
 > well, actually, the synctool will never pull that backup
 > since: button click -> sql backup -> zip -> encrypt -> download -> bak & encrypted files on source are deleted -> nothing to sync by tool
@@ -285,14 +319,14 @@ Questions were: (1) zoom (2) X-axis when the window is not full (3) gap rule (4)
 
 ---
 
-## A4 — Top-N days / months / years + graphs
+## A4 â Top-N days / months / years + graphs
 
 **Status:** **Done** 2026-10-25  
 **Product:** [`docs/architecture.md`](../architecture.md) (`topn.php`, `top_periods`).
 
 ### Done summary
 
-Best/worst yield rankings (20 days, 10 months, 10 years) in `top_periods` via `-buildall` and `-daily`; UI `topn.php` with click-through. Worst days exclude yield ≤ 0 and today. `top_records` unchanged → **A7**. `rollup.py -today` was removed in **A10**.
+Best/worst yield rankings (20 days, 10 months, 10 years) in `top_periods` via `-buildall` and `-daily`; UI `topn.php` with click-through. Worst days exclude yield â¤ 0 and today. `top_records` unchanged â **A7**. `rollup.py -today` was removed in **A10**.
 
 ### DoD
 
@@ -305,7 +339,7 @@ Best/worst yield rankings (20 days, 10 months, 10 years) in `top_periods` via `-
 
 ---
 
-## A5 — Multi-series power (PV / grid pull / home usage)
+## A5 â Multi-series power (PV / grid pull / home usage)
 
 **Status:** **Done** 2026-10-27  
 **Product:** [`docs/architecture.md`](../architecture.md) (live + analytics Balance/Classic)  
@@ -313,20 +347,20 @@ Best/worst yield rankings (20 days, 10 months, 10 years) in `top_periods` via `-
 
 ### Done summary
 
-Balance vs Classic on `index.php` and `analytics.php` (default Balance). Three painted W bands: Self-sufficient, Grid, Surplus. Production and Consumption are stack-outline composites (legend split dots + tooltip). Fluvius quarter kWh → average W on analytics when P1 grid is missing; ≤2 missing 5-min slots bridged. Overlay and envelope stay solar-only. No vendor product name in UI. Windowed explorer / index pulse / mixed 1-min+5-min → **A5b**.
+Balance vs Classic on `index.php` and `analytics.php` (default Balance). Three painted W bands: Self-sufficient, Grid, Surplus. Production and Consumption are stack-outline composites (legend split dots + tooltip). Fluvius quarter kWh â average W on analytics when P1 grid is missing; â¤2 missing 5-min slots bridged. Overlay and envelope stay solar-only. No vendor product name in UI. Windowed explorer / index pulse / mixed 1-min+5-min â **A5b**.
 
 ### DoD
 
 - [x] Balance formulas, paint rule, mode switch, Fluvius derive on analytics day
 - [x] Product docs (`architecture.md`)
-- [x] Operator close → A5b
+- [x] Operator close â A5b
 
-### Locks (operator 2026-10-27) — shipped
+### Locks (operator 2026-10-27) â shipped
 
 | # | Lock |
 |---|---|
 | 1 | Both pages (superseded for layout by **A5b**; formulas stay). |
-| 2–10 | Chart model, W, Fluvius derive, decomposition, overlay/envelope solar-only, mode switch, default Balance, five series with three painted, no vendor name. |
+| 2â10 | Chart model, W, Fluvius derive, decomposition, overlay/envelope solar-only, mode switch, default Balance, five series with three painted, no vendor name. |
 
 **Formulas** (unchanged; A5b reuses):
 
@@ -337,7 +371,7 @@ Balance vs Classic on `index.php` and `analytics.php` (default Balance). Three p
 - **Grid** = `max(0, consumption - production)`
 - **Surplus** = `max(0, production - consumption)`
 
-### Verbatim — 2026-10-27 (kickoff)
+### Verbatim â 2026-10-27 (kickoff)
 
 > 1: both
 > 2: HW-style
@@ -357,7 +391,7 @@ Balance vs Classic on `index.php` and `analytics.php` (default Balance). Three p
 
 ---
 
-## A5b — Balance explorer (window, pan, mixed resolution)
+## A5b â Balance explorer (window, pan, mixed resolution)
 
 **Status:** **Done** 2026-10-27  
 **Product:** [`docs/architecture.md`](../architecture.md) (UI map: index / analytics / Settings CSV) - `explorer_chart.php` - `balance_chart.php` - `live_chart.php`  
@@ -377,20 +411,20 @@ Analytics owns the power explorer: rolling presets 15 m-7 d, **Reset view**, pan
 - [x] Product docs (`architecture.md`, README, roadmap)
 - [x] Operator close
 
-### Locks (operator 2026-10-27) — shipped
+### Locks (operator 2026-10-27) â shipped
 
 | # | Lock |
 |---|---|
 | 1 | **Index:** 2 h live pulse (**Exchange** default; Balance / Classic via switch). Analytics link matches top-nav pattern. |
-| 2 | **Analytics:** presets 15 m–7 d; default **6 h** ending now; **Reset view**; Balance split-dot legend. |
+| 2 | **Analytics:** presets 15 mâ7 d; default **6 h** ending now; **Reset view**; Balance split-dot legend. |
 | 3 | **Pan:** one full window step. |
-| 4 / 4a | Mixed resolution per bucket; **V — visible only**. |
+| 4 / 4a | Mixed resolution per bucket; **V â visible only**. |
 | 5 | Classic and Exchange share windows / pan / deep links. |
 | 6 | Deep link `range`, `from`/`to`; `view=balance|classic` (Exchange default omits `view`). |
 | 7 | Telemetry table off index; 1-min CSV on Settings beside backup (A20 later moved CSV to Readings export, no password). |
 | 8 | Not in scope: dropping `history_5min` / `readings`; overlay/envelope changes. |
 
-### Verbatim — 2026-10-27
+### Verbatim â 2026-10-27
 
 > why wouldn't we move the 1min energy balance table to the analytics page and remove that 5min table? and add filters and date selectors and defaults : 15 min, 1 h, 2 h, 6 h, 24 h, 7 d - and add arrows left/right to pan the view
 > assess and propose
@@ -414,20 +448,20 @@ Analytics owns the power explorer: rolling presets 15 m-7 d, **Reset view**, pan
 
 ---
 
-## A6 — Settings page
+## A6 â Settings page
 
 **Status:** **Done** 2026-10-26
-**Product:** [`docs/architecture.md`](../architecture.md) (Settings, config split) · [`docs/deploy.md`](../deploy.md) (runtime `.env`)
+**Product:** [`docs/architecture.md`](../architecture.md) (Settings, config split) Â· [`docs/deploy.md`](../deploy.md) (runtime `.env`)
 
 ### Done summary
 
 - The page configures the current `.env` keys, including `SMA_PASSWORD`, `SUNNYWEBBOX_PASSWORD`, and the Sunny Portal user, password, plant id, and timezone, plus plant settings. **Exception (2026-10-25, A9):** `DB_BACKUP_ENCRYPTION_KEY` stays in `.env`. It is the only variable that remains there after A6. It is not on the settings page, not imported into SQLite, and not committed. `.env.example` may name the key; the real value stays on the host. Sunny Portal fields are optional on save. `SUNNYPORTAL_*` is copied when that settings key is still absent (a leftover `ENNEXOS_*` name for the same value still counts). A saved empty Sunny Portal row is not overwritten.
 - Expected generation: **12 monthly kWh values** only. No kWp, azimuth, or tilt field in this phase. Storage stays `expected_monthly` (existing `inclination = 30` key so current readers keep working).
-- Spike cap = **max inverter AC × 1.05**. Reading of “105M” as 105%. Operator enters max inverter AC watts; the page shows the computed cap. Replaces hardcoded `MAX_PLAUSIBLE_PAC_W` (12 kW) in `rollup.py` and `analytics.php`.
+- Spike cap = **max inverter AC Ã 1.05**. Reading of â105Mâ as 105%. Operator enters max inverter AC watts; the page shows the computed cap. Replaces hardcoded `MAX_PLAUSIBLE_PAC_W` (12 kW) in `rollup.py` and `analytics.php`.
 - Night / shoulder gates are on the same page. Defaults match the code today (`rollup.py` `sql_pac_plausible`, `analytics.php` `sanitize_pac_w`):
   - Deep night: hour `>= 22` or `< 5` (PAC dropped).
-  - Shoulder: hour `>= 20` or `< 6`, and only when `solar_radiation <= 5` W/m² (PAC dropped).
-  - Radiation floor default `5` W/m² (`PAC_RAD_FLOOR`).
+  - Shoulder: hour `>= 20` or `< 6`, and only when `solar_radiation <= 5` W/mÂ² (PAC dropped).
+  - Radiation floor default `5` W/mÂ² (`PAC_RAD_FLOOR`).
 - **Admin password (A6):** first open creates it (enter + confirm). Graph pages have no standing login session. **Unlock / Save / device-password Edit UX was replaced by A20** - current rules: [`docs/architecture.md`](../architecture.md) (Settings).
 - **New install / current host:** admin first; new install without P1 stays on Settings until saved. `.env` holds `DB_BACKUP_ENCRYPTION_KEY` only.
 
@@ -450,7 +484,7 @@ SQLite in `meter_history.db` (web user and poller can both open it). PHP does no
 
 ---
 
-## A7 — `top_records` on Top-N
+## A7 â `top_records` on Top-N
 
 **Status:** **Done** 2026-10-27  
 **Product:** [`docs/architecture.md`](../architecture.md) (`topn.php`, Rollup CLI)
@@ -467,15 +501,15 @@ All-time singles live in `top_records` and on `topn.php` (above the rankings). E
 - [x] Product docs (`architecture.md` / roadmap)
 - [x] Operator close
 
-### Verbatim — 2026-10-27 (close)
+### Verbatim â 2026-10-27 (close)
 
 > close A7
 
-### Verbatim — 2026-10-23 (triage origin)
+### Verbatim â 2026-10-23 (triage origin)
 
 > 7B + add to triage to either drop or change
 
-### Verbatim — 2026-10-27 (kickoff)
+### Verbatim â 2026-10-27 (kickoff)
 
 > -daily should refresh: check if last 2 days readings are higher than what is in the table already and if it is: replace
 > add switch -buildalltoprecords so that we don't have to rebuild all, only this
@@ -494,7 +528,7 @@ All-time singles live in `top_records` and on `topn.php` (above the rankings). E
 
 ---
 
-## A8 — Live chart time axis + zoom
+## A8 â Live chart time axis + zoom
 
 **Status:** **Done** 2026-10-27  
 **Product:** [`docs/architecture.md`](../architecture.md) (live chart on `index.php`).
@@ -511,10 +545,10 @@ The live power chart uses a clock window of 1-minute `readings`. Presets are 15 
 
 ---
 
-## A9 — Full DB download + restore
+## A9 â Full DB download + restore
 
 **Status:** **Done** 2026-10-27  
-**Product:** [`docs/architecture.md`](../architecture.md) (Settings backup) · [`docs/deploy.md`](../deploy.md)
+**Product:** [`docs/architecture.md`](../architecture.md) (Settings backup) Â· [`docs/deploy.md`](../deploy.md)
 
 ### Done summary
 
@@ -528,14 +562,14 @@ Settings downloads and restores an encrypted copy of the whole database. `db_bac
 
 ---
 
-## A10 — Warehouse rebuild
+## A10 â Warehouse rebuild
 
 **Status:** **Done** 2026-10-26 (NAS smoke)  
-**Product:** [`docs/architecture.md`](../architecture.md) (Rollup CLI) · [`docs/roadmap.md`](../roadmap.md) · [`docs/deploy.md`](../deploy.md)
+**Product:** [`docs/architecture.md`](../architecture.md) (Rollup CLI) Â· [`docs/roadmap.md`](../roadmap.md) Â· [`docs/deploy.md`](../deploy.md)
 
 ### Done summary
 
-`-buildall` deletes `history_5min`, `daily_history`, and `monthly_history` (no `VACUUM`), refills `history_5min` from all `readings` except the open 5-minute slice, then from WebBox staging, then rebuilds daily, monthly, envelopes, `top_records`, and `top_periods`. Rare. The day chart is empty until it finishes. `-daily` uses local time: last 2 days of `readings`, last 3 days of `daily_history`, then a full `monthly_history` and `top_periods`. `-purge_derived` is unchanged. `importer.py -aggregate5min`, `rollup.py -today`, and analytics Generate today table are removed. Today’s closed buckets go through nightly `-daily`. Import writes staging only. `processed/` is not scanned again. Both staging tables hold every WebBox year. P3 later stitches Fluvius electricity quarters in that same `-buildall`, after WebBox consolidate. See [`docs/architecture.md`](../architecture.md).
+`-buildall` deletes `history_5min`, `daily_history`, and `monthly_history` (no `VACUUM`), refills `history_5min` from all `readings` except the open 5-minute slice, then from WebBox staging, then rebuilds daily, monthly, envelopes, `top_records`, and `top_periods`. Rare. The day chart is empty until it finishes. `-daily` uses local time: last 2 days of `readings`, last 3 days of `daily_history`, then a full `monthly_history` and `top_periods`. `-purge_derived` is unchanged. `importer.py -aggregate5min`, `rollup.py -today`, and analytics Generate today table are removed. Todayâs closed buckets go through nightly `-daily`. Import writes staging only. `processed/` is not scanned again. Both staging tables hold every WebBox year. P3 later stitches Fluvius electricity quarters in that same `-buildall`, after WebBox consolidate. See [`docs/architecture.md`](../architecture.md).
 
 ### Out of scope
 
@@ -543,17 +577,17 @@ Settings downloads and restores an encrypted copy of the whole database. `db_bac
 - Restoring `sql_importer.py`.
 - (A7 Done: `top_records` beat on `-daily` + `-buildalltoprecords`.)
 
-### Verbatim — 2026-10-26 (close)
+### Verbatim â 2026-10-26 (close)
 
 > A10 smoke done: close
 
-### Verbatim — 2026-10-26 (lock + implement)
+### Verbatim â 2026-10-26 (lock + implement)
 
 > 1: yes, all webbox data is in those 2 staging tables, the history_5min table does not contain data that is not in those 2 tables
 > 2: very good - rebuild will not be done regularly - ideally, never
 > if all ok: implement and push to seperate branch
 
-### Verbatim — 2026-10-26 (placement)
+### Verbatim â 2026-10-26 (placement)
 
 > 1/ importer: gets data from Mean archives from import_queue and writes sensorbox_history_5min, inverter_history_5min
 > importer.py -aggregate5min: gets data from those same Mean archives from import_queue and puts them into solar and weather columns in history_5min
@@ -561,36 +595,105 @@ Settings downloads and restores an encrypted copy of the whole database. `db_bac
 > so that seems a step in-between, so dumping importer.py -aggregate5min seems ok
 > is this reasoning sound? if yes: put this in the todo list
 
-### Verbatim — 2026-10-26 (fold + kickoff)
+### Verbatim â 2026-10-26 (fold + kickoff)
 
 > fold all in A10, then kickoff
 
 ---
 
-## A11 — Historical gas, wind, and similar
+## A11 â Historical gas, wind, and similar
 
-**Status:** open (triaged 2026-10-26, not kicked off)  
-**Size:** **M**  
-**Depends on:** P3 (Done) for gas rows in `fluvius_interval`. Wind is already on `history_5min` / `daily_history`.
+**Status:** **Shipped** (code 2026-11-03) - awaiting operator close / Last DoD  
+**Size:** **L**  
+**Product:** [`docs/architecture.md`](../architecture.md) · `gas_water.php` · `utility_volume.py` · `weather.php` · `summary.php` · `topn.php` · `index.php` · `rollup.py`  
+**Depends on:** P3 (Done) for gas rows in `fluvius_interval`. Wind / ambient / module / radiation already on `history_5min` / `daily_history` / `top_records`. Water + P1 gas counters live on `readings` / `history_5min` (`gas`, `water`); Fluvius gas stays in `fluvius_interval` only (not copied to `history_5min`).
 
 ### Placement
 
-Not part of P3. P3 stores gas for the configured gas EAN and does not put it on a page. This phase is the first UI for that gas, and for warehouse series the pages still do not show (wind, and whatever the kickoff adds to “etc”). No code until kickoff locks the page and the series list.
+Not part of P3. P3 stores gas for the configured gas EAN and does not put it on a page. This phase is the first UI for that gas, and for warehouse weather series. Locked 2026-11-03.
 
-### Verbatim — 2026-10-26
+### DoD
+
+- [x] Rollup `gas_m3` / `water_m3` on daily + monthly; Fluvius gas not on `history_5min`
+- [x] Summary + Top-N Gas / Water metrics
+- [x] Index 2 h gas/water rate charts
+- [x] `weather.php` explorer + period + records; nav pill
+- [x] Product docs (`architecture.md`)
+- [ ] Operator close
+
+### Locked decisions (2026-11-03)
+
+| # | Lock |
+|---|---|
+| 1 | Series: all available (Fluvius gas, P1 gas, P1 water, wind, gust, ambient, module, radiation). |
+| 2 | Gas + water: separate metrics on `summary.php` + `topn.php` (not shared). |
+| 3 | Gas unit: **m3**. No euro/cost in A11 (HomeWizard cost line out of scope). |
+| 4 | Gas summary cards: **day** + week + month + year + all years. |
+| 5 | Gas day curve: **1-min** from P1 when available; else **5-min** from `history_5min` counter diffs; else Fluvius **hour** bars from `fluvius_interval`. Chart language: filled area of interval use (HomeWizard Day-style). |
+| 6 | Gas totals: prefer valid **P1** day/month delta; else Fluvius. P1 day validity **mirrors electricity fall-out** (edges + counter step-down). |
+| 7 | Water: separate metric; **no day card**; week = one bar per day; hide unless P1 water meter present. **water-link = future** (not in A11). |
+| 8 | Top-N: gas **highest only**; water **highest + lowest**; water lowest excludes **0-days** and **today**. |
+| 9 | `index.php`: gas and/or water charts **below** Grid exchange and WebBox block; **same 2 h** span as power pulse; **instant rate** (m3/h from 1-min deltas), HomeWizard-style filled area - not cumulative. |
+| 9b | `analytics.php`: gas/water rate card **below** power explorer; Gas\|Water switch; **same explorer window** (no own range chips); Water only when live P1 `water_meter` (2026-11-03 patch). |
+| 10 | Rollup: **amend** `daily_history` + `monthly_history` with period `gas_m3` / `water_m3`; fill in `-daily` / `-buildall`. Do **not** copy Fluvius gas onto `history_5min`. |
+| 11 | Weather: new **`weather.php`** (nav pill). Do **not** fold into analytics / summary / topn. Wind/ambient/module `top_records` show here (stay hidden on `topn.php`). |
+| 12 | Weather v1: day explorer + period bars + records; series **toggles** (multi-line / dual axis as needed). |
+| 13 | Ship: **all in A11** (no a/b split). |
+
+### Verbatim ? 2026-11-03 (lock + implement)
+
+> lock & implement
+
+### Verbatim â 2026-11-03 (kickoff round 4)
+
+> 1: instant - cfr homewizard (att)
+> 2: if available: 1min from P1 - else: 5min
+> 3: mirror
+> 4: water-link = future
+
+Reference screenshot (HomeWizard Gas Day): chat assets `Screenshot_2026-11-03-09-35-30-50_*.jpg` (filled area, m3 per interval; cost line not in A11).
+
+### Verbatim â 2026-11-03 (kickoff round 3)
+
+> gas & water: does rollup need to create daily/monthly totals? amend tables?
+> 1: also on Energy Dashboard, below Grid exchange and webbox info (same 2hr span)
+> 2: no day view: reading per day on week chart
+> 3: also P1 = more precise
+> 4: B
+> 5: toggles
+> 6: ok
+> 7: all
+> 8: water lowest: exclude 0-days & today
+
+### Verbatim â 2026-11-03 (kickoff round 2)
+
+> 1: all available
+> 2: gas: also day card
+> not shared, show both
+> wind/radiation/temp etc: create seprate page, don't fold into existing ones
+> 3: m³
+> 4: yes (P1 or a future water-link integration)
+> 5: gas: only highest // water: both
+> re-assess
+
+### Verbatim â 2026-11-03 (kickoff)
+
+> kickoff A11: give sugestions on how (type of graph) & where (which page and where on the page, seperate or integrated in other graphs) gas, water, wind & others can be displayed
+
+### Verbatim â 2026-10-26
 
 > Q3: hitorical gas, wind speed, etc is not for this phase - tirage that into another phase
 
 ---
 
-## A12 — Historical monthly Fluvius peak (Capacity peak)
+## A12 â Historical monthly Fluvius peak (Capacity peak)
 
 **Status:** **Done** 2026-10-29  
-**Product:** [`docs/architecture.md`](../architecture.md) (UI map: `summary.php`, `topn.php`) · `capacity_peak.php` · `rollup.py` (`top_records`)
+**Product:** [`docs/architecture.md`](../architecture.md) (UI map: `summary.php`, `topn.php`) Â· `capacity_peak.php` Â· `rollup.py` (`top_records`)
 
 ### Done summary
 
-Third metric **Capacity peak** on `summary.php` and `topn.php` (`?metric=peak`). Fluvius `piekvermogen` months (kW); open month replaced by live P1 W→kW. Summary peak mode: year + All years only; All years last in every metric; Max/Average on the All years card with a shared Max Y-axis. Top-N: highest 10 peak months. All-time records filtered by metric (yield / peak; wind hidden until A11; grid hides the card). New singles: `best_year_kwh`, `max_capacity_peak_kw`, `best_year_avg_capacity_peak_kw`. Deep link `?month=YYYY-MM` sets week (ISO week of day 1) + month + year; `?year=YYYY` sets year. Live Capacity Peak gauge on `index.php` unchanged.
+Third metric **Capacity peak** on `summary.php` and `topn.php` (`?metric=peak`). Fluvius `piekvermogen` months (kW); open month replaced by live P1 WâkW. Summary peak mode: year + All years only; All years last in every metric; Max/Average on the All years card with a shared Max Y-axis. Top-N: highest 10 peak months. All-time records filtered by metric (yield / peak; wind hidden until A11; grid hides the card). New singles: `best_year_kwh`, `max_capacity_peak_kw`, `best_year_avg_capacity_peak_kw`. Deep link `?month=YYYY-MM` sets week (ISO week of day 1) + month + year; `?year=YYYY` sets year. Live Capacity Peak gauge on `index.php` unchanged.
 
 ### DoD
 
@@ -598,22 +701,22 @@ Third metric **Capacity peak** on `summary.php` and `topn.php` (`?metric=peak`).
 - [x] Product docs
 - [x] Operator close
 
-### Verbatim — 2026-10-29 (close)
+### Verbatim â 2026-10-29 (close)
 
 > close A12
 
-### Verbatim — 2026-10-28 (kickoff + implement)
+### Verbatim â 2026-10-28 (kickoff + implement)
 
 > Q1: both pages / Q2: third top-level metric / Q3: year + all-years only; all-years last in all modes / Q4: kW / Q5: overlay live P1 / Q6: A12 only
 > not worst, only highest month, not years; 1 bar per year avg&max; replace with P1 kW; Capacity peak; 10 is ok; implement
 
-### Verbatim — 2026-10-26
+### Verbatim â 2026-10-26
 
 > Q4: also another phase: triage
 
 ---
 
-## A13 — Grid import / export mode
+## A13 â Grid import / export mode
 
 **Status:** **Done** 2026-10-27
 **Product:** [`docs/architecture.md`](../architecture.md) (UI map: `summary.php`, `topn.php`)
@@ -628,7 +731,7 @@ Solar yield stays the default on `summary.php` and `topn.php`. Grid mode is grou
 - [x] Product docs
 - [x] Operator close
 
-### Verbatim — 2026-10-27
+### Verbatim â 2026-10-27
 
 > ok, extend the analytics, summary and top-n tables with net export & import -- create a selection at the top, default = solar yield, other option = net import/export - the graphs should switch to those (2 lines in 1 graph) -- this is partly overlapping A5: check & give feedback - give proposals on how to structure this, based on industry standard
 
@@ -1026,7 +1129,57 @@ Affinity **A**. Page starts locked; Unlock asks admin password; timed edit windo
 
 
 
+## A22 - UI bugfix bundle (analytics load / Virtual best-day / PVGIS)
+
+**Status:** coding (2026-11-03). Qs locked; `fix in this scope`.  
+**Size:** M  
+**Dropped:** move powertests icon (operator 2026-11-03).
+
+### Items (in scope)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Analytics blank charts / load | Locked (L6/L7) |
+| 2 | Rename Clear-sky Envelope -> **Virtual 'best-day'**; move panel to Top-N | Locked (L1/L2/L4) |
+| 3 | Summary PVGIS on week + month (solar) | Locked (L5) |
+
+### Verified facts
+
+- Pre-fix: `analytics.php` serial-loaded explorer + compare + envelope; Apex multi-mount blanking known.
+- Shipped target: envelope off analytics; Virtual 'best-day' on `topn.php`; week/month PVGIS daily-share line.
+- Table name stays `clear_sky_envelopes`. PVGIS source remains `expected_monthly` (inclination 30).
+
+### Locked
+
+| # | Lock | Source |
+|---|---|---|
+| L1 | UI name: **Virtual 'best-day'**. | operator |
+| L2 | Move panel off Analytics onto Top-N. | operator / triage |
+| L3 | Powertests icon move out of A22. | operator |
+| L4 | Top-N: below `top_records`, solar-only, AJAX on `topn.php`. DB table name unchanged. | operator "3: ok" |
+| L5 | PVGIS week/month: daily-share line over yield bars; week uses each day's month; month keeps total/vs % stats; omit when expected all-zero; solar only. | operator "4: ok" |
+| L6 | Symptom: **blank charts**. | operator "1: blank charts" |
+| L7 | Load scope: remove envelope from Analytics; serial explorer then compare with rAF yield; soft-fail shows panel error (no empty destroy). No lazy-load rewrite. | operator "fix in this scope" |
+
+### Open questions
+
+None.
+
+### DoD
+
+- [x] Analytics: no Virtual 'best-day' / envelope; initial load serial explorer then compare per L7
+- [x] Top-N (solar): Virtual 'best-day' panel + month picker from `clear_sky_envelopes`
+- [x] Summary solar week + month: PVGIS line per L5; year/all unchanged
+- [x] Docs: architecture / README / roadmap match shipped UI names / homes
+- [ ] Last DoD docs audit (operator smoke + close)
+
+### Verbatim
+
+See Verbatim inbox **2026-11-03 - triage A22**, **A22 kickoff**, and **A22 kickoff answers**.
+
+---
+
 ## Out of scope (until re-triaged)
 
-- Portal ingest (**P1–P3**)
+- Portal ingest (**P1âP3**)
 - Restoring the old slow Top 10 AJAX query as-is
