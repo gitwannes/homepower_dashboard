@@ -1,0 +1,19 @@
+---
+description: On Synology, run Python via /volume1/web/run_python.sh (not bare python3)
+alwaysApply: true
+---
+
+# Synology Python runner
+
+When running Python scripts **on the Synology host** (SSH, Task Scheduler, operator CLI on the NAS):
+
+```bash
+/volume1/web/run_python.sh rollup.py -purge_webbox_plus4h
+/volume1/web/run_python.sh rollup.py -buildall
+/volume1/web/run_python.sh importer.py
+```
+
+- Use `/volume1/web/run_python.sh` plus the script name and args.
+- Do **not** call bare `python3` / `python` on the NAS for this app (Synology's default interpreter is often too old; the wrapper selects 3.9+).
+- Working directory is normally `/volume1/web` (where `meter_history.db` and the scripts live).
+- This does **not** change local Windows/PC Python runs in the git workspace.

@@ -485,15 +485,19 @@ if (isset($_GET['ajax'])) {
             }
             despike_pac_series($pac, $pacDates);
             $nonzero = 0;
+            // Composite-day energy: each slot is 5 min mean W -> kWh = W * (5/60) / 1000.
+            $totalKwh = 0.0;
             foreach ($pac as $v) {
                 if ($v > 0) {
                     $nonzero++;
                 }
+                $totalKwh += ((float)$v) * (5.0 / 60.0) / 1000.0;
             }
             echo json_encode([
                 'month' => $wholeYear ? 0 : $month,
                 'label' => $wholeYear ? 'Whole year' : $month,
                 'filled' => $nonzero,
+                'total_kwh' => round($totalKwh, 2),
                 'categories' => $categories,
                 'max_pac_w' => $pac,
                 'max_rad_wm2' => $rad,
@@ -744,6 +748,7 @@ if (file_exists($dbFile)) {
                 <p class="text-xs text-slate-400">
                     Composite all-time max AC power at each 5-min slot (from <code>clear_sky_envelopes</code>).
                 </p>
+                <p id="bestday-total" class="text-sm font-semibold text-slate-700 mt-1 tabular-nums"></p>
             </div>
             <div class="flex flex-wrap items-center gap-2">
                 <button type="button" class="nav-arrow" onclick="stepBestDay(-1)" title="Previous" aria-label="Previous period">
@@ -880,12 +885,14 @@ if (file_exists($dbFile)) {
         const warn = document.getElementById('bestday-warning');
         const host = document.querySelector('#chart-bestday');
         if (!card || !warn || !host) return;
+        const totalEl = document.getElementById('bestday-total');
         if (metric !== 'solar') {
             card.classList.add('is-hidden');
             if (chartBestDay) {
                 chartBestDay.destroy();
                 chartBestDay = null;
             }
+            if (totalEl) totalEl.textContent = '';
             return;
         }
         card.classList.remove('is-hidden');
@@ -901,6 +908,7 @@ if (file_exists($dbFile)) {
             warn.textContent = 'Failed to load Virtual best-day data.';
             warn.classList.remove('hidden');
             host.innerHTML = '';
+            if (totalEl) totalEl.textContent = '';
             return;
         }
         if (data.error) {
@@ -908,6 +916,7 @@ if (file_exists($dbFile)) {
             warn.textContent = data.error + (data.detail ? ' (' + data.detail + ')' : '');
             warn.classList.remove('hidden');
             host.innerHTML = '';
+            if (totalEl) totalEl.textContent = '';
             return;
         }
         if (!data.filled) {
@@ -915,7 +924,17 @@ if (file_exists($dbFile)) {
             warn.textContent = 'No Virtual best-day data in clear_sky_envelopes. Re-run: python3 rollup.py -buildall';
             warn.classList.remove('hidden');
             host.innerHTML = '';
+            if (totalEl) totalEl.textContent = '';
             return;
+        }
+        if (totalEl) {
+            const kwh = Number(data.total_kwh);
+            totalEl.textContent = Number.isFinite(kwh)
+                ? ('Virtual day yield: ' + kwh.toLocaleString(undefined, {
+                    minimumFractionDigits: 1,
+                    maximumFractionDigits: 2
+                }) + ' kWh')
+                : '';
         }
         const pacDates = data.max_pac_date || [];
         const seriesName = (data.month === 0) ? 'Whole-year max PAC (W)' : 'Max PAC (W)';
@@ -939,7 +958,15 @@ if (file_exists($dbFile)) {
             xaxis: { type: 'category', categories: data.categories, labels: bestDayAxisLabels },
             yaxis: {
                 title: { text: 'PAC (W)', style: { color: '#94a3b8', fontSize: '10px' } },
-                labels: { style: { colors: '#94a3b8', fontSize: '10px' } }
+                decimalsInFloat: 0,
+                labels: {
+                    style: { colors: '#94a3b8', fontSize: '10px' },
+                    formatter: function (val) {
+                        const n = Number(val);
+                        if (!Number.isFinite(n)) return '';
+                        return Math.round(n).toLocaleString();
+                    }
+                }
             },
             grid: { borderColor: '#f1f5f9', strokeDashArray: 4 },
             tooltip: {

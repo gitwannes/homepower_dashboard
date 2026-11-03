@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-11-03 (**A25** Done; **A26** open)
+**Last updated:** 2026-11-03 (**A27** Done)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -62,6 +62,8 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **A22** | bugfix: analytics blank-chart harden; Virtual 'best-day' on Top-N; Summary PVGIS week/month — **2026-11-03** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **A24** | bugfix: clear_sky envelopes rad>floor (WebBox kept) — **2026-11-03** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **A25** | weather.php All years card from monthly_history extremes — **2026-11-03** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
+| **A26** | bugfix: purge WebBox +4h :00 staging clones; Virtual best-day yield + integer Y — **2026-11-03** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
+| **A27** | weather period avgs + Records (wind speed, module hi/lo, radiation max) — **2026-11-03** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 
 ---
 
@@ -69,11 +71,10 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| 1 | open | S | **A26** | bugfix: clear_sky envelope harden (June 2016-06-24 evening jump) | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 2 | open | M | **W1** | WanOS: push on `-daily`, raw readings opened, and historical | [`phaseW-wanos.md`](phaseW-wanos.md) |
-| 3 | open | M | **W2** | WanOS ambient temps: daily + one-off historical → `weather.php` | [`phaseW-wanos.md`](phaseW-wanos.md) |
-| 4 | open | M | **Ops5** | Daily DB dump to Settings Synology path; `powerbackup-YYMMDD-HHMMSS.sql.zip`; keep last 14 (replaces Hyper Backup) | [`roadmap.md`](../roadmap.md) |
-| 5 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
+| 1 | open | M | **W1** | WanOS: push on `-daily`, raw readings opened, and historical | [`phaseW-wanos.md`](phaseW-wanos.md) |
+| 2 | open | M | **W2** | WanOS ambient temps: daily + one-off historical → `weather.php` | [`phaseW-wanos.md`](phaseW-wanos.md) |
+| 3 | open | M | **Ops5** | Daily DB dump to Settings Synology path; `powerbackup-YYMMDD-HHMMSS.sql.zip`; keep last 14 (replaces Hyper Backup) | [`roadmap.md`](../roadmap.md) |
+| 4 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
 
 ---
 
@@ -93,6 +94,6 @@ Open Ops rows are also in **Sequence** (same ids). Done Ops stay in **Done** onl
 | Letter | Affinity | File |
 |---|---|---|
 | **M** | Migration + public-repo hygiene + local sync | [`_archive/phaseM-migration.md`](_archive/phaseM-migration.md) (**archived**) |
-| **A** | Aggregation warehouse + analytics UI | [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md) (A0–A3 Done) · [`phaseA-analytics.md`](phaseA-analytics.md) (A4+) |
+| **A** | Aggregation warehouse + analytics UI | [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md) (A0–A3 Done) · [`phaseA-analytics.md`](phaseA-analytics.md) (A4–A27 Done — move offline when convenient) |
 | **P** | Cloud / utility portal ingest (P1–P3 Done — move file offline when convenient) | [`phaseP-portals.md`](phaseP-portals.md) |
 | **W** | WanOS bridge (push to WanOS; ambient pull for weather) | [`phaseW-wanos.md`](phaseW-wanos.md) |

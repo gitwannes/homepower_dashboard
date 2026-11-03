@@ -1,12 +1,11 @@
 <?php
 # --- file: weather.php ---
 /**
- * Weather explorer and rollup records (A11).
+ * Weather explorer and rollup records (A11 / A23 / A25 / A27).
  *
- * Intraday samples come from history_5min + live readings. Week/month cards
- * read daily_history extremes; year cards read monthly_history (A23).
- * All years card aggregates monthly extremes per calendar year (A25; rollup only).
- * Open day/month may merge live readings. All-time records from top_records.
+ * Intraday samples come from history_5min + live readings. Week/Month/Year/All years
+ * period cards read daily/monthly *averages* (A27). Open day/month period bars merge
+ * live AVG of samples so far. Records card: wind speed max, module hi/lo, radiation max.
  */
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
@@ -113,13 +112,21 @@ function weather_shift_year_label(string $year, int $delta): string
  */
 function weather_records(PDO $pdo): array
 {
-    $ids = ['max_wind_ms', 'max_temp_c', 'min_temp_c', 'max_module_temp_c'];
+    // A27: screenshot channels only (wind speed, module, radiation) - no gust/ambient.
+    $ids = [
+        'max_wind_ms',
+        'max_module_temp_c',
+        'min_module_temp_c',
+        'max_solar_radiation_wm2',
+    ];
     $byId = [];
     try {
         $stmt = $pdo->query(
             "SELECT record_id, record_value, record_date, description
              FROM top_records
-             WHERE record_id IN ('max_wind_ms', 'max_temp_c', 'min_temp_c', 'max_module_temp_c')"
+             WHERE record_id IN (
+                'max_wind_ms', 'max_module_temp_c', 'min_module_temp_c', 'max_solar_radiation_wm2'
+             )"
         );
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             if ($row['record_id'] === null || $row['record_value'] === null || $row['record_date'] === null) {
@@ -146,7 +153,23 @@ function weather_records(PDO $pdo): array
 }
 
 /**
- * Merge one calendar day's extremes (max unless ambient_min_c).
+ * Empty period-chart value bag (A27 averages).
+ *
+ * @return array{wind_ms:?float, gust_ms:?float, ambient_c:?float, module_c:?float, radiation_wm2:?float}
+ */
+function weather_period_empty_vals(): array
+{
+    return [
+        'wind_ms' => null,
+        'gust_ms' => null,
+        'ambient_c' => null,
+        'module_c' => null,
+        'radiation_wm2' => null,
+    ];
+}
+
+/**
+ * Merge period-chart averages. Later non-null values overwrite (open-day live AVG).
  *
  * @param array<string, array<string, ?float>> $byDate
  * @param array<string, ?float> $values
@@ -154,52 +177,74 @@ function weather_records(PDO $pdo): array
 function weather_period_merge_day(array &$byDate, string $date, array $values): void
 {
     if (!isset($byDate[$date])) {
-        $byDate[$date] = [
-            'wind_ms' => null,
-            'gust_ms' => null,
-            'ambient_max_c' => null,
-            'ambient_min_c' => null,
-            'module_max_c' => null,
-            'radiation_wm2' => null,
-        ];
+        $byDate[$date] = weather_period_empty_vals();
     }
     foreach ($values as $key => $val) {
         if ($val === null) {
             continue;
         }
-        $cur = $byDate[$date][$key] ?? null;
-        if ($key === 'ambient_min_c') {
-            $byDate[$date][$key] = ($cur === null) ? $val : min($cur, $val);
-        } else {
-            $byDate[$date][$key] = ($cur === null) ? $val : max($cur, $val);
-        }
+        $byDate[$date][$key] = $val;
     }
 }
 
 /**
- * Map one daily_history / monthly_history weather row into period chart fields.
+ * Map one daily_history / monthly_history weather row into period chart averages (A27).
  *
  * @param array<string, mixed> $row
- * @return array{wind_ms:?float, gust_ms:?float, ambient_max_c:?float, ambient_min_c:?float, module_max_c:?float, radiation_wm2:?float}
+ * @return array{wind_ms:?float, gust_ms:?float, ambient_c:?float, module_c:?float, radiation_wm2:?float}
  */
-function weather_extreme_fields_from_row(array $row): array
+function weather_avg_fields_from_row(array $row): array
 {
     return [
-        'wind_ms' => weather_nullable_float($row['wind_speed_max_ms'] ?? null),
-        'gust_ms' => weather_nullable_float($row['wind_gust_max_ms'] ?? null),
-        'ambient_max_c' => weather_nullable_float($row['temp_ambient_max'] ?? null),
-        'ambient_min_c' => weather_nullable_float($row['temp_ambient_min'] ?? null),
-        'module_max_c' => weather_nullable_float($row['temp_module_max'] ?? null),
-        'radiation_wm2' => weather_nullable_float($row['solar_radiation_max_wm2'] ?? null),
+        'wind_ms' => weather_nullable_float($row['wind_speed_avg_ms'] ?? null),
+        'gust_ms' => weather_nullable_float($row['wind_gust_avg_ms'] ?? null),
+        'ambient_c' => weather_nullable_float($row['temp_ambient_avg'] ?? null),
+        'module_c' => weather_nullable_float($row['temp_module_avg'] ?? null),
+        'radiation_wm2' => weather_nullable_float($row['solar_radiation_avg_wm2'] ?? null),
     ];
 }
 
 /**
- * Daily weather extremes for week/month cards (A23: daily_history).
- * Open local calendar day may still be incomplete on daily_history - merge
- * live readings extremes for that day only.
+ * Live AVG of readings in [fromTs, toTs] for open day/month period bars (A27).
  *
- * @return list<array{date:string, wind_ms:?float, gust_ms:?float, ambient_max_c:?float, ambient_min_c:?float, module_max_c:?float, radiation_wm2:?float}>
+ * @return array{wind_ms:?float, gust_ms:?float, ambient_c:?float, module_c:?float, radiation_wm2:?float}
+ */
+function weather_live_avg_range(PDO $pdo, string $fromTs, string $toTs): array
+{
+    $empty = weather_period_empty_vals();
+    try {
+        $live = $pdo->prepare(
+            "SELECT AVG(wind_speed) AS wind_ms,
+                    AVG(temp_ambient) AS ambient_c,
+                    AVG(temp_module) AS module_c,
+                    AVG(solar_radiation) AS radiation_wm2
+             FROM readings
+             WHERE timestamp >= ? AND timestamp <= ?
+               AND (wind_speed IS NOT NULL OR temp_ambient IS NOT NULL
+                    OR temp_module IS NOT NULL OR solar_radiation IS NOT NULL)"
+        );
+        $live->execute([$fromTs, $toTs]);
+        $row = $live->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return $empty;
+        }
+        return [
+            'wind_ms' => weather_nullable_float($row['wind_ms'] ?? null),
+            'gust_ms' => null,
+            'ambient_c' => weather_nullable_float($row['ambient_c'] ?? null),
+            'module_c' => weather_nullable_float($row['module_c'] ?? null),
+            'radiation_wm2' => weather_nullable_float($row['radiation_wm2'] ?? null),
+        ];
+    } catch (Throwable $e) {
+        return $empty;
+    }
+}
+
+/**
+ * Daily weather averages for week/month cards (A27: daily_history).
+ * Open local calendar day merges live AVG of samples so far.
+ *
+ * @return list<array{date:string, wind_ms:?float, gust_ms:?float, ambient_c:?float, module_c:?float, radiation_wm2:?float}>
  */
 function weather_period_rows(PDO $pdo, string $from, string $to): array
 {
@@ -208,45 +253,27 @@ function weather_period_rows(PDO $pdo, string $from, string $to): array
 
     try {
         $stmt = $pdo->prepare(
-            'SELECT date, wind_speed_max_ms, wind_gust_max_ms,
-                    temp_ambient_max, temp_ambient_min,
-                    temp_module_max, solar_radiation_max_wm2
+            'SELECT date, wind_speed_avg_ms, wind_gust_avg_ms,
+                    temp_ambient_avg, temp_module_avg, solar_radiation_avg_wm2
              FROM daily_history
              WHERE date >= ? AND date <= ?
              ORDER BY date ASC'
         );
         $stmt->execute([$from, $to]);
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            weather_period_merge_day($byDate, (string)$row['date'], weather_extreme_fields_from_row($row));
+            weather_period_merge_day($byDate, (string)$row['date'], weather_avg_fields_from_row($row));
         }
     } catch (Throwable $e) {
-        // daily_history / new columns missing until rollup ensure + rebuild.
+        // daily_history / avg columns missing until rollup ensure + rebuild.
     }
 
-    // Open day: daily_history may lag the live SensorBox pulse.
     $today = date('Y-m-d');
     if ($today >= $from && $today <= $to) {
-        try {
-            $live = $pdo->prepare(
-                "SELECT MAX(wind_speed) AS wind_ms,
-                        MAX(temp_module) AS module_max_c,
-                        MAX(solar_radiation) AS radiation_wm2
-                 FROM readings
-                 WHERE timestamp >= ? AND timestamp <= ?
-                   AND (wind_speed IS NOT NULL OR temp_module IS NOT NULL OR solar_radiation IS NOT NULL)"
-            );
-            $live->execute([$today . ' 00:00:00', $today . ' 23:59:59']);
-            $row = $live->fetch(PDO::FETCH_ASSOC);
-            if (is_array($row)) {
-                weather_period_merge_day($byDate, $today, [
-                    'wind_ms' => weather_nullable_float($row['wind_ms'] ?? null),
-                    'module_max_c' => weather_nullable_float($row['module_max_c'] ?? null),
-                    'radiation_wm2' => weather_nullable_float($row['radiation_wm2'] ?? null),
-                ]);
-            }
-        } catch (Throwable $e) {
-            // readings missing.
-        }
+        weather_period_merge_day(
+            $byDate,
+            $today,
+            weather_live_avg_range($pdo, $today . ' 00:00:00', $today . ' 23:59:59')
+        );
     }
 
     ksort($byDate);
@@ -258,9 +285,9 @@ function weather_period_rows(PDO $pdo, string $from, string $to): array
 }
 
 /**
- * Monthly extremes for a calendar year (one bar per month) from monthly_history (A23).
+ * Monthly averages for a calendar year (one bar per month) from monthly_history (A27).
  *
- * @return list<array{date:string, wind_ms:?float, gust_ms:?float, ambient_max_c:?float, ambient_min_c:?float, module_max_c:?float, radiation_wm2:?float}>
+ * @return list<array{date:string, wind_ms:?float, gust_ms:?float, ambient_c:?float, module_c:?float, radiation_wm2:?float}>
  */
 function weather_year_rows(PDO $pdo, string $year): array
 {
@@ -271,70 +298,46 @@ function weather_year_rows(PDO $pdo, string $year): array
     $byMonth = [];
     try {
         $stmt = $pdo->prepare(
-            'SELECT year_month, wind_speed_max_ms, wind_gust_max_ms,
-                    temp_ambient_max, temp_ambient_min,
-                    temp_module_max, solar_radiation_max_wm2
+            'SELECT year_month, wind_speed_avg_ms, wind_gust_avg_ms,
+                    temp_ambient_avg, temp_module_avg, solar_radiation_avg_wm2
              FROM monthly_history
              WHERE year_month >= ? AND year_month <= ?'
         );
         $stmt->execute([$year . '-01', $year . '-12']);
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $ym = (string)$row['year_month'];
-            weather_period_merge_day($byMonth, $ym, weather_extreme_fields_from_row($row));
+            weather_period_merge_day($byMonth, $ym, weather_avg_fields_from_row($row));
         }
     } catch (Throwable $e) {
-        // monthly weather cols missing until rollup ensure + rebuild.
+        // monthly avg cols missing until rollup ensure + rebuild.
     }
 
-    // Open month: merge today's live extremes into the current YYYY-MM bucket.
     $today = date('Y-m-d');
     $openYm = date('Y-m');
     if (substr($today, 0, 4) === $year) {
-        try {
-            $live = $pdo->prepare(
-                "SELECT MAX(wind_speed) AS wind_ms,
-                        MAX(temp_module) AS module_max_c,
-                        MAX(solar_radiation) AS radiation_wm2
-                 FROM readings
-                 WHERE timestamp >= ? AND timestamp <= ?
-                   AND (wind_speed IS NOT NULL OR temp_module IS NOT NULL OR solar_radiation IS NOT NULL)"
-            );
-            $live->execute([$today . ' 00:00:00', $today . ' 23:59:59']);
-            $row = $live->fetch(PDO::FETCH_ASSOC);
-            if (is_array($row)) {
-                weather_period_merge_day($byMonth, $openYm, [
-                    'wind_ms' => weather_nullable_float($row['wind_ms'] ?? null),
-                    'module_max_c' => weather_nullable_float($row['module_max_c'] ?? null),
-                    'radiation_wm2' => weather_nullable_float($row['radiation_wm2'] ?? null),
-                ]);
-            }
-        } catch (Throwable $e) {
-            // readings missing.
-        }
+        // Month-to-date average of live samples for the open calendar month.
+        weather_period_merge_day(
+            $byMonth,
+            $openYm,
+            weather_live_avg_range($pdo, $openYm . '-01 00:00:00', $today . ' 23:59:59')
+        );
     }
 
     $rows = [];
     for ($m = 1; $m <= 12; $m++) {
         $ym = sprintf('%s-%02d', $year, $m);
-        $vals = $byMonth[$ym] ?? [
-            'wind_ms' => null,
-            'gust_ms' => null,
-            'ambient_max_c' => null,
-            'ambient_min_c' => null,
-            'module_max_c' => null,
-            'radiation_wm2' => null,
-        ];
+        $vals = $byMonth[$ym] ?? weather_period_empty_vals();
         $rows[] = array_merge(['date' => $ym], $vals);
     }
     return $rows;
 }
 
 /**
- * Per-calendar-year weather extremes from monthly_history (A25).
+ * Per-calendar-year weather averages from monthly_history (A25/A27).
  * Axis = first..last year that has any monthly_history row; years with no
- * weather extremes stay null (not omitted, not zero). Rollup only.
+ * weather avgs stay null. Rollup only (AVG of monthly avgs).
  *
- * @return list<array{date:string, wind_ms:?float, gust_ms:?float, ambient_max_c:?float, ambient_min_c:?float, module_max_c:?float, radiation_wm2:?float}>
+ * @return list<array{date:string, wind_ms:?float, gust_ms:?float, ambient_c:?float, module_c:?float, radiation_wm2:?float}>
  */
 function weather_all_years_rows(PDO $pdo): array
 {
@@ -363,34 +366,31 @@ function weather_all_years_rows(PDO $pdo): array
     $byYear = [];
     try {
         $stmt = $pdo->query(
-            'SELECT year_month, wind_speed_max_ms, wind_gust_max_ms,
-                    temp_ambient_max, temp_ambient_min,
-                    temp_module_max, solar_radiation_max_wm2
+            'SELECT substr(year_month, 1, 4) AS y,
+                    AVG(wind_speed_avg_ms) AS wind_speed_avg_ms,
+                    AVG(wind_gust_avg_ms) AS wind_gust_avg_ms,
+                    AVG(temp_ambient_avg) AS temp_ambient_avg,
+                    AVG(temp_module_avg) AS temp_module_avg,
+                    AVG(solar_radiation_avg_wm2) AS solar_radiation_avg_wm2
              FROM monthly_history
-             WHERE year_month IS NOT NULL AND length(year_month) >= 4'
+             WHERE year_month IS NOT NULL AND length(year_month) >= 4
+             GROUP BY substr(year_month, 1, 4)'
         );
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $y = substr((string)$row['year_month'], 0, 4);
+            $y = (string)($row['y'] ?? '');
             if (!preg_match('/^\d{4}$/', $y)) {
                 continue;
             }
-            weather_period_merge_day($byYear, $y, weather_extreme_fields_from_row($row));
+            weather_period_merge_day($byYear, $y, weather_avg_fields_from_row($row));
         }
     } catch (Throwable $e) {
-        // monthly weather cols missing until rollup ensure + rebuild.
+        // monthly avg cols missing until rollup ensure + rebuild.
     }
 
     $rows = [];
     for ($y = $minYear; $y <= $maxYear; $y++) {
         $key = (string)$y;
-        $vals = $byYear[$key] ?? [
-            'wind_ms' => null,
-            'gust_ms' => null,
-            'ambient_max_c' => null,
-            'ambient_min_c' => null,
-            'module_max_c' => null,
-            'radiation_wm2' => null,
-        ];
+        $vals = $byYear[$key] ?? weather_period_empty_vals();
         $rows[] = array_merge(['date' => $key], $vals);
     }
     return $rows;
@@ -714,12 +714,12 @@ if (file_exists($dbFile)) {
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $channelAvailable = weather_channel_available($pdo);
         $records = weather_records($pdo);
-        // Hide record rows whose channel never exists (e.g. ambient extremes).
+        // Hide record rows whose channel never exists.
         $recordChannel = [
-            'max_wind_ms' => 'gust_ms',
-            'max_temp_c' => 'ambient_c',
-            'min_temp_c' => 'ambient_c',
+            'max_wind_ms' => 'wind_ms',
             'max_module_temp_c' => 'module_c',
+            'min_module_temp_c' => 'module_c',
+            'max_solar_radiation_wm2' => 'radiation_wm2',
         ];
         $records = array_values(array_filter(
             $records,
@@ -764,16 +764,16 @@ if (count($defaultActive) === 0 && !empty($channelAvailable['radiation_wm2'])) {
 }
 
 $recordLabels = [
-    'max_wind_ms' => 'Maximum wind gust',
-    'max_temp_c' => 'Highest ambient temperature',
-    'min_temp_c' => 'Lowest ambient temperature',
+    'max_wind_ms' => 'Highest wind speed',
     'max_module_temp_c' => 'Highest module temperature',
+    'min_module_temp_c' => 'Lowest module temperature',
+    'max_solar_radiation_wm2' => 'Highest solar radiation',
 ];
 $recordUnits = [
     'max_wind_ms' => 'm/s',
-    'max_temp_c' => 'C',
-    'min_temp_c' => 'C',
     'max_module_temp_c' => 'C',
+    'min_module_temp_c' => 'C',
+    'max_solar_radiation_wm2' => 'W/m2',
 ];
 ?>
 <!DOCTYPE html>
@@ -954,7 +954,7 @@ $recordUnits = [
                     </button>
                 </div>
             </div>
-            <p class="text-xs text-slate-400 mb-3">Daily weather extremes (Mon-Sun ISO week).</p>
+            <p class="text-xs text-slate-400 mb-3">Daily weather averages (Mon-Sun ISO week).</p>
             <div id="weekChart" class="w-full h-[330px]"></div>
         </section>
         <section class="card border-t-4 border-t-violet-500">
@@ -973,7 +973,7 @@ $recordUnits = [
                     </button>
                 </div>
             </div>
-            <p class="text-xs text-slate-400 mb-3">Daily weather extremes (calendar month).</p>
+            <p class="text-xs text-slate-400 mb-3">Daily weather averages (calendar month).</p>
             <div id="monthChart" class="w-full h-[330px]"></div>
         </section>
         <section class="card border-t-4 border-t-cyan-500">
@@ -992,14 +992,14 @@ $recordUnits = [
                     </button>
                 </div>
             </div>
-            <p class="text-xs text-slate-400 mb-3">Monthly weather extremes (one bar per calendar month).</p>
+            <p class="text-xs text-slate-400 mb-3">Monthly weather averages (one bar per calendar month).</p>
             <div id="yearChart" class="w-full h-[330px]"></div>
         </section>
         <section class="card border-t-4 border-t-emerald-600">
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
                 <h2 class="text-lg font-bold text-slate-900">All years</h2>
             </div>
-            <p class="text-xs text-slate-400 mb-3">Yearly weather extremes from monthly rollups (one bar per calendar year).</p>
+            <p class="text-xs text-slate-400 mb-3">Yearly weather averages from monthly rollups (one bar per calendar year).</p>
             <div id="allyearsChart" class="w-full h-[330px]"></div>
         </section>
     </div>
@@ -1198,14 +1198,13 @@ $recordUnits = [
             host.innerHTML = '<p class="text-sm text-slate-400 p-4">No weather samples in this period.</p>';
             return;
         }
-        // Drop series with no points in this span. All-null series break Apex multi-axis bars.
+        // A27: period cards plot averages (not max/min). Drop empty series for Apex.
         const definitions = [
-            { name: 'Wind max', key: 'wind_ms', color: '#0284c7', unit: 'm/s', scale: 'wind', need: 'wind_ms' },
-            { name: 'Gust', key: 'gust_ms', color: '#7c3aed', unit: 'm/s', scale: 'wind', need: 'gust_ms' },
-            { name: 'Ambient max', key: 'ambient_max_c', color: '#f97316', unit: 'C', scale: 'temp', need: 'ambient_c' },
-            { name: 'Ambient min', key: 'ambient_min_c', color: '#0ea5e9', unit: 'C', scale: 'temp', need: 'ambient_c' },
-            { name: 'Module max', key: 'module_max_c', color: '#ef4444', unit: 'C', scale: 'temp', need: 'module_c' },
-            { name: 'Radiation max', key: 'radiation_wm2', color: '#eab308', unit: 'W/m2', scale: 'rad', need: 'radiation_wm2' }
+            { name: 'Wind avg', key: 'wind_ms', color: '#0284c7', unit: 'm/s', scale: 'wind', need: 'wind_ms' },
+            { name: 'Gust avg', key: 'gust_ms', color: '#7c3aed', unit: 'm/s', scale: 'wind', need: 'gust_ms' },
+            { name: 'Ambient avg', key: 'ambient_c', color: '#f97316', unit: 'C', scale: 'temp', need: 'ambient_c' },
+            { name: 'Module avg', key: 'module_c', color: '#ef4444', unit: 'C', scale: 'temp', need: 'module_c' },
+            { name: 'Radiation avg', key: 'radiation_wm2', color: '#eab308', unit: 'W/m2', scale: 'rad', need: 'radiation_wm2' }
         ].filter((def) => {
             if (!channelAvailable[def.need]) {
                 return false;
@@ -1213,7 +1212,7 @@ $recordUnits = [
             return rows.some((row) => row[def.key] !== null && row[def.key] !== undefined);
         });
         if (!definitions.length) {
-            host.innerHTML = '<p class="text-sm text-slate-400 p-4">No plottable weather extremes in this range.</p>';
+            host.innerHTML = '<p class="text-sm text-slate-400 p-4">No plottable weather averages in this range.</p>';
             return;
         }
         const scaleTitle = { wind: 'm/s', temp: 'C', rad: 'W/m2' };

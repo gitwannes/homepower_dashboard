@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) Ã¢Â€Â” Analytics UI + plant config
 
-**Status:** **A4**-**A25** + **A11** + **A23** Done; **A26** open. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-11-03 (**A25** Done)  
+**Status:** **A4**-**A27** + **A11** + **A23** Done. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-11-03 (**A27** Done / Last DoD - file ready to move offline)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py` - `weather.php`
 
 ---
@@ -33,16 +33,75 @@
 | **A22** | Done | bugfix: analytics load; Virtual 'best-day' -> Top-N; PVGIS week/month |
 | **A23** | Done | Weather extremes on daily/monthly; weather.php periods read rollups |
 | **A24** | Done | bugfix: clear_sky envelopes rad>floor (WebBox kept) |
-| **A25** | Done | weather.php All years card (monthly_history extremes) |
-| **A26** | open | bugfix: clear_sky envelope harden (June evening jump) |
+| **A25** | Done | weather.php All years card (period cards now avgs via A27) |
+| **A26** | Done | bugfix: purge WebBox +4h :00 clones; Virtual best-day yield + integer Y |
+| **A27** | Done | weather period avgs + Records (wind/module/rad) |
 
-**Parallel:** **A14**-**A25** + **A11** + **A23** Done. **A26** open (envelope harden).
+**Parallel:** **A14**-**A27** + **A11** + **A23** all Done.
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
 ---
 
 ## Verbatim inbox
+
+### 2026-11-03 - close A27
+
+> close A27
+
+Last DoD: product docs + pipeline; A27 Done. Phase A (A4-A27) file ready for offline archive.
+
+### 2026-11-03 - implement A27
+
+> implement
+
+Shipped period avgs + Records expand. Operator: sync, `/volume1/web/run_python.sh rollup.py -buildall`, smoke, `close A27`.
+
+### 2026-11-03 - A27 Records locks (screenshot channels)
+
+> Maximum wind gust: remove -- add only extremes for these (screenshot) values
+> low rad: don't include, only max (same for wind): min is 0 (keep low module temp)
+
+Q8/Q9 closed. Records = wind speed max, module hi/lo, radiation max only. No gust, no rad/wind min, no ambient on Records card.
+
+### 2026-11-03 - A27 amend Records card
+
+> panel = module
+> amend A27, any open Qs left ?
+
+L6 amended: Records card expands (module low, radiation hi/lo, wind speed hi). Panel = module. Two open Qs remain (gust keep; radiation min filter).
+
+### 2026-11-03 - A27 kickoff answers
+
+> 1: A
+> 2: there are no max/min - only week/month/... graphs, so no avg or mins or whatever
+> 3: all - but only in week/month/year/all year graphs
+> 4: open day: there are real readings, there is no avraging, or minimum, correct?
+> 5: yes
+> 6: what does this mean - where are the extremes used today?
+> 7: ok
+
+Locked into **A27** (see section). Q4/Q6 clarified in locks + agent reply. No code this turn.
+
+### 2026-11-03 - triage + kickoff A27 (weather averages)
+
+> weather page: week, month, year, all years: don't graph MAX but average - triage & kickoff
+
+Placed: **A27**. Kickoff open Qs in section (warehouse avg vs AVG-of-extremes; ambient min; records/explorer).
+
+### 2026-11-03 - close A26 (UI + Last DoD)
+
+> implement now, same phase, then close phase
+> fixed (evening mountains after purge)
+
+Virtual best-day: integer PAC Y-axis; Virtual day yield kWh. A26 Last DoD closed.
+
+### 2026-11-03 - A26 implement (re-scope to +4h purge)
+
+> triage and proceed
+> A26 - implement
+
+Merge into **A26** (not A27): root cause is staging +4h `:00` clones, not envelope harden. Shipped `rollup.py -purge_webbox_plus4h`. Operator runs purge then `-buildall` on NAS, then `close A26`.
 
 ### 2026-11-03 - close A25
 
@@ -179,7 +238,7 @@ Placed: **A22** (affinity **A**). Powertests later dropped at kickoff. No code u
 > and Q21
 > A21
 
-A14, A21, A11, A22, A23, A24, and A25 closed (Last DoD). Product: [`docs/architecture.md`](../architecture.md). `phaseA-analytics.md` stays in-repo while **A26** is open - do not archive the whole file yet.
+A14-A26 + A11/A23 closed (Last DoD). Product: [`docs/architecture.md`](../architecture.md). `phaseA-analytics.md` has no open A rows - you may **manually move** it to offline archive when ready (agent will not move it).
 
 ### 2026-11-03 - A21 ship (raw registers virtual + optional)
 
@@ -709,7 +768,7 @@ Settings downloads and restores an encrypted copy of the whole database. `db_bac
 
 ### Done summary
 
-Shipped gas/water on summary/topn/index (m3; Fluvius gas not on `history_5min`) and standalone `weather.php` (explorer + Week/Month/Year/All years + records). Weather period rollups completed in **A23**; All years card in **A25**. WanOS ambient source: **W2**.
+Shipped gas/water on summary/topn/index (m3; Fluvius gas not on `history_5min`) and standalone `weather.php` (explorer + Week/Month/Year/All years + records). Weather period rollups completed in **A23**; All years card in **A25**; period avgs + Records set in **A27**. WanOS ambient source: **W2**.
 
 ### DoD
 
@@ -1314,7 +1373,7 @@ See Verbatim inbox **A24 triage/kickoff**, first implement, **rad gate amend**, 
 
 ### Done summary
 
-Static **All years** card after Year on `weather.php`. Bars = per-calendar-year `MAX`/`MIN` of `monthly_history` weather extremes (rollup only; no live merge). Axis = first..last year with any monthly row; empty weather years stay null. Same six series + channel gates; SSR + `ajax=period&mode=allyears`.
+Static **All years** card after Year on `weather.php`. Shipped as yearly extremes; **A27** switched all period cards (incl. All years) to monthly/daily averages. Axis = first..last year with any monthly row; empty weather years stay null. SSR + `ajax=period&mode=allyears`.
 
 ### Locked decisions (record)
 
@@ -1336,37 +1395,79 @@ See Verbatim inbox **2026-11-03 - triage A25**, **A25 kickoff answers**, **imple
 
 ---
 
-## A26 - bugfix: clear_sky envelope harden (June evening jump)
+## A26 - bugfix: purge WebBox +4h :00 staging clones
 
-**Status:** open (triaged 2026-11-03). Kickoff not started.  
+**Status:** **Done** 2026-11-03.  
 **Size:** S  
-**Depends on:** **A24** Done (keep WebBox + rad>floor). Distinct from WebBox timestamp rewrite.
+**Product:** [`docs/architecture.md`](../architecture.md) · `rollup.py -purge_webbox_plus4h` · `topn.php` Virtual 'best-day'  
+**Depends on:** **A24** Done (rad floor stays).
 
-### Verified facts (NAS SQL 2026-11-03)
+### Root cause (Mean XML + staging audit 2026-11-03)
 
-- June Virtual 'best-day' 21:10-21:55 spike owned by **`2016-06-24` `webbox_archive`**.
-- Same day: 21:05 = 62 W / rad ~14 -> 21:10 = 1189 W / rad ~105 (discontinuity).
-- 21:00-21:55 PAC>200: high winners (>900 W) are **month 6 only**; May/Jul ~200-440 W.
-- Cliff at 22:00 = existing deep-night gate. A24 rad floor does not remove this (rad >> 5).
+- Priority Mean exports have **no** evening bump: e.g. 2016-06-24 Pac ends ~62 W at 21:05.
+- Staging/DB evening hills were **+4:00:00 clones** of the same day's afternoon Pac/rad, timestamps ending in **`:00`**.
+- Envelope harden options cancelled - staging purge is the fix.
 
-### Candidate harden options (pick at kickoff)
+### Locked
 
-| # | Option | Note |
-|---|---|---|
-| 1 | Stronger step despike / jump reject | **Preferred in advice** |
-| 2 | Month dusk cutoff table | Blunt |
-| 3 | PAC-rad consistency model | Heavier |
-| 4 | Same-day no re-rise after local min | Good second |
-| 5 | Surgical denylist day/slots | Hotfix only |
-| 6 | webbox_archive hour cap | Punishes archive evenings |
+| # | Lock |
+|---|---|
+| L1 | Merge into **A26** (not a separate A27). |
+| L2 | Delete matching clones from `inverter_history_5min` and `sensorbox_history_5min` only. |
+| L3 | Match rule: seconds `== 00`, value within 0.05 of a row at the same HH:MM **minus 4 hours**, and Pac `>= 100` W (inverter) or rad `>= 5` (sensor). |
+| L4 | Do **not** auto-`-buildall` inside the purge flag. Operator runs `-buildall` after. |
+| L5 | No new envelope despike in this phase. |
+| L6 | Virtual 'best-day': integer PAC Y-axis; show composite-day yield kWh (slot W x 5/60 / 1000). |
 
-### Open (placement)
+### Shipped summary
 
-None. Spec locks at `kickoff A26` (which option(s), thresholds, `-buildall` refresh).
+- `rollup.py -purge_webbox_plus4h` -> `purge_webbox_plus4h_clones()`
+- Operator purge + `-buildall` smoked (evening mountains gone)
+- `topn.php`: integer Y ticks; **Virtual day yield** from `ajax=bestday` `total_kwh`
+- Docs: architecture, power-notes, roadmap, history-5min rule
+
+### DoD
+
+- [x] Purge CLI + docs
+- [x] Operator purge + `-buildall` + evening-hill smoke
+- [x] Virtual best-day integer Y + virtual day yield kWh
+- [x] Last DoD docs audit
 
 ### Verbatim
 
-See Verbatim inbox **2026-11-03 - triage A26**.
+See Verbatim inbox **triage A26**, Mean XML, **A26 implement**, **close A26 (UI + Last DoD)**.
+
+---
+
+## A27 - weather.php period cards: averages (not MAX)
+
+**Status:** **Done** 2026-11-03 (Last DoD / operator close).  
+**Size:** M  
+**Product:** [`docs/architecture.md`](../architecture.md) · `weather.php` · `rollup.py`
+
+### Shipped summary
+
+Period Week/Month/Year/All years use daily/monthly `*_avg*` (true means); open day/month bar = live AVG; single Ambient avg series. Records card: wind speed max, module hi/lo, radiation max (no gust/ambient on card). Explorer unchanged. Rollup adds avg columns + `temp_module_min`; `top_records` catalog updated.
+
+### Locked (record)
+
+| # | Lock |
+|---|---|
+| L1-L8 | As locked 2026-11-03 (warehouse avgs; period avgs only; open AVG; Records screenshot set). |
+
+### DoD
+
+- [x] Weather avg columns on daily/monthly; period cards use them; labels "... avg"
+- [x] Open day/month period merge uses AVG
+- [x] `temp_module_min` + `top_records` + Records UI; gust dropped from card
+- [x] Explorer unchanged
+- [x] Architecture / README / roadmap / power-notes match shipped
+- [x] Operator `-buildall` + smoke (accepted on `close A27`)
+- [x] Last DoD docs audit
+
+### Verbatim
+
+See Verbatim inbox **triage + kickoff A27**, **kickoff answers**, **amend Records**, **Records locks**, **implement A27**, **close A27**.
 
 ---
 
@@ -1374,4 +1475,5 @@ See Verbatim inbox **2026-11-03 - triage A26**.
 
 - Portal ingest (**P1-P3**)
 - Restoring the old slow Top 10 AJAX query as-is
-- Fixing WebBox archive clock/timezone at source (re-triage if needed)
+- Finding which historic importer wrote the `:00` clones (purge is enough if Means re-import clean)
+- Extra envelope despike after staging purge (re-triage if bumps remain)

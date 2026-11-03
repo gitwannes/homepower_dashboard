@@ -74,7 +74,7 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 ## PHASE 2: MODERN UI & ANALYTICS SUITE (PRESENTATION)
 - [x] Multi-page dashboard:
       - Live (`index.php`): 2-hour pulse of 1-minute readings; Exchange / Balance / Classic (Exchange default). Exploration (`analytics.php`), period summaries (`summary.php`).
-      - Weather (`weather.php`): explorer + Week / Month / Year / **All years** (A25) from daily/monthly extremes; records on-page.
+      - Weather (`weather.php`): explorer + Week / Month / Year / **All years** from daily/monthly **averages** (A27); Records = wind speed max, module hi/lo, radiation max.
       - Cross-navigation between hubs.
 - [x] Day Explorer on `analytics.php` (**A5b** + **A19**):
       - Exchange / Balance / Classic explorer: rolling presets plus calendar-day **Today** (default; chip after 24 h); day pan with arrow caps; mixed 1-min / 5-min (rule V). Serial Apex mounts (explorer then compare).
@@ -90,6 +90,8 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
       - **A12 Done:** Capacity peak ranks (top 10 months); records filtered by metric (yield / peak; weather records on `weather.php` / **A11** Done).
       - **A22:** Virtual 'best-day' (from `clear_sky_envelopes`) on solar Top-N; removed from analytics.
       - **A24 Done:** envelope rebuild requires rad above floor; WebBox archive kept.
+      - **A26 Done:** `rollup.py -purge_webbox_plus4h` removes +4h `:00` Pac/rad clones from WebBox staging; then `-buildall`. Virtual 'best-day' shows composite-day kWh and integer PAC axis.
+      - **A27 Done:** weather period cards use daily/monthly averages; Records = wind speed max, module hi/lo, radiation max.
 - [x] Settings (`settings.php`): admin password on first open; locked-by-default Unlock window (countdown); devices, titles, monthly expected kWh, spike cap, and night gates in `meter_history.db`. Save probes P1/SMA/WebBox/Portal and writes `*_active` (`integration_probes.py`); partial fill is atomic. Virtual kWh meters (A14) + optional Raw Meter Registers rows (A21). Encrypted full-database download and restore (`db_backup.py`); 1-min CSV export without password. See [`architecture.md`](architecture.md).
 - [x] Verify analytics / summary with populated rollups (A2/A3 + operator smoke).
 

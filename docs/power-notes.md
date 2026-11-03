@@ -37,6 +37,10 @@ rollup.py -consolidate
 
 sql_importer.py
 	one-shot gap-fill into staging. Not in this repo any more. Do not reintroduce.
+
+rollup.py -purge_webbox_plus4h
+	A26: deletes +4h :00 Pac/rad clones from WebBox staging only
+	then run -buildall (history_5min still holds old clones until rebuild)
 ```
 
 ---
@@ -141,18 +145,21 @@ top_periods
 	Rebuilt by -buildall and -daily.
 
 top_records
-	Eight all-time singles on topn.php.
+	All-time singles (topn.php solar/peak; weather.php wind/module/rad).
 	Full rewrite: -buildall, -buildalltoprecords.
 	Beat-update: -daily (stricter extreme in stitch span only).
 	best_day_kwh
 	peak_surge_w
 	max_sun_hours
 	best_self_consumption_kwh
-	max_wind_ms
-	max_temp_c
-	min_temp_c
+	best_year_kwh
+	max_wind_ms              (wind speed; weather.php Records)
+	max_temp_c / min_temp_c  (ambient; warehouse; not on weather Records card)
 	max_module_temp_c
-	(wind / ambient / module / self-consumption rows hide in UI when absent)
+	min_module_temp_c
+	max_solar_radiation_wm2
+	max_capacity_peak_kw / best_year_avg_capacity_peak_kw
+	(conditional rows hide in UI when absent)
 
 app_settings
 expected_monthly
@@ -184,7 +191,7 @@ Shipped (P3):
 	electricity quarters stitched into history_5min on -daily / -buildall
 	gas stays in fluvius_interval (not on history_5min)
 	UI Capacity peak: A12 Done (summary + top-n)
-	UI historical gas / wind / weather: A11 Done; weather daily/monthly rollup cutover: A23 Done; weather All years card: A25 Done
+	UI historical gas / wind / weather: A11 Done; weather daily/monthly rollup cutover: A23 Done; weather All years: A25 Done; period avgs + Records: A27 Done
 
 Still open:
 	portal script for last-x-days pull

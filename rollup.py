@@ -18,7 +18,7 @@ import os
 import re
 import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set, Tuple
 
 import fluvius_import
@@ -87,26 +87,38 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> Set[str]:
     return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
 
 
+# A23 extremes + A27 averages / module min (period charts + weather Records).
+_WEATHER_DAILY_EXTRA_COLS = (
+    "wind_speed_max_ms",
+    "wind_gust_max_ms",
+    "temp_module_max",
+    "temp_module_min",
+    "solar_radiation_max_wm2",
+    "temp_ambient_min",
+    "temp_ambient_max",
+    "wind_speed_avg_ms",
+    "wind_gust_avg_ms",
+    "temp_ambient_avg",
+    "temp_module_avg",
+    "solar_radiation_avg_wm2",
+)
+_WEATHER_MONTHLY_EXTRA_COLS = _WEATHER_DAILY_EXTRA_COLS
+
+
 def ensure_weather_extreme_columns(conn: sqlite3.Connection) -> None:
-    """A23: weather extremes on daily/monthly with names aligned to daily_history.
+    """A23/A27: weather extreme + average columns on daily/monthly.
 
     Adds missing columns on existing DBs. Copies legacy monthly
     max_temp_module / max_wind_gust into the aligned names once.
     SQLite cannot DROP the legacy columns cheaply; they stay unused.
     """
     daily_cols = _table_columns(conn, "daily_history")
-    if "wind_speed_max_ms" not in daily_cols:
-        conn.execute("ALTER TABLE daily_history ADD COLUMN wind_speed_max_ms REAL")
+    for col in _WEATHER_DAILY_EXTRA_COLS:
+        if col not in daily_cols:
+            conn.execute(f"ALTER TABLE daily_history ADD COLUMN {col} REAL")
 
     monthly_cols = _table_columns(conn, "monthly_history")
-    for col in (
-        "wind_speed_max_ms",
-        "wind_gust_max_ms",
-        "temp_module_max",
-        "solar_radiation_max_wm2",
-        "temp_ambient_min",
-        "temp_ambient_max",
-    ):
+    for col in _WEATHER_MONTHLY_EXTRA_COLS:
         if col not in monthly_cols:
             conn.execute(f"ALTER TABLE monthly_history ADD COLUMN {col} REAL")
 
@@ -182,10 +194,16 @@ def init_analytical_db(conn: sqlite3.Connection) -> None:
                 self_consumption_kwh REAL,
                 temp_ambient_min REAL,
                 temp_ambient_max REAL,
+                temp_ambient_avg REAL,
                 temp_module_max REAL,
+                temp_module_min REAL,
+                temp_module_avg REAL,
                 wind_speed_max_ms REAL,
+                wind_speed_avg_ms REAL,
                 wind_gust_max_ms REAL,
+                wind_gust_avg_ms REAL,
                 solar_radiation_max_wm2 REAL,
+                solar_radiation_avg_wm2 REAL,
                 gas_m3 REAL,
                 water_m3 REAL
             )
@@ -208,10 +226,16 @@ def init_analytical_db(conn: sqlite3.Connection) -> None:
                 max_peak_w REAL,
                 temp_ambient_min REAL,
                 temp_ambient_max REAL,
+                temp_ambient_avg REAL,
                 temp_module_max REAL,
+                temp_module_min REAL,
+                temp_module_avg REAL,
                 wind_speed_max_ms REAL,
+                wind_speed_avg_ms REAL,
                 wind_gust_max_ms REAL,
+                wind_gust_avg_ms REAL,
                 solar_radiation_max_wm2 REAL,
+                solar_radiation_avg_wm2 REAL,
                 gas_m3 REAL,
                 water_m3 REAL
             )
@@ -279,6 +303,134 @@ def _ensure_consolidate_columns(conn: sqlite3.Connection) -> None:
             conn.execute("ALTER TABLE sensorbox_history_5min ADD COLUMN wind_gust_ms REAL")
         except sqlite3.OperationalError:
             pass
+
+
+def _ts_minute(ts: str) -> Optional[str]:
+    """Return YYYY-MM-DD HH:MM from a staging timestamp, or None if unparseable."""
+    raw = (ts or "").strip().replace("T", " ")
+    if len(raw) < 16:
+        return None
+    return raw[:16]
+
+
+def _parse_ts(ts: str) -> Optional[datetime]:
+    """Parse staging timestamp (optional fractional seconds)."""
+    raw = (ts or "").strip().replace("T", " ")
+    for width, fmt in (
+        (26, "%Y-%m-%d %H:%M:%S.%f"),
+        (19, "%Y-%m-%d %H:%M:%S"),
+        (16, "%Y-%m-%d %H:%M"),
+    ):
+        try:
+            return datetime.strptime(raw[:width], fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def purge_webbox_plus4h_clones(
+    conn: sqlite3.Connection,
+    pac_tol_w: float = 0.05,
+    rad_tol: float = 0.05,
+    min_pac_w: float = 100.0,
+    min_rad: float = 5.0,
+) -> Tuple[int, int]:
+    """A26: delete WebBox staging rows that are +4h clones of an earlier sample.
+
+    Fingerprint (Mean XML audit 2026-11-03): corrupt rows end in :00 (real Mean
+    imports keep non-zero seconds). Pac/rad values are bit-identical to the same
+    calendar minute four hours earlier. Those clones are absent from Mean exports
+    and create evening Virtual 'best-day' bumps.
+
+    Gates (avoid wiping night zeros / coincidental :00 twins):
+    - candidate seconds == 00
+    - Pac >= min_pac_w (default 100) or radiation >= min_rad (default 5)
+    - a source row exists at minute-4h with value within tolerance
+
+    Deletes from never-purged staging only (inverter_history_5min /
+    sensorbox_history_5min). Does not touch history_5min - run -buildall after.
+    """
+    inv_deleted = 0
+    sens_deleted = 0
+
+    if _table_exists(conn, "inverter_history_5min"):
+        rows = conn.execute(
+            """
+            SELECT timestamp, device_serial, pac_w
+            FROM inverter_history_5min
+            WHERE pac_w IS NOT NULL
+              AND pac_w >= ?
+              AND substr(timestamp, 18, 2) = '00'
+            """,
+            (float(min_pac_w),),
+        ).fetchall()
+        # Index sources by minute -> list of pac values (any seconds).
+        by_minute: Dict[str, List[float]] = {}
+        for ts, _serial, pac in conn.execute(
+            "SELECT timestamp, device_serial, pac_w FROM inverter_history_5min WHERE pac_w IS NOT NULL"
+        ):
+            mk = _ts_minute(str(ts))
+            if mk is None:
+                continue
+            by_minute.setdefault(mk, []).append(float(pac))
+
+        del_keys: List[Tuple[str, str]] = []
+        for ts, serial, pac in rows:
+            dt = _parse_ts(str(ts))
+            if dt is None:
+                continue
+            src_minute = (dt - timedelta(hours=4)).strftime("%Y-%m-%d %H:%M")
+            src_pacs = by_minute.get(src_minute, [])
+            if any(abs(float(pac) - sp) < pac_tol_w for sp in src_pacs):
+                del_keys.append((str(ts), str(serial)))
+
+        if del_keys:
+            with conn:
+                conn.executemany(
+                    "DELETE FROM inverter_history_5min WHERE timestamp = ? AND device_serial = ?",
+                    del_keys,
+                )
+            inv_deleted = len(del_keys)
+
+    if _table_exists(conn, "sensorbox_history_5min"):
+        rows = conn.execute(
+            """
+            SELECT timestamp, radiation_wm2
+            FROM sensorbox_history_5min
+            WHERE radiation_wm2 IS NOT NULL
+              AND radiation_wm2 >= ?
+              AND substr(timestamp, 18, 2) = '00'
+            """,
+            (float(min_rad),),
+        ).fetchall()
+        by_minute_rad: Dict[str, List[float]] = {}
+        for ts, rad in conn.execute(
+            "SELECT timestamp, radiation_wm2 FROM sensorbox_history_5min WHERE radiation_wm2 IS NOT NULL"
+        ):
+            mk = _ts_minute(str(ts))
+            if mk is None:
+                continue
+            by_minute_rad.setdefault(mk, []).append(float(rad))
+
+        del_ts: List[Tuple[str]] = []
+        for ts, rad in rows:
+            dt = _parse_ts(str(ts))
+            if dt is None:
+                continue
+            src_minute = (dt - timedelta(hours=4)).strftime("%Y-%m-%d %H:%M")
+            src_rads = by_minute_rad.get(src_minute, [])
+            if any(abs(float(rad) - sr) < rad_tol for sr in src_rads):
+                del_ts.append((str(ts),))
+
+        if del_ts:
+            with conn:
+                conn.executemany(
+                    "DELETE FROM sensorbox_history_5min WHERE timestamp = ?",
+                    del_ts,
+                )
+            sens_deleted = len(del_ts)
+
+    return inv_deleted, sens_deleted
 
 
 def consolidate_historical_webbox(conn: sqlite3.Connection, step: int = 1) -> None:
@@ -386,8 +538,11 @@ def build_daily_history(
             INSERT OR REPLACE INTO daily_history (
                 date, solar_yield_kwh, solar_peak_w, sun_hours,
                 grid_import_kwh, grid_export_kwh, self_consumption_kwh,
-                temp_ambient_min, temp_ambient_max, temp_module_max,
-                wind_speed_max_ms, wind_gust_max_ms, solar_radiation_max_wm2
+                temp_ambient_min, temp_ambient_max, temp_ambient_avg,
+                temp_module_max, temp_module_min, temp_module_avg,
+                wind_speed_max_ms, wind_speed_avg_ms,
+                wind_gust_max_ms, wind_gust_avg_ms,
+                solar_radiation_max_wm2, solar_radiation_avg_wm2
             )
             WITH base AS (
                 SELECT
@@ -446,11 +601,17 @@ def build_daily_history(
                     ROUND(MAX(total_export) - MIN(total_export), 3) AS export_kwh,
                     MIN(temp_ambient) AS t_amb_min,
                     MAX(temp_ambient) AS t_amb_max,
+                    AVG(temp_ambient) AS t_amb_avg,
                     MAX(temp_module) AS t_mod_max,
+                    MIN(temp_module) AS t_mod_min,
+                    AVG(temp_module) AS t_mod_avg,
                     MAX(wind_speed) AS wind_speed_max,
+                    AVG(wind_speed) AS wind_speed_avg,
                     -- Gust only. Never coalesce with wind_speed.
                     MAX(wind_gust) AS wind_gust_max,
-                    MAX(COALESCE(solar_radiation_max, solar_radiation)) AS rad_max
+                    AVG(wind_gust) AS wind_gust_avg,
+                    MAX(COALESCE(solar_radiation_max, solar_radiation)) AS rad_max,
+                    AVG(solar_radiation) AS rad_avg
                 FROM base
                 GROUP BY dt
             ),
@@ -466,10 +627,16 @@ def build_daily_history(
                     b.export_kwh,
                     b.t_amb_min,
                     b.t_amb_max,
+                    b.t_amb_avg,
                     b.t_mod_max,
+                    b.t_mod_min,
+                    b.t_mod_avg,
                     b.wind_speed_max,
+                    b.wind_speed_avg,
                     b.wind_gust_max,
+                    b.wind_gust_avg,
                     b.rad_max,
+                    b.rad_avg,
                     f.solar_total_kwh AS et_first,
                     l.solar_total_kwh AS et_last,
                     COALESCE(sf.bad_etotal_steps, 0) AS bad_etotal_steps
@@ -508,10 +675,16 @@ def build_daily_history(
                 , 2) AS self_consumption_kwh,
                 t_amb_min,
                 t_amb_max,
+                t_amb_avg,
                 t_mod_max,
+                t_mod_min,
+                t_mod_avg,
                 wind_speed_max,
+                wind_speed_avg,
                 wind_gust_max,
-                rad_max
+                wind_gust_avg,
+                rad_max,
+                rad_avg
             FROM et_ends
             LEFT JOIN fluvius_day_override ovr ON ovr.date = et_ends.dt;
         """)
@@ -546,8 +719,11 @@ def build_monthly_history(conn: sqlite3.Connection, step: int = 3) -> None:
                 year_month, total_solar_kwh, expected_kwh, target_pct,
                 total_import_kwh, total_export_kwh,
                 max_peak_w,
-                temp_ambient_min, temp_ambient_max, temp_module_max,
-                wind_speed_max_ms, wind_gust_max_ms, solar_radiation_max_wm2,
+                temp_ambient_min, temp_ambient_max, temp_ambient_avg,
+                temp_module_max, temp_module_min, temp_module_avg,
+                wind_speed_max_ms, wind_speed_avg_ms,
+                wind_gust_max_ms, wind_gust_avg_ms,
+                solar_radiation_max_wm2, solar_radiation_avg_wm2,
                 gas_m3, water_m3
             )
             SELECT 
@@ -558,9 +734,11 @@ def build_monthly_history(conn: sqlite3.Connection, step: int = 3) -> None:
                 ROUND(SUM(d.grid_import_kwh), 1),
                 ROUND(SUM(d.grid_export_kwh), 1),
                 MAX(d.solar_peak_w),
-                MIN(d.temp_ambient_min), MAX(d.temp_ambient_max), MAX(d.temp_module_max),
-                MAX(d.wind_speed_max_ms), MAX(d.wind_gust_max_ms),
-                MAX(d.solar_radiation_max_wm2),
+                MIN(d.temp_ambient_min), MAX(d.temp_ambient_max), AVG(d.temp_ambient_avg),
+                MAX(d.temp_module_max), MIN(d.temp_module_min), AVG(d.temp_module_avg),
+                MAX(d.wind_speed_max_ms), AVG(d.wind_speed_avg_ms),
+                MAX(d.wind_gust_max_ms), AVG(d.wind_gust_avg_ms),
+                MAX(d.solar_radiation_max_wm2), AVG(d.solar_radiation_avg_wm2),
                 ROUND(SUM(d.gas_m3), 3),
                 ROUND(SUM(d.water_m3), 3)
             FROM daily_history d
@@ -650,10 +828,19 @@ TOP_RECORD_DEFS: Tuple[Tuple[str, str, str, str, Optional[str]], ...] = (
         "year_solar",
         None,
     ),
-    ("max_wind_ms", "max", "Maximum recorded wind gust (m/s)", "daily", "wind_gust_max_ms"),
+    # A27: weather.php Records use wind *speed* (not gust), module hi/lo, radiation max.
+    ("max_wind_ms", "max", "Highest recorded wind speed (m/s)", "daily", "wind_speed_max_ms"),
     ("max_temp_c", "max", "Highest recorded ambient temperature (C)", "daily", "temp_ambient_max"),
     ("min_temp_c", "min", "Lowest recorded ambient temperature (C)", "daily", "temp_ambient_min"),
     ("max_module_temp_c", "max", "Highest recorded module temperature (C)", "daily", "temp_module_max"),
+    ("min_module_temp_c", "min", "Lowest recorded module temperature (C)", "daily", "temp_module_min"),
+    (
+        "max_solar_radiation_wm2",
+        "max",
+        "Highest recorded solar radiation (W/m2)",
+        "daily",
+        "solar_radiation_max_wm2",
+    ),
     (
         "max_capacity_peak_kw",
         "max",
@@ -1361,6 +1548,18 @@ if __name__ == '__main__':
                 "(readings, WebBox staging, fluvius_interval, sunnyportal_pv_5min untouched)."
             )
 
+        elif '-purge_webbox_plus4h' in args:
+            # A26: surgical delete of +4h :00 clones in WebBox staging (never-purged SoT).
+            inv_n, sens_n = purge_webbox_plus4h_clones(conn)
+            print(
+                f"[INFO] WebBox +4h clone purge: deleted {inv_n} inverter row(s), "
+                f"{sens_n} sensorbox row(s)."
+            )
+            print(
+                "[INFO] history_5min unchanged. Run: python3 rollup.py -buildall "
+                "(day chart empty until it finishes)."
+            )
+
         else:
             print("P1 & Solar Data Warehouse Manager")
             print("Usage:")
@@ -1370,6 +1569,7 @@ if __name__ == '__main__':
             print("  python3 rollup.py -buildalltoprecords (Full rewrite of top_records only)")
             print("  python3 rollup.py -daily        (Nightly: last 2 local days of readings, last 3 local days of daily_history)")
             print("  python3 rollup.py -purge_derived (Dev tool: deletes all analytical data safely to restart tests)")
+            print("  python3 rollup.py -purge_webbox_plus4h (A26: delete +4h :00 clones from WebBox staging; then -buildall)")
 
     except Exception as e:
         sys.stderr.write(f"Rollup execution error: {e}\n")
