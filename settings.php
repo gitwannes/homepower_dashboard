@@ -546,6 +546,10 @@ function hp_settings_from_post(array $stored): array
         'fluvius_ean_gas' => (string)preg_replace('/\D/', '', $text('fluvius_ean_gas')),
         'config_saved' => '1',
     ];
+    // Optional Raw Meter Registers rows: unchecked checkbox => '0'.
+    foreach (array_keys(hp_raw_optional_meter_labels()) as $rawKey) {
+        $settings[$rawKey] = (isset($_POST[$rawKey]) && (string)$_POST[$rawKey] === '1') ? '1' : '0';
+    }
 
     $form = $settings;
     $form['monthly'] = $monthly;
@@ -782,10 +786,24 @@ $integrationLabels = hp_integration_labels();
                 <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Virtual kWh meters</h2>
                 <a id="vmDebugLink" data-href="virtual_meters_debug.php" class="js-lock-link text-xs font-semibold text-indigo-600 hover:underline pointer-events-none opacity-50 cursor-not-allowed" tabindex="-1" aria-disabled="true">Debug page</a>
             </div>
-            <p class="text-xs text-slate-500">Each meter tracks a source lifetime kWh with bias and a percent of new energy after the first-save anchor (<code>S0</code>). Formula: <code>V = (S0 + C) + p * (S - S0)</code> with <code>p = percent/100</code>. Saves here use the admin password and do not run integration probes. Raw Meter Registers display is A21 (checkbox stores the flag only).</p>
+            <p class="text-xs text-slate-500">Each meter tracks a source lifetime kWh with bias and a percent of new energy after the first-save anchor (<code>S0</code>). Formula: <code>V = (S0 + C) + p * (S - S0)</code> with <code>p = percent/100</code>. Saves here use the admin password and do not run integration probes. Checked meters appear on the dashboard Raw Meter Registers modal.</p>
             <p id="vmError" class="hidden text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-3"></p>
             <div id="vmList" class="space-y-4"></div>
             <button type="button" id="vmAddBtn" disabled class="js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed">Add virtual kWh meter</button>
+        </section>
+
+        <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
+            <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">Show optional meters in raw readings</h2>
+            <p class="text-xs text-slate-500">These rows appear on the dashboard Raw Meter Registers modal when enabled. Defaults are on. Total Import, Total Export, Capacity Peak, gas, and water stay always visible.</p>
+            <div class="space-y-2">
+                <?php foreach (hp_raw_optional_meter_labels() as $rawKey => $rawLabel): ?>
+                    <?php $rawOn = hp_raw_show_optional($settings, $rawKey); ?>
+                    <label class="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                        <input type="checkbox" name="<?= hp_h($rawKey) ?>" value="1" disabled class="js-lock-field" <?= $rawOn ? 'checked' : '' ?>>
+                        <?= hp_h($rawLabel) ?>
+                    </label>
+                <?php endforeach; ?>
+            </div>
         </section>
 
         <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm">
@@ -1515,7 +1533,7 @@ $integrationLabels = hp_integration_labels();
                 + '</div>'
                 + '<label class="inline-flex items-center gap-2 text-xs font-semibold text-slate-700">'
                 + '<input type="checkbox" data-vm-field="show_in_raw_registers" disabled class="js-lock-field" ' + (showRaw ? 'checked' : '') + '>'
-                + 'Show in Raw Meter Registers (flag; UI in A21)</label>'
+                + 'Show in Raw Meter Registers</label>'
                 + '<div class="text-xs text-slate-600 space-y-0.5">'
                 + '<div>Source reading S: <strong class="font-mono">' + sTxt + '</strong>'
                 + (meter.source_detail ? ' <span class="text-slate-400">(' + meter.source_detail + ')</span>' : '')

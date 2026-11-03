@@ -1,19 +1,22 @@
 #!/bin/sh
 # --- file: run_python.sh ---
 # Pick the newest usable Python 3 (same order as hp_python_bin in site_settings.php),
-# then exec the remaining arguments with that interpreter.
+# then run the remaining arguments with that interpreter.
 #
 # Task Scheduler (same command on every Synology host):
 #   /volume1/web/run_python.sh /volume1/web/logger.py -poll
 #   /volume1/web/run_python.sh /volume1/web/rollup.py -daily
 #
-# Optional: RUN_PYTHON_PRINT=1 prints the chosen binary to stderr before exec.
+# stdout/stderr and exit status match a direct "python script.py ..." run.
+# Do not use exec here: some DSM Task Scheduler mail captures miss output after exec.
+#
+# Optional: RUN_PYTHON_PRINT=1 prints the chosen binary to stderr before the script runs.
 
 set -eu
 
 if [ "$#" -lt 1 ]; then
     echo "Usage: run_python.sh <script.py|args...> [args...]" >&2
-    echo "Picks newest Python 3, then execs: <python> <args...>" >&2
+    echo "Picks newest Python 3, then runs: <python> <args...>" >&2
     exit 2
 fi
 
@@ -57,4 +60,9 @@ if [ "${RUN_PYTHON_PRINT:-}" = "1" ]; then
     echo "run_python.sh: using $PY" >&2
 fi
 
-exec "$PY" "$@"
+# Inherit stdout/stderr (no redirect). Exit with Python's status.
+set +e
+"$PY" "$@"
+status=$?
+set -e
+exit "$status"

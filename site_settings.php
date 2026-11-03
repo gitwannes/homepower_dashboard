@@ -57,7 +57,45 @@ function hp_setting_defaults(): array
         'pac_rad_floor' => '5',
         'fluvius_ean_electricity' => '',
         'fluvius_ean_gas' => '',
+        // Raw Meter Registers optional rows (default on). '0' hides the row.
+        'raw_show_import_t1' => '1',
+        'raw_show_import_t2' => '1',
+        'raw_show_export_t1' => '1',
+        'raw_show_export_t2' => '1',
+        'raw_show_solar_today' => '1',
+        'raw_show_solar_lifetime' => '1',
     ];
+}
+
+/**
+ * Optional Raw Meter Registers rows controlled from Settings (default on).
+ *
+ * @return array<string, string> setting key => label
+ */
+function hp_raw_optional_meter_labels(): array
+{
+    return [
+        'raw_show_import_t1' => 'Peak Import T1 (1.8.1)',
+        'raw_show_import_t2' => 'Off-peak Import T2 (1.8.2)',
+        'raw_show_export_t1' => 'Peak Export T1 (2.8.1)',
+        'raw_show_export_t2' => 'Off-peak Export T2 (2.8.2)',
+        'raw_show_solar_today' => 'Solar Generated Today',
+        'raw_show_solar_lifetime' => 'Solar Lifetime Yield',
+    ];
+}
+
+/**
+ * Whether an optional raw-register row should be shown. Missing key => on.
+ *
+ * @param array<string, string> $settings
+ */
+function hp_raw_show_optional(array $settings, string $key): bool
+{
+    if (!array_key_exists($key, hp_raw_optional_meter_labels())) {
+        return true;
+    }
+    $raw = isset($settings[$key]) ? trim((string)$settings[$key]) : '1';
+    return $raw !== '0';
 }
 
 /**

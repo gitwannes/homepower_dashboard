@@ -26,6 +26,23 @@ $smaIntegrationActive = hp_integration_active($hpSettings, 'sma', $hpStored);
 $webboxIntegrationActive = hp_integration_active($hpSettings, 'sunnywebbox', $hpStored);
 $showLiveYield = $smaIntegrationActive || $webboxIntegrationActive;
 
+// Raw Meter Registers: optional built-in rows + flagged virtual meters (A21).
+$rawShowImportT1 = hp_raw_show_optional($hpSettings, 'raw_show_import_t1');
+$rawShowImportT2 = hp_raw_show_optional($hpSettings, 'raw_show_import_t2');
+$rawShowExportT1 = hp_raw_show_optional($hpSettings, 'raw_show_export_t1');
+$rawShowExportT2 = hp_raw_show_optional($hpSettings, 'raw_show_export_t2');
+$rawShowSolarToday = hp_raw_show_optional($hpSettings, 'raw_show_solar_today');
+$rawShowSolarLifetime = hp_raw_show_optional($hpSettings, 'raw_show_solar_lifetime');
+$rawVirtualMeters = [];
+try {
+    $vmCtx = hp_vm_load_source_context($hp['pdo']);
+    foreach (hp_vm_list_raw_registers($hp['pdo']) as $vmRow) {
+        $rawVirtualMeters[] = hp_vm_evaluate($vmRow, $vmCtx);
+    }
+} catch (Throwable $e) {
+    $rawVirtualMeters = [];
+}
+
 // 1. Action Handler: Force Poll
 if (isset($_GET['action']) && $_GET['action'] === 'poll') {
     $pyScript = __DIR__ . '/logger.py';
@@ -1042,6 +1059,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                             <span class="w-12 text-left pl-2 text-sm text-slate-400">kWh</span>
                         </td>
                     </tr>
+                    <?php if ($rawShowImportT1): ?>
                     <tr>
                         <td class="py-2 pl-4 text-slate-600 font-medium">Peak Import T1 <span class="text-xs text-slate-400 font-normal">(1.8.1)</span></td>
                         <td class="py-2 text-right font-mono flex items-baseline justify-end">
@@ -1050,6 +1068,8 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                             <span class="w-12 text-left pl-2 text-sm text-slate-400">kWh</span>
                         </td>
                     </tr>
+                    <?php endif; ?>
+                    <?php if ($rawShowImportT2): ?>
                     <tr>
                         <td class="py-2 pl-4 text-slate-600 font-medium">Off-peak Import T2 <span class="text-xs text-slate-400 font-normal">(1.8.2)</span></td>
                         <td class="py-2 text-right font-mono flex items-baseline justify-end">
@@ -1058,6 +1078,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                             <span class="w-12 text-left pl-2 text-sm text-slate-400">kWh</span>
                         </td>
                     </tr>
+                    <?php endif; ?>
 
                     <!-- Section: Grid Export -->
                     <tr class="bg-emerald-50/40">
@@ -1071,6 +1092,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                             <span class="w-12 text-left pl-2 text-sm text-slate-400">kWh</span>
                         </td>
                     </tr>
+                    <?php if ($rawShowExportT1): ?>
                     <tr>
                         <td class="py-2 pl-4 text-slate-600 font-medium">Peak Export T1 <span class="text-xs text-slate-400 font-normal">(2.8.1)</span></td>
                         <td class="py-2 text-right font-mono flex items-baseline justify-end">
@@ -1079,6 +1101,8 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                             <span class="w-12 text-left pl-2 text-sm text-slate-400">kWh</span>
                         </td>
                     </tr>
+                    <?php endif; ?>
+                    <?php if ($rawShowExportT2): ?>
                     <tr>
                         <td class="py-2 pl-4 text-slate-600 font-medium">Off-peak Export T2 <span class="text-xs text-slate-400 font-normal">(2.8.2)</span></td>
                         <td class="py-2 text-right font-mono flex items-baseline justify-end">
@@ -1087,6 +1111,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                             <span class="w-12 text-left pl-2 text-sm text-slate-400">kWh</span>
                         </td>
                     </tr>
+                    <?php endif; ?>
 
                     <!-- Section: Peak Demand -->
                     <tr class="bg-slate-50/60">
@@ -1101,11 +1126,39 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                         </td>
                     </tr>
 
-                    <!-- Section: Solar (if active) -->
-                    <?php if ($hasSolar): ?>
+                    <?php if (count($rawVirtualMeters) > 0): ?>
+                    <tr class="bg-indigo-50/40">
+                        <td colspan="2" class="py-1.5 px-2 text-[11px] font-bold uppercase tracking-wider text-indigo-800">Virtual kWh meters</td>
+                    </tr>
+                    <?php foreach ($rawVirtualMeters as $vmRaw): ?>
+                        <?php
+                        $vmName = (string)($vmRaw['name'] ?? 'Virtual meter');
+                        $vmV = $vmRaw['V'] ?? null;
+                        $vmParts = ($vmV !== null && is_numeric($vmV))
+                            ? formatRawParts((float)$vmV, 3)
+                            : null;
+                        ?>
+                    <tr>
+                        <td class="py-2.5 pl-2 text-slate-800 font-semibold"><?= htmlspecialchars($vmName) ?></td>
+                        <td class="py-2.5 text-right font-mono flex items-baseline justify-end">
+                            <?php if ($vmParts !== null): ?>
+                            <span class="text-2xl md:text-3xl font-bold text-indigo-700"><?= $vmParts['int'] ?></span>
+                            <span class="text-2xl md:text-3xl font-bold text-indigo-400"><?= $vmParts['dec'] ?></span>
+                            <span class="w-12 text-left pl-2 text-sm text-slate-400">kWh</span>
+                            <?php else: ?>
+                            <span class="text-sm text-slate-400">unavailable</span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                    <?php endif; ?>
+
+                    <!-- Section: Solar (if active and at least one solar row enabled) -->
+                    <?php if ($hasSolar && ($rawShowSolarToday || $rawShowSolarLifetime)): ?>
                     <tr class="bg-amber-50/40">
                         <td colspan="2" class="py-1.5 px-2 text-[11px] font-bold uppercase tracking-wider text-amber-800">Solar Generation</td>
                     </tr>
+                    <?php if ($rawShowSolarToday): ?>
                     <tr>
                         <td class="py-3.5 text-slate-700 font-medium text-base">Solar Generated Today</td>
                         <td class="py-3.5 text-right font-mono">
@@ -1117,6 +1170,8 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                             </div>
                         </td>
                     </tr>
+                    <?php endif; ?>
+                    <?php if ($rawShowSolarLifetime): ?>
                     <tr>
                         <td class="py-3.5 text-slate-700 font-medium text-base">Solar Lifetime Yield</td>
                         <td class="py-3.5 text-right font-mono">
@@ -1128,6 +1183,7 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                             </div>
                         </td>
                     </tr>
+                    <?php endif; ?>
                     <?php endif; ?>
 
                     <!-- Section: Utilities -->

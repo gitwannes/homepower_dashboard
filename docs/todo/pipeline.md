@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-10-29 (**A14** Done)
+**Last updated:** 2026-11-03 (**A14** + **A21** closed)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -56,6 +56,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **A20** | Settings locked-by-default; Unlock timed window; Save-if-dirty; CSV outside admin pane — **2026-10-29** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **A15** | Settings save: probe + `*_active`; homepage errors; AJAX stay-unlocked on fail — **2026-10-29** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **A14** | Virtual kWh meters: Settings CRUD + calc + debug page — **2026-10-29** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
+| **A21** | Raw Meter Registers: virtual meters + optional T1/T2/solar rows — **2026-11-03** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 
 ---
 
@@ -64,10 +65,9 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
 | 1 | open | M | **A11** | Historical gas, wind, and similar on the pages. Triaged from P3, not kicked off | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 2 | open | S | **A21** | UI: virtual meters on Raw Meter Registers (+ further pages). After A14 | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 3 | open | M | **W1** | WanOS: this app pushes on `-daily` and when raw readings are opened | [`phaseW-wanos.md`](phaseW-wanos.md) |
-| 4 | open | M | **Ops5** | Daily DB dump to Settings Synology path; `powerbackup-YYMMDD-HHMMSS.sql.zip`; keep last 14 (replaces Hyper Backup) | [`roadmap.md`](../roadmap.md) |
-| 5 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
+| 2 | open | M | **W1** | WanOS: this app pushes on `-daily` and when raw readings are opened | [`phaseW-wanos.md`](phaseW-wanos.md) |
+| 3 | open | M | **Ops5** | Daily DB dump to Settings Synology path; `powerbackup-YYMMDD-HHMMSS.sql.zip`; keep last 14 (replaces Hyper Backup) | [`roadmap.md`](../roadmap.md) |
+| 4 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
 
 ---
 

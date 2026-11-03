@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) — Analytics UI + plant config
 
-**Status:** **A4**-**A20 Done** (incl. **A14**); **A11**, **A21** queued. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-10-29 (**A14** Done)  
+**Status:** **A4**-**A21 Done**; **A11** queued. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-11-03 (**A14** + **A21** closed)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py`
 
 ---
@@ -29,15 +29,37 @@
 | **A18** | Done | UI: Phases view + Sum mountain; CSV phase cols. Product: [`docs/architecture.md`](../architecture.md) |
 | **A19** | Done | Analytics explorer: calendar-day **Today** preset (default). Product: [`docs/architecture.md`](../architecture.md) |
 | **A20** | Done | Settings locked-by-default / Unlock timed window. Product: [`docs/architecture.md`](../architecture.md) |
-| **A21** | open | UI: virtual meters on Raw Meter Registers (+ further pages). After A14 |
+| **A21** | Done | Raw Meter Registers: virtual meters + optional rows. Product: [`docs/architecture.md`](../architecture.md) |
 
-**Parallel:** **A14**/**A15**/**A20** Done. **A11** Fluvius gas / wind. **A21** Raw Meter Registers for virtual meters.
+**Parallel:** **A14**-**A21** Done. **A11** Fluvius gas / wind.
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
 ---
 
 ## Verbatim inbox
+
+### 2026-11-03 - close A14 + A21
+
+> close A14
+> and Q21
+> A21
+
+A14 and A21 closed (Last DoD). Product: [`docs/architecture.md`](../architecture.md). `phaseA-analytics.md` stays in-repo while **A11** is open - do not archive the whole file yet.
+
+### 2026-11-03 - A21 ship (raw registers virtual + optional)
+
+> text "Show in Raw Meter Registers (flag; UI in A21)" rename to "Show in Raw Meter Registers"
+> enabling this checkbox doens't show meter in "raw readings": fix
+> additionally, add section: "show optional meters in raw readings", where these 5 are shown, each with a checkbox, default on - if disabled: don't show in raw readings:
+> Peak Import T1 (1.8.1)
+> Off-peak Import T2 (1.8.2)
+> Peak Export T1 (2.8.1)
+> Off-peak Export T2 (2.8.2)
+> Solar Generated Today
+> Solar Lifetime Yield
+
+Shipped as **A21** (6 optional rows listed; operator wrote "5").
 
 ### 2026-10-29 - A14 kickoff locked (round 3)
 
@@ -835,100 +857,45 @@ Calendar-day **Today** preset (chip after 24 h, before 7 d) is the explorer defa
 
 ## A14 - Virtual kWh meters from Settings
 
-**Status:** Done (2026-10-29)
+**Status:** Done (closed 2026-11-03; shipped 2026-10-29)
 **Size:** **M**
-**Depends on:** Settings (**A6** Done). Index **Raw Meter Registers** display = **A21**.
-**Product:** [`docs/architecture.md`](../architecture.md) (Virtual kWh meters)
+**Product:** [`docs/architecture.md`](../architecture.md) - Virtual kWh meters / `virtual_kwh_meters` / `virtual_meters.php` / `virtual_meters_debug.php`
 
-### Placement
+### Shipped summary
 
-Virtual kWh meters: Settings CRUD + live check, shared calc, PHP debug page (read-only). Store `show_in_raw_registers` flag; **do not** wire `index.php` Raw Meter Registers in A14 (**A21**). No warehouse writes.
-
-### Formula
-
-`V(t) = (S0 + C) + p * (S(t) - S0)`
-
-- `S(t)` = current source lifetime kWh (P1 from last `readings`; SMA/WebBox from `latest_state`)
-- `S0` = frozen on **first save** of that meter only
-- **Re-bias** button: set `S0` to current source reading; **C** and factor unchanged; **confirmation modal** required
-- `C` = bias kWh (may be negative)
-- Factor in Settings = percent, up to 4 decimals (e.g. `99.9996`); `p = percent / 100`
-
-**P1 net** = import - export.
-
-### Kickoff locks (operator 2026-10-29)
-
-| # | Lock |
-|---|---|
-| 1 | Formula above; percent factor with max 4 decimals; `p = percent/100`. |
-| 2 | Sources: **P1 import/export/net** from last `readings`; **SMA/WebBox total** from `latest_state`. Omit unavailable. First save requires readable `S0`. |
-| 3 | Settings (Unlock / A20): **Add virtual kWh meter**; edit + delete; fields **name**, **source**, **bias**, **factor %**; live **source** + **virtual** readings for check; checkbox **show in Raw Meter Registers** (flag only; index UI = A21); **Re-bias on current reading** + confirm modal. |
-| 4 | PHP debug page `virtual_meters_debug.php`: Unlock-gated like Settings; **read-only** (no config). Show whatever is useful to troubleshoot: meter id/name, source key, `S`, `S0`, `C`, percent, `p`, `V`, delta `(S-S0)`, formula line, reading timestamp, raw-registers flag. Link from Settings virtual-meters section. |
-| 5 | Storage: table `virtual_kwh_meters` (not purgeable derived). Shared calc helper used by Settings + debug (+ A21 later). |
-| 6 | No writes to `history_5min` / daily / monthly / rollup. |
-| 7 | Changing source / bias / factor after first save does **not** auto-update `S0` (use Re-bias). |
-
-### Open questions
-
-None - shipped.
+Settings CRUD for virtual lifetime meters: `V = (S0 + C) + p*(S - S0)` with percent factor; P1 import/export/net + SMA/WebBox sources; Re-bias + confirm; Unlock-gated debug page. No warehouse writes. Raw Meter Registers display of flagged meters = **A21**.
 
 ### DoD
 
-- [x] `virtual_kwh_meters` + shared calc (`V` from formula)
-- [x] Settings: add / edit / delete; live source + virtual; Re-bias + confirm; raw-registers checkbox stored
-- [x] `virtual_meters_debug.php` Unlock read-only troubleshooting
-- [x] No index Raw Meter Registers wiring (A21); no warehouse writes
-- [x] Product docs (`architecture.md`) match; phase pointers
+- [x] Table + shared calc; Settings add/edit/delete/Re-bias; debug page; no rollup writes
+- [x] Product docs match; phase closed
 
-### Verbatim - 2026-10-28
-
-> [open]  virtual kWh meters from Settings (bias to import / export / PV)
-
-### Verbatim - 2026-10-29 (kickoff answers)
-
-> 1: it will track the same kWh reading from the source - meter but with a bias - I have several kWh meters which track yield - so it is just source + bias = reading for that virtual meter
-> 2: selectable in settings: all kWh meters (so those 3) ("add one" button)
-> 3: a constant offset + a percentage (with up to 4 decimems) of the new readings eg virtual meter 1 = yield minus 25000 kWh + 99,9996% of the additional yield kWh from now on
-> 4: for now: only in code, we will worry about UI later (triage this) - give code lines to display these readings and calculation (for troubleshooting)
-> 5: no need for rollup / history_5min / daily totals I think - confirm
-> 6: leave asis
-
-### Verbatim - 2026-10-29 (kickoff round 2)
-
-> 1: correct
-> 2: factor in % in settings, so 99.9996
-> 3: possible S0 = P1 lifetime import/export/net (3) + SMA total + webbox total = 5 possible sources (if available)
-> 4: add to settings: button "add virtual kWh meter" - then some field appear: name, source, bias, factor + info on source & virtual reading (to check if correct) + checkbox if this virtual reading should appear in "Raw Meter Registers"
-> 5: add PHP debug page
-
-### Verbatim - 2026-10-29 (kickoff round 3)
-
-> 1: yes
-> 2: first save only - add button to re-bias on current reading (+ confirmation modal)
-> 3: UI in Q21
-> 4: all what you think is usefull to troubleshoot these virtual meters - no config, that is on the config page
-> 5: yes
-> 6: last readings
+### Verbatim (kickoff) - see inbox 2026-10-28 / 2026-10-29
 
 ---
 
 ## A21 - UI: virtual kWh meter readings
 
-**Status:** open (triaged 2026-10-29, not kicked off)
+**Status:** Done (closed 2026-11-03)
 **Size:** **S**
-**Depends on:** **A14**
+**Depends on:** **A14** (Done)
+**Product:** [`docs/architecture.md`](../architecture.md) - Raw Meter Registers / optional raw rows
 
-### Placement
+### Shipped summary
 
-Show virtual meters with **show in Raw Meter Registers** on `index.php` **Raw Meter Registers** (and any further page surfaces locked at kickoff). A14 stores the flag only; Settings live check + debug page are A14.
+Index Raw Meter Registers shows virtual meters with **Show in Raw Meter Registers**. Settings **Show optional meters in raw readings** toggles Import T1/T2, Export T1/T2, Solar Today, Solar Lifetime (default on).
 
-### Verbatim - 2026-10-29
+### DoD
 
-> 4: for now: only in code, we will worry about UI later (triage this) - give code lines to display these readings and calculation (for troubleshooting)
+- [x] Virtual meters in Raw Meter Registers modal
+- [x] Optional built-in row toggles (default on)
+- [x] Product docs match; phase closed
 
-### Verbatim - 2026-10-29 (A14 round 3)
+### Verbatim - 2026-11-03
 
-> 3: UI in Q21
+> text "Show in Raw Meter Registers (flag; UI in A21)" rename to "Show in Raw Meter Registers"
+> enabling this checkbox doens't show meter in "raw readings": fix
+> additionally, add section: "show optional meters in raw readings"...
 
 ---
 
