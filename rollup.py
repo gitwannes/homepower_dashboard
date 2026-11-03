@@ -582,9 +582,18 @@ def build_clear_sky_envelopes(conn: sqlite3.Connection, step: int = 4) -> None:
 
     Uses interval mean solar_power_w (not solar_power_max_w surge). Ignores samples
     above MAX_PLAUSIBLE_PAC_W and night / no-radiation shoulder junk (sql_pac_plausible).
+
+    A24 (amended): keep webbox_archive (needed for historical months). Envelope-only
+    require measured sun: COALESCE(solar_radiation_max, solar_radiation, 0) > PAC_RAD_FLOOR
+    so PAC-with-zero-rad archive junk (e.g. Nov 17-19h hills) cannot win a slot.
     """
     start_time = time.time()
     pac_ok = sql_pac_plausible("COALESCE(solar_power_w, 0)")
+    # Envelope-only sun gate (A24 amend): daytime clock hours with PAC and rad~0
+    # pass sql_pac_plausible (shoulder starts at 20:00) but must not define best-day.
+    rad_ok = (
+        f"COALESCE(solar_radiation_max, solar_radiation, 0) > {float(PAC_RAD_FLOOR)}"
+    )
 
     with conn:
         conn.execute("DELETE FROM clear_sky_envelopes;")
@@ -605,6 +614,7 @@ def build_clear_sky_envelopes(conn: sqlite3.Connection, step: int = 4) -> None:
                     COALESCE(solar_power_w, 0) AS pac
                 FROM history_5min
                 WHERE {pac_ok}
+                  AND {rad_ok}
             )
             GROUP BY mth, tp;
         """)
@@ -613,7 +623,7 @@ def build_clear_sky_envelopes(conn: sqlite3.Connection, step: int = 4) -> None:
     count = conn.execute("SELECT COUNT(*) FROM clear_sky_envelopes").fetchone()[0]
     _status_line(
         step,
-        f"clear_sky_envelopes: full rebuild; table total {count:,} timepoints",
+        f"clear_sky_envelopes: full rebuild (rad>{PAC_RAD_FLOOR:g}); table total {count:,} timepoints",
         duration,
     )
 

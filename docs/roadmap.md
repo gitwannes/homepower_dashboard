@@ -60,7 +60,7 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
       - `history_5min` (Consolidated 17-year master table).
       - `daily_history` (date, solar_yield_kwh, solar_peak_w, sun_hours, grid_import_kwh, grid_export_kwh, self_consumption_kwh, temps, wind, radiation).
       - `monthly_history` & `expected_monthly` (PVGIS baseline tracking).
-      - `clear_sky_envelopes` (month, timepoint [0..287], max_pac_w, max_pac_date, max_rad_wm2).
+      - `clear_sky_envelopes` (month, timepoint [0..287], max_pac_w, max_pac_date, max_rad_wm2). A24: envelope rebuild requires radiation above PAC rad floor (WebBox kept).
 - [x] Build `rollup.py` (CLI & Cron Worker) Framework:
       - [x] Mode A: Bridge Consolidation (`-consolidate`) snaps staging timestamps and UPSERTs into `history_5min`.
       - [x] Mode B: Incremental daily run (computes yesterday's final numbers at midnight into `daily_history`).
@@ -88,6 +88,7 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
       - **A7 Done:** all-time singles on `topn.php` (`top_records`); `-daily` beat + `-buildalltoprecords`.
       - **A12 Done:** Capacity peak ranks (top 10 months); records filtered by metric (yield / peak; weather records on `weather.php` / **A11** Done).
       - **A22:** Virtual 'best-day' (from `clear_sky_envelopes`) on solar Top-N; removed from analytics.
+      - **A24 Done:** envelope rebuild requires rad above floor; WebBox archive kept.
 - [x] Settings (`settings.php`): admin password on first open; locked-by-default Unlock window (countdown); devices, titles, monthly expected kWh, spike cap, and night gates in `meter_history.db`. Save probes P1/SMA/WebBox/Portal and writes `*_active` (`integration_probes.py`); partial fill is atomic. Virtual kWh meters (A14) + optional Raw Meter Registers rows (A21). Encrypted full-database download and restore (`db_backup.py`); 1-min CSV export without password. See [`architecture.md`](architecture.md).
 - [x] Verify analytics / summary with populated rollups (A2/A3 + operator smoke).
 

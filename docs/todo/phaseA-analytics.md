@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) â Analytics UI + plant config
 
-**Status:** **A4**-**A22** + **A11** + **A23** Done; **A24** locked; **A25** open. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-11-03 (**A25** triaged)  
+**Status:** **A4**-**A24** + **A11** + **A23** Done; **A25** locked; **A26** open. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-11-03 (**A24** Done)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py` - `weather.php`
 
 ---
@@ -32,10 +32,11 @@
 | **A21** | Done | Raw Meter Registers: virtual meters + optional rows. Product: [`docs/architecture.md`](../architecture.md) |
 | **A22** | Done | bugfix: analytics load; Virtual 'best-day' -> Top-N; PVGIS week/month |
 | **A23** | Done | Weather extremes on daily/monthly; weather.php periods read rollups |
-| **A24** | locked | bugfix: clear_sky_envelopes exclude webbox_archive |
-| **A25** | open | weather.php All years card (monthly_history extremes) |
+| **A24** | Done | bugfix: clear_sky envelopes rad>floor (WebBox kept) |
+| **A25** | locked | weather.php All years card (monthly_history extremes) |
+| **A26** | open | bugfix: clear_sky envelope harden (June evening jump) |
 
-**Parallel:** **A14**-**A22** + **A11** + **A23** Done. **A24** locked. **A25** open (weather All years).
+**Parallel:** **A14**-**A24** + **A11** + **A23** Done. **A25** locked (`implement` unblocked). **A26** open (envelope harden).
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
@@ -43,11 +44,48 @@
 
 ## Verbatim inbox
 
+### 2026-11-03 - close A24
+
+> close A24
+
+Last DoD. Operator smoke accepted. A25 implement unblocked. Phase file stays in-repo (**A25**/**A26** open).
+
+### 2026-11-03 - A25 kickoff answers
+
+> 1: ok
+> 2: confirmed
+> 3: rollup only
+> 4: yes
+> 5: keep consistency
+> 6: keep null for empty years
+> 7: after A24
+
+Locked into **A25** section. No code this turn.
+
+### 2026-11-03 - triage A26 (envelope harden)
+
+> give options for envelope harden
+> triage into new phase
+
+Placed: **A26** (affinity **A**). Follow-on to A24; June spike = `2016-06-24` webbox discontinuity. Option choice at kickoff.
+
+### 2026-11-03 - implement A24 (rad gate amend)
+
+> ok, implement
+
+Blanket webbox exclude emptied Jan-Sep. Amended: keep WebBox; envelope-only require rad > PAC_RAD_FLOOR. Operator `-buildall` + smoke again before `close A24`.
+
+### 2026-11-03 - implement A24
+
+> implement A24
+
+First ship excluded `webbox_archive` (insufficient live history). Superseded by rad-gate amend same day.
+
 ### 2026-11-03 - triage A25; close A22/A24 request
 
 > triage in A25, then close A22 (if needed) & A24
 
-Placed: **A25**. **A22** already Done (no further close action). **A24** not closed: still locked awaiting `implement` (no envelope filter code yet). Operator must confirm abandon vs leave open.
+Placed: **A25**. **A22** already Done. **A24** left open then implemented same day.
 
 ### 2026-11-03 - close A22 + A24 locks
 
@@ -129,7 +167,7 @@ Placed: **A22** (affinity **A**). Powertests later dropped at kickoff. No code u
 > and Q21
 > A21
 
-A14, A21, A11, A22, and A23 closed (Last DoD). Product: [`docs/architecture.md`](../architecture.md). `phaseA-analytics.md` stays in-repo while **A24** is open - do not archive the whole file yet.
+A14, A21, A11, A22, A23, and A24 closed (Last DoD). Product: [`docs/architecture.md`](../architecture.md). `phaseA-analytics.md` stays in-repo while **A25**/**A26** are open - do not archive the whole file yet.
 
 ### 2026-11-03 - A21 ship (raw registers virtual + optional)
 
@@ -1223,29 +1261,60 @@ See Verbatim inbox **2026-11-03 - A23 triage + kickoff**, **A23 kickoff answers 
 
 ---
 
-## A24 - bugfix: clear_sky_envelopes exclude webbox_archive
+## A24 - bugfix: clear_sky_envelopes sun gate (WebBox kept)
 
-**Status:** **locked** 2026-11-03 - awaiting `implement` (operator: no code yet).  
+**Status:** **Done** 2026-11-03 (amended rad gate; operator close).  
 **Size:** S  
-**Id note:** Operator asked for A23; **A23** already = weather extremes (Done). This item is **A24**.
+**Product:** [`docs/architecture.md`](../architecture.md) � `rollup.py` `build_clear_sky_envelopes`
 
-### Verified facts (NAS SQL 2026-11-03)
+### Shipped summary
 
-- Spine mix: `webbox_archive` ~1.8M rows, `live_p1` ~3.5k, `merged` 336, `fluvius` 66.
-- Evening envelope winners (21:00-21:55, PAC>200): **all joined rows are `webbox_archive`**. Top cluster **2016-06-24**.
-- November 16:40-19:55 envelope: **2015-11-*** WebBox; many slots PAC >1 kW with rad 0 (before shoulder at 20:00).
-- Query D: every high evening PAC bucket is **`webbox_archive` only**.
+Envelope rebuild keeps all `data_source` values (including `webbox_archive`). Adds envelope-only  
+`COALESCE(solar_radiation_max, solar_radiation, 0) > PAC_RAD_FLOOR` on top of existing PAC night/shoulder gates. Status line: `rad>?`. Refresh via `-buildall` only. June evening jump left to **A26**.
+
+### Locked (amended)
+
+| # | Lock |
+|---|---|
+| L1' | Do **not** ban `webbox_archive` from envelopes (historical coverage). |
+| L2 | No WebBox timestamp rewrite in this phase. |
+| L3 | Operator **`rollup.py -buildall`** after sync. No `-buildallenvelopes`. |
+| L7 | Envelope-only require radiation above `PAC_RAD_FLOOR`. |
+
+### DoD
+
+- [x] Envelope SQL requires rad > floor; WebBox included
+- [x] Docs match amended behaviour
+- [x] Operator `-buildall` + smoke (accepted on `close A24`)
+- [x] Last DoD docs audit (`architecture.md` / `roadmap.md` / pipeline)
+
+### Verbatim
+
+See Verbatim inbox **A24 triage/kickoff**, first implement, **rad gate amend**, and **close A24**.
+
+---
+
+## A25 - weather.php All years card
+
+**Status:** **locked** 2026-11-03 - **A24** Done; say `implement` to code.  
+**Size:** S  
+**Depends on:** **A23** Done (`monthly_history` weather extremes). **A24** Done (L7 satisfied).
+
+### Placement
+
+Affinity **A**. Follow-on to A11/A23: Summary has All years; weather currently stops at Year.
 
 ### Locked
 
 | # | Lock | Source |
 |---|---|---|
-| L1 | `build_clear_sky_envelopes` must **not** use `data_source = 'webbox_archive'`. | operator + SQL |
-| L2 | Do **not** rewrite WebBox staging timestamps in this phase. | scope |
-| L3 | After ship: operator runs **`rollup.py -buildall`** to refresh envelopes. **No** `-buildallenvelopes` flag. | operator "2: buildall" |
-| L4 | UI label **Virtual 'best-day'**; table `clear_sky_envelopes` unchanged. | A22 |
-| L5 | Keep **`merged`**, `live_p1`, `sunnyportal`, `fluvius` in the envelope source set. | operator "1: yes" |
-| L6 | Exclude NULL `data_source` if any (untrusted). | kickoff default |
+| L1 | Card after Year; static **All years** chrome (title only; no prev/next / Jump) - Summary-style. | operator "1: ok" |
+| L2 | Aggregate per calendar year from `monthly_history`: `MAX` of monthly maxes; `MIN` of `temp_ambient_min`. No new tables / no rollup schema change. | operator "2: confirmed" |
+| L3 | Rollup only - do **not** merge live `readings` into the open year. | operator "3: rollup only" |
+| L4 | Same six period series + channel gates as Week/Month/Year (Wind max, Gust, Ambient max/min, Module max, Radiation max). | operator "4: yes" |
+| L5 | Keep AJAX consistency: `ajax=period&mode=allyears` (plus SSR first paint). | operator "5: keep consistency" |
+| L6 | Year axis spans first..last calendar year with any `monthly_history` row in scope; years with no weather extremes stay as **null** bars (not omitted, not zero). | operator "6: keep null for empty years" |
+| L7 | Implement only after **A24** closed. | operator "7: after A24" - **satisfied** |
 
 ### Open questions
 
@@ -1253,40 +1322,49 @@ None.
 
 ### DoD
 
-- [ ] `build_clear_sky_envelopes` filters out `webbox_archive` (+ NULL source)
-- [ ] Docs: architecture envelope note matches
-- [ ] Operator `-buildall` + smoke: Nov / Whole year evening hills gone or greatly reduced
+- [ ] `weather.php` All years card after Year; no nav arrows
+- [ ] Year bars from `monthly_history` extremes (L2/L3/L6); same series gates (L4)
+- [ ] SSR + `ajax=period&mode=allyears` (L5)
+- [ ] Architecture `weather.php` row documents All years
 - [ ] Last DoD docs audit
 
 ### Verbatim
 
-See Verbatim inbox **2026-11-03 - A24 triage + kickoff** and **close A22 + A24 locks**.
+See Verbatim inbox **2026-11-03 - triage A25** and **A25 kickoff answers**.
 
 ---
 
-## A25 - weather.php All years card
+## A26 - bugfix: clear_sky envelope harden (June evening jump)
 
 **Status:** open (triaged 2026-11-03). Kickoff not started.  
 **Size:** S  
-**Depends on:** **A23** Done (`monthly_history` weather extremes exist).
+**Depends on:** **A24** Done (keep WebBox + rad>floor). Distinct from WebBox timestamp rewrite.
 
-### Placement
+### Verified facts (NAS SQL 2026-11-03)
 
-Affinity **A**. Follow-on to A11/A23: Summary has All years; weather currently stops at Year.
+- June Virtual 'best-day' 21:10-21:55 spike owned by **`2016-06-24` `webbox_archive`**.
+- Same day: 21:05 = 62 W / rad ~14 -> 21:10 = 1189 W / rad ~105 (discontinuity).
+- 21:00-21:55 PAC>200: high winners (>900 W) are **month 6 only**; May/Jul ~200-440 W.
+- Cliff at 22:00 = existing deep-night gate. A24 rad floor does not remove this (rad >> 5).
 
-### Intent (not locked ? kickoff later)
+### Candidate harden options (pick at kickoff)
 
-- Add an **All years** card on `weather.php` (after Year), summary-style.
-- Bars from `monthly_history` weather extremes aggregated per calendar year (max/min as appropriate per series).
-- No new tables. No rollup schema change expected if A23 monthly columns are complete.
+| # | Option | Note |
+|---|---|---|
+| 1 | Stronger step despike / jump reject | **Preferred in advice** |
+| 2 | Month dusk cutoff table | Blunt |
+| 3 | PAC-rad consistency model | Heavier |
+| 4 | Same-day no re-rise after local min | Good second |
+| 5 | Surgical denylist day/slots | Hotfix only |
+| 6 | webbox_archive hour cap | Punishes archive evenings |
 
-### Open (placement only)
+### Open (placement)
 
-None for placement. Spec locks at `kickoff A25`.
+None. Spec locks at `kickoff A26` (which option(s), thresholds, `-buildall` refresh).
 
 ### Verbatim
 
-See Verbatim inbox **2026-11-03 - triage A25**.
+See Verbatim inbox **2026-11-03 - triage A26**.
 
 ---
 
