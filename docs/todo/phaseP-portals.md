@@ -321,7 +321,7 @@ Manual CSV only, into `fluvius_interval`, for the electricity and gas EANs on th
 
 - Fluvius portal script (step 2).
 - Drawing the quarters (**A5**).
-- Pages for historical gas / wind (**A11**). Capacity peak UI (**A12** Done).
+- Pages for historical gas / wind / weather (**A11** Done). Capacity peak UI (**A12** Done).
 
 ### Verbatim — 2026-10-26 (close)
 
@@ -366,4 +366,4 @@ The 30-minute hole was dropped from the fall-out test. A long hole is stitched q
 - Replacing WebBox ZIP / `sql_importer` archive path without an explicit kickoff lock
 - Fluvius portal script (P3 step 2)
 - Drawing Fluvius quarters on the day chart (**A5** — shipped separately)
-- Pages for historical gas / wind (**A11**). Capacity peak UI (**A12** Done).
+- Pages for historical gas / wind / weather (**A11** Done). Capacity peak UI (**A12** Done).

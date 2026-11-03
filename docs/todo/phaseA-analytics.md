@@ -1,9 +1,9 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) Ã¢Â€Â” Analytics UI + plant config
 
-**Status:** **A4**-**A21 Done**; **A11** shipped (awaiting close); **A22** kickoff. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-11-03 (**A22** kickoff)  
-**Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py`
+**Status:** **A4**-**A22** + **A11** + **A23** Done; **A24** locked; **A25** open. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-11-03 (**A25** triaged)  
+**Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py` - `weather.php`
 
 ---
 
@@ -19,7 +19,7 @@
 | **A8** | Done | Live chart clock window. Product: [`docs/architecture.md`](../architecture.md) |
 | **A9** | Done | Settings encrypted backup download + restore. Product: [`docs/architecture.md`](../architecture.md) |
 | **A10** | Done | Warehouse rebuild. Product: [`docs/architecture.md`](../architecture.md) (Rollup CLI) |
-| **A11** | Shipped | Historical gas, water, weather page; awaiting close |
+| **A11** | Done | Historical gas, water, weather page. Product: [`docs/architecture.md`](../architecture.md) |
 | **A12** | Done | Capacity peak on summary + top-n. Product: [`docs/architecture.md`](../architecture.md) |
 | **A13** | Done | Grid import/export on summary and top-n. Product: [`docs/architecture.md`](../architecture.md) |
 | **A14** | Done | Virtual kWh meters: Settings + calc + debug. Product: [`docs/architecture.md`](../architecture.md) |
@@ -30,15 +30,65 @@
 | **A19** | Done | Analytics explorer: calendar-day **Today** preset (default). Product: [`docs/architecture.md`](../architecture.md) |
 | **A20** | Done | Settings locked-by-default / Unlock timed window. Product: [`docs/architecture.md`](../architecture.md) |
 | **A21** | Done | Raw Meter Registers: virtual meters + optional rows. Product: [`docs/architecture.md`](../architecture.md) |
-| **A22** | coding | bugfix: analytics load; Virtual 'best-day' -> Top-N; PVGIS week/month |
+| **A22** | Done | bugfix: analytics load; Virtual 'best-day' -> Top-N; PVGIS week/month |
+| **A23** | Done | Weather extremes on daily/monthly; weather.php periods read rollups |
+| **A24** | locked | bugfix: clear_sky_envelopes exclude webbox_archive |
+| **A25** | open | weather.php All years card (monthly_history extremes) |
 
-**Parallel:** **A14**-**A21** Done. **A11** Fluvius gas / wind. **A22** UI bugfix bundle (powertests dropped).
+**Parallel:** **A14**-**A22** + **A11** + **A23** Done. **A24** locked. **A25** open (weather All years).
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
 ---
 
 ## Verbatim inbox
+
+### 2026-11-03 - triage A25; close A22/A24 request
+
+> triage in A25, then close A22 (if needed) & A24
+
+Placed: **A25**. **A22** already Done (no further close action). **A24** not closed: still locked awaiting `implement` (no envelope filter code yet). Operator must confirm abandon vs leave open.
+
+### 2026-11-03 - close A22 + A24 locks
+
+> close A22
+> 1: yes
+> 2: buildall , no need to create seperate buildallenvelopes
+> no code yet
+
+A22 closed (Last DoD). A24 Q1/Q2 locked; still awaiting `implement` (no code this turn).
+
+### 2026-11-03 - A24 triage + kickoff (envelope webbox filter)
+
+> 1: give stataments to check
+> 2: A
+> triage into A23 & kickoff
+
+A23 already taken (weather). Placed as **A24**. Operator ran diagnostic SQL on NAS (2026-11-03); results confirm option A. See A24 section.
+
+### 2026-11-03 - close A23
+
+> close A23
+
+### 2026-11-03 - A23 kickoff answers + A11 close
+
+> 1: one ship
+> 2: both daily & buildall code should be changed - -buildall is needed for db change after file sync
+> 3: align
+> 4: close A11 now
+> 5: W2 is out
+
+### 2026-11-03 - A23 triage + kickoff
+
+> triage this into new then kickoff
+
+Prior ask (verbatim body of the work):
+
+> put that table in architecture MD:
+> SoT (keep forever) ... virtual_kwh_meters (config) ... top_records / top_periods
+> what is to do for db / ui changes?
+
+(Architecture warehouse map already updated 2026-11-03. Remaining work placed as **A23**.)
 
 ### 2026-11-03 - A22 implement (Q2 locked)
 
@@ -79,7 +129,7 @@ Placed: **A22** (affinity **A**). Powertests later dropped at kickoff. No code u
 > and Q21
 > A21
 
-A14 and A21 closed (Last DoD). Product: [`docs/architecture.md`](../architecture.md). `phaseA-analytics.md` stays in-repo while **A11** is open - do not archive the whole file yet.
+A14, A21, A11, A22, and A23 closed (Last DoD). Product: [`docs/architecture.md`](../architecture.md). `phaseA-analytics.md` stays in-repo while **A24** is open - do not archive the whole file yet.
 
 ### 2026-11-03 - A21 ship (raw registers virtual + optional)
 
@@ -601,16 +651,15 @@ Settings downloads and restores an encrypted copy of the whole database. `db_bac
 
 ---
 
-## A11 Ã¢Â€Â” Historical gas, wind, and similar
+## A11 - Historical gas, wind, and similar
 
-**Status:** **Shipped** (code 2026-11-03) - awaiting operator close / Last DoD  
+**Status:** **Done** 2026-11-03 (Last DoD / operator close)  
 **Size:** **L**  
-**Product:** [`docs/architecture.md`](../architecture.md) Â· `gas_water.php` Â· `utility_volume.py` Â· `weather.php` Â· `summary.php` Â· `topn.php` Â· `index.php` Â· `rollup.py`  
-**Depends on:** P3 (Done) for gas rows in `fluvius_interval`. Wind / ambient / module / radiation already on `history_5min` / `daily_history` / `top_records`. Water + P1 gas counters live on `readings` / `history_5min` (`gas`, `water`); Fluvius gas stays in `fluvius_interval` only (not copied to `history_5min`).
+**Product:** [`docs/architecture.md`](../architecture.md) (gas/water + `weather.php`) · `gas_water.php` · `utility_volume.py` · `weather.php` · `summary.php` · `topn.php` · `index.php` · `rollup.py`
 
-### Placement
+### Done summary
 
-Not part of P3. P3 stores gas for the configured gas EAN and does not put it on a page. This phase is the first UI for that gas, and for warehouse weather series. Locked 2026-11-03.
+Shipped gas/water on summary/topn/index (m3; Fluvius gas not on `history_5min`) and standalone `weather.php` (explorer + Week/Month/Year + records). Weather period rollups completed in **A23**. WanOS ambient source: **W2**. All-years weather card: **A25**.
 
 ### DoD
 
@@ -619,26 +668,13 @@ Not part of P3. P3 stores gas for the configured gas EAN and does not put it on 
 - [x] Index 2 h gas/water rate charts
 - [x] `weather.php` explorer + period + records; nav pill
 - [x] Product docs (`architecture.md`)
-- [ ] Operator close
+- [x] Operator close / Last DoD (2026-11-03)
 
-### Locked decisions (2026-11-03)
+### Locked decisions (record)
 
 | # | Lock |
 |---|---|
-| 1 | Series: all available (Fluvius gas, P1 gas, P1 water, wind, gust, ambient, module, radiation). |
-| 2 | Gas + water: separate metrics on `summary.php` + `topn.php` (not shared). |
-| 3 | Gas unit: **m3**. No euro/cost in A11 (HomeWizard cost line out of scope). |
-| 4 | Gas summary cards: **day** + week + month + year + all years. |
-| 5 | Gas day curve: **1-min** from P1 when available; else **5-min** from `history_5min` counter diffs; else Fluvius **hour** bars from `fluvius_interval`. Chart language: filled area of interval use (HomeWizard Day-style). |
-| 6 | Gas totals: prefer valid **P1** day/month delta; else Fluvius. P1 day validity **mirrors electricity fall-out** (edges + counter step-down). |
-| 7 | Water: separate metric; **no day card**; week = one bar per day; hide unless P1 water meter present. **water-link = future** (not in A11). |
-| 8 | Top-N: gas **highest only**; water **highest + lowest**; water lowest excludes **0-days** and **today**. |
-| 9 | `index.php`: gas and/or water charts **below** Grid exchange and WebBox block; **same 2 h** span as power pulse; **instant rate** (m3/h from 1-min deltas), HomeWizard-style filled area - not cumulative. |
-| 9b | `analytics.php`: gas/water rate card **below** power explorer; Gas\|Water switch; **same explorer window** (no own range chips); Water only when live P1 `water_meter` (2026-11-03 patch). |
-| 10 | Rollup: **amend** `daily_history` + `monthly_history` with period `gas_m3` / `water_m3`; fill in `-daily` / `-buildall`. Do **not** copy Fluvius gas onto `history_5min`. |
-| 11 | Weather: new **`weather.php`** (nav pill). Do **not** fold into analytics / summary / topn. Wind/ambient/module `top_records` show here (stay hidden on `topn.php`). |
-| 12 | Weather v1: day explorer + period bars + records; series **toggles** (multi-line / dual axis as needed). |
-| 13 | Ship: **all in A11** (no a/b split). |
+| 1-13 | As locked 2026-11-03 (gas/water metrics, weather page, no Fluvius gas on `history_5min`). Full Q&A verbatim below. |
 
 ### Verbatim ? 2026-11-03 (lock + implement)
 
@@ -1131,35 +1167,85 @@ Affinity **A**. Page starts locked; Unlock asks admin password; timed edit windo
 
 ## A22 - UI bugfix bundle (analytics load / Virtual best-day / PVGIS)
 
-**Status:** coding (2026-11-03). Qs locked; `fix in this scope`.  
+**Status:** Done 2026-11-03.  
 **Size:** M  
-**Dropped:** move powertests icon (operator 2026-11-03).
+**Product:** [`docs/architecture.md`](../architecture.md) · `analytics.php` · `topn.php` · `summary.php` · `pac_quality.php`
 
-### Items (in scope)
+### Shipped summary
 
-| # | Item | Status |
-|---|---|---|
-| 1 | Analytics blank charts / load | Locked (L6/L7) |
-| 2 | Rename Clear-sky Envelope -> **Virtual 'best-day'**; move panel to Top-N | Locked (L1/L2/L4) |
-| 3 | Summary PVGIS on week + month (solar) | Locked (L5) |
+- Analytics: Clear-sky panel removed; serial explorer then compare (rAF yield); soft-fail panel errors.
+- Top-N (solar): **Virtual 'best-day'** from `clear_sky_envelopes` (`ajax=bestday`), below records.
+- Summary solar week/month: PVGIS daily-share line + vs-PVGIS stats.
+- Powertests icon move dropped from scope. Envelope WebBox junk filter = **A24** (not A22).
 
-### Verified facts
+### DoD
 
-- Pre-fix: `analytics.php` serial-loaded explorer + compare + envelope; Apex multi-mount blanking known.
-- Shipped target: envelope off analytics; Virtual 'best-day' on `topn.php`; week/month PVGIS daily-share line.
-- Table name stays `clear_sky_envelopes`. PVGIS source remains `expected_monthly` (inclination 30).
+- [x] Analytics: no envelope; serial explorer/compare per L7
+- [x] Top-N (solar): Virtual 'best-day' panel
+- [x] Summary solar week/month PVGIS line
+- [x] Docs: architecture / README / roadmap
+- [x] Last DoD docs audit (close 2026-11-03)
+
+### Verbatim
+
+See Verbatim inbox **2026-11-03 - triage/kickoff/implement A22** and **close A22 + A24 locks**.
+
+---
+
+## A23 - Weather extremes on daily/monthly rollups
+
+**Status:** **Done** 2026-11-03 (Last DoD / operator close)  
+**Size:** **M**  
+**Product:** [`docs/architecture.md`](../architecture.md) · `rollup.py` · `weather.php`
+
+### Done summary
+
+Daily gained `wind_speed_max_ms`; monthly weather columns use the same names as daily and are filled from daily in `-daily` / `-buildall`. `weather.php` Week/Month read `daily_history`; Year reads `monthly_history` (open day/month may merge live `readings`). Legacy monthly `max_temp_module` / `max_wind_gust` unused on older DBs. Operator `-buildall` after sync is the one-time rewrite step (L6).
+
+### Locked decisions (record)
+
+| # | Lock |
+|---|---|
+| L1-L8 | As locked 2026-11-03 (no weather_* tables; aligned daily/monthly weather cols; one ship UI cutover; `-buildall` after sync; W2 out). |
+
+### DoD
+
+- [x] Daily schema + fill includes `wind_speed_max_ms`; gust not coalesced with wind
+- [x] Monthly schema + fill uses aligned weather column names from daily
+- [x] `-daily` and `-buildall` both write the new weather extremes
+- [x] `weather.php` Week/Month/Year read daily/monthly
+- [x] Architecture / phase docs match shipped behaviour
+- [x] Operator close / Last DoD (2026-11-03); `-buildall` after sync is operator rebuild step
+
+### Verbatim
+
+See Verbatim inbox **2026-11-03 - A23 triage + kickoff**, **A23 kickoff answers + A11 close**, and **close A23**.
+
+---
+
+## A24 - bugfix: clear_sky_envelopes exclude webbox_archive
+
+**Status:** **locked** 2026-11-03 - awaiting `implement` (operator: no code yet).  
+**Size:** S  
+**Id note:** Operator asked for A23; **A23** already = weather extremes (Done). This item is **A24**.
+
+### Verified facts (NAS SQL 2026-11-03)
+
+- Spine mix: `webbox_archive` ~1.8M rows, `live_p1` ~3.5k, `merged` 336, `fluvius` 66.
+- Evening envelope winners (21:00-21:55, PAC>200): **all joined rows are `webbox_archive`**. Top cluster **2016-06-24**.
+- November 16:40-19:55 envelope: **2015-11-*** WebBox; many slots PAC >1 kW with rad 0 (before shoulder at 20:00).
+- Query D: every high evening PAC bucket is **`webbox_archive` only**.
 
 ### Locked
 
 | # | Lock | Source |
 |---|---|---|
-| L1 | UI name: **Virtual 'best-day'**. | operator |
-| L2 | Move panel off Analytics onto Top-N. | operator / triage |
-| L3 | Powertests icon move out of A22. | operator |
-| L4 | Top-N: below `top_records`, solar-only, AJAX on `topn.php`. DB table name unchanged. | operator "3: ok" |
-| L5 | PVGIS week/month: daily-share line over yield bars; week uses each day's month; month keeps total/vs % stats; omit when expected all-zero; solar only. | operator "4: ok" |
-| L6 | Symptom: **blank charts**. | operator "1: blank charts" |
-| L7 | Load scope: remove envelope from Analytics; serial explorer then compare with rAF yield; soft-fail shows panel error (no empty destroy). No lazy-load rewrite. | operator "fix in this scope" |
+| L1 | `build_clear_sky_envelopes` must **not** use `data_source = 'webbox_archive'`. | operator + SQL |
+| L2 | Do **not** rewrite WebBox staging timestamps in this phase. | scope |
+| L3 | After ship: operator runs **`rollup.py -buildall`** to refresh envelopes. **No** `-buildallenvelopes` flag. | operator "2: buildall" |
+| L4 | UI label **Virtual 'best-day'**; table `clear_sky_envelopes` unchanged. | A22 |
+| L5 | Keep **`merged`**, `live_p1`, `sunnyportal`, `fluvius` in the envelope source set. | operator "1: yes" |
+| L6 | Exclude NULL `data_source` if any (untrusted). | kickoff default |
 
 ### Open questions
 
@@ -1167,19 +1253,45 @@ None.
 
 ### DoD
 
-- [x] Analytics: no Virtual 'best-day' / envelope; initial load serial explorer then compare per L7
-- [x] Top-N (solar): Virtual 'best-day' panel + month picker from `clear_sky_envelopes`
-- [x] Summary solar week + month: PVGIS line per L5; year/all unchanged
-- [x] Docs: architecture / README / roadmap match shipped UI names / homes
-- [ ] Last DoD docs audit (operator smoke + close)
+- [ ] `build_clear_sky_envelopes` filters out `webbox_archive` (+ NULL source)
+- [ ] Docs: architecture envelope note matches
+- [ ] Operator `-buildall` + smoke: Nov / Whole year evening hills gone or greatly reduced
+- [ ] Last DoD docs audit
 
 ### Verbatim
 
-See Verbatim inbox **2026-11-03 - triage A22**, **A22 kickoff**, and **A22 kickoff answers**.
+See Verbatim inbox **2026-11-03 - A24 triage + kickoff** and **close A22 + A24 locks**.
+
+---
+
+## A25 - weather.php All years card
+
+**Status:** open (triaged 2026-11-03). Kickoff not started.  
+**Size:** S  
+**Depends on:** **A23** Done (`monthly_history` weather extremes exist).
+
+### Placement
+
+Affinity **A**. Follow-on to A11/A23: Summary has All years; weather currently stops at Year.
+
+### Intent (not locked ? kickoff later)
+
+- Add an **All years** card on `weather.php` (after Year), summary-style.
+- Bars from `monthly_history` weather extremes aggregated per calendar year (max/min as appropriate per series).
+- No new tables. No rollup schema change expected if A23 monthly columns are complete.
+
+### Open (placement only)
+
+None for placement. Spec locks at `kickoff A25`.
+
+### Verbatim
+
+See Verbatim inbox **2026-11-03 - triage A25**.
 
 ---
 
 ## Out of scope (until re-triaged)
 
-- Portal ingest (**P1Ã¢Â€Â“P3**)
+- Portal ingest (**P1-P3**)
 - Restoring the old slow Top 10 AJAX query as-is
+- Fixing WebBox archive clock/timezone at source (re-triage if needed)

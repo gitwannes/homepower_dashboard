@@ -86,7 +86,7 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
       - Old live Top 10 removed in A3. **A4 Done:** `topn.php` + `top_periods` (best/worst days 20, months/years 10); rebuilt by `-buildall`/`-daily`. Worst days skip zero yield and today.
       - **A13 Done:** the same page ranks highest net import and highest net export from `daily_history` / `monthly_history` (20 days, 10 months, 10 years). Both day lists omit today. No second ranking table.
       - **A7 Done:** all-time singles on `topn.php` (`top_records`); `-daily` beat + `-buildalltoprecords`.
-      - **A12 Done:** Capacity peak ranks (top 10 months); records filtered by metric (yield / peak; wind waits for A11).
+      - **A12 Done:** Capacity peak ranks (top 10 months); records filtered by metric (yield / peak; weather records on `weather.php` / **A11** Done).
       - **A22:** Virtual 'best-day' (from `clear_sky_envelopes`) on solar Top-N; removed from analytics.
 - [x] Settings (`settings.php`): admin password on first open; locked-by-default Unlock window (countdown); devices, titles, monthly expected kWh, spike cap, and night gates in `meter_history.db`. Save probes P1/SMA/WebBox/Portal and writes `*_active` (`integration_probes.py`); partial fill is atomic. Virtual kWh meters (A14) + optional Raw Meter Registers rows (A21). Encrypted full-database download and restore (`db_backup.py`); 1-min CSV export without password. See [`architecture.md`](architecture.md).
 - [x] Verify analytics / summary with populated rollups (A2/A3 + operator smoke).

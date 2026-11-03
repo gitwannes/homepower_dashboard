@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-11-03 (**A22** coding; **W1** historical + **W2** triaged)
+**Last updated:** 2026-11-03 (**A23** closed; **A25** open; **A24** locked)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -57,6 +57,9 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **A15** | Settings save: probe + `*_active`; homepage errors; AJAX stay-unlocked on fail — **2026-10-29** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **A14** | Virtual kWh meters: Settings CRUD + calc + debug page — **2026-10-29** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **A21** | Raw Meter Registers: virtual meters + optional T1/T2/solar rows — **2026-11-03** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
+| **A11** | Historical gas, water, weather page (`weather.php`, summary/topn/index gas/water) — **2026-11-03** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
+| **A23** | Weather extremes on daily/monthly rollups; weather.php Week/Month/Year read those tables — **2026-11-03** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
+| **A22** | bugfix: analytics blank-chart harden; Virtual 'best-day' on Top-N; Summary PVGIS week/month — **2026-11-03** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 
 ---
 
@@ -64,8 +67,8 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| 1 | open | L | **A11** | Historical gas, wind, weather page; gas/water on summary/topn/index. Shipped 2026-11-03; awaiting close | [`phaseA-analytics.md`](phaseA-analytics.md) |
-| 2 | coding | M | **A22** | bugfix: analytics load; Virtual best-day rename+top-n; PVGIS week/month | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 1 | open | S | **A24** | bugfix: clear_sky_envelopes exclude webbox_archive (Virtual best-day evening junk) | [`phaseA-analytics.md`](phaseA-analytics.md) |
+| 2 | open | S | **A25** | weather.php All years card (from monthly_history extremes) | [`phaseA-analytics.md`](phaseA-analytics.md) |
 | 3 | open | M | **W1** | WanOS: push on `-daily`, raw readings opened, and historical | [`phaseW-wanos.md`](phaseW-wanos.md) |
 | 4 | open | M | **W2** | WanOS ambient temps: daily + one-off historical → `weather.php` | [`phaseW-wanos.md`](phaseW-wanos.md) |
 | 5 | open | M | **Ops5** | Daily DB dump to Settings Synology path; `powerbackup-YYMMDD-HHMMSS.sql.zip`; keep last 14 (replaces Hyper Backup) | [`roadmap.md`](../roadmap.md) |

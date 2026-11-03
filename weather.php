@@ -4,8 +4,8 @@
  * Weather explorer and rollup records (A11).
  *
  * Intraday samples come from history_5min + live readings. Week/month cards
- * (ISO week / calendar month, summary-style arrows) use the same sources.
- * All-time records come from top_records.
+ * read daily_history extremes; year cards read monthly_history (A23).
+ * Open day/month may merge live readings. All-time records from top_records.
  */
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
@@ -176,11 +176,27 @@ function weather_period_merge_day(array &$byDate, string $date, array $values): 
 }
 
 /**
- * Daily weather extremes for week/month cards.
+ * Map one daily_history / monthly_history weather row into period chart fields.
  *
- * Prefer history_5min + readings (same sources as the day explorer). daily_history
- * weather columns often lag or stay null while live SensorBox still fills readings,
- * which made week/month empty while Today plotted fine.
+ * @param array<string, mixed> $row
+ * @return array{wind_ms:?float, gust_ms:?float, ambient_max_c:?float, ambient_min_c:?float, module_max_c:?float, radiation_wm2:?float}
+ */
+function weather_extreme_fields_from_row(array $row): array
+{
+    return [
+        'wind_ms' => weather_nullable_float($row['wind_speed_max_ms'] ?? null),
+        'gust_ms' => weather_nullable_float($row['wind_gust_max_ms'] ?? null),
+        'ambient_max_c' => weather_nullable_float($row['temp_ambient_max'] ?? null),
+        'ambient_min_c' => weather_nullable_float($row['temp_ambient_min'] ?? null),
+        'module_max_c' => weather_nullable_float($row['temp_module_max'] ?? null),
+        'radiation_wm2' => weather_nullable_float($row['solar_radiation_max_wm2'] ?? null),
+    ];
+}
+
+/**
+ * Daily weather extremes for week/month cards (A23: daily_history).
+ * Open local calendar day may still be incomplete on daily_history - merge
+ * live readings extremes for that day only.
  *
  * @return list<array{date:string, wind_ms:?float, gust_ms:?float, ambient_max_c:?float, ambient_min_c:?float, module_max_c:?float, radiation_wm2:?float}>
  */
@@ -188,80 +204,48 @@ function weather_period_rows(PDO $pdo, string $from, string $to): array
 {
     /** @var array<string, array<string, ?float>> $byDate */
     $byDate = [];
-    $fromTs = $from . ' 00:00:00';
-    $toTs = $to . ' 23:59:59';
 
     try {
         $stmt = $pdo->prepare(
-            "SELECT substr(timestamp, 1, 10) AS d,
-                    MAX(wind_speed) AS wind_ms,
-                    MAX(wind_gust) AS gust_ms,
-                    MAX(temp_ambient) AS ambient_max_c,
-                    MIN(temp_ambient) AS ambient_min_c,
-                    MAX(temp_module) AS module_max_c,
-                    MAX(COALESCE(solar_radiation_max, solar_radiation)) AS radiation_wm2
-             FROM history_5min
-             WHERE timestamp >= ? AND timestamp <= ?
-             GROUP BY substr(timestamp, 1, 10)
-             ORDER BY 1"
-        );
-        $stmt->execute([$fromTs, $toTs]);
-        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            weather_period_merge_day($byDate, (string)$row['d'], [
-                'wind_ms' => weather_nullable_float($row['wind_ms'] ?? null),
-                'gust_ms' => weather_nullable_float($row['gust_ms'] ?? null),
-                'ambient_max_c' => weather_nullable_float($row['ambient_max_c'] ?? null),
-                'ambient_min_c' => weather_nullable_float($row['ambient_min_c'] ?? null),
-                'module_max_c' => weather_nullable_float($row['module_max_c'] ?? null),
-                'radiation_wm2' => weather_nullable_float($row['radiation_wm2'] ?? null),
-            ]);
-        }
-    } catch (Throwable $e) {
-        // history_5min missing - try readings / daily below.
-    }
-
-    // Live SensorBox on readings (1-min): fills days the downsample has not written yet.
-    try {
-        $live = $pdo->prepare(
-            "SELECT substr(timestamp, 1, 10) AS d,
-                    MAX(wind_speed) AS wind_ms,
-                    MAX(temp_module) AS module_max_c,
-                    MAX(solar_radiation) AS radiation_wm2
-             FROM readings
-             WHERE timestamp >= ? AND timestamp <= ?
-               AND (wind_speed IS NOT NULL OR temp_module IS NOT NULL OR solar_radiation IS NOT NULL)
-             GROUP BY substr(timestamp, 1, 10)"
-        );
-        $live->execute([$fromTs, $toTs]);
-        while ($row = $live->fetch(PDO::FETCH_ASSOC)) {
-            weather_period_merge_day($byDate, (string)$row['d'], [
-                'wind_ms' => weather_nullable_float($row['wind_ms'] ?? null),
-                'module_max_c' => weather_nullable_float($row['module_max_c'] ?? null),
-                'radiation_wm2' => weather_nullable_float($row['radiation_wm2'] ?? null),
-            ]);
-        }
-    } catch (Throwable $e) {
-        // readings missing.
-    }
-
-    // Optional backfill from daily_history for module/radiation only.
-    // Skip wind_gust_max_ms / ambient: old rollups stored wind_speed as "gust"
-    // and phantom ambient zeros.
-    try {
-        $daily = $pdo->prepare(
-            'SELECT date, temp_module_max, solar_radiation_max_wm2
+            'SELECT date, wind_speed_max_ms, wind_gust_max_ms,
+                    temp_ambient_max, temp_ambient_min,
+                    temp_module_max, solar_radiation_max_wm2
              FROM daily_history
-             WHERE date >= ? AND date <= ?'
+             WHERE date >= ? AND date <= ?
+             ORDER BY date ASC'
         );
-        $daily->execute([$from, $to]);
-        while ($row = $daily->fetch(PDO::FETCH_ASSOC)) {
-            weather_period_merge_day($byDate, (string)$row['date'], [
-                'module_max_c' => weather_nullable_float($row['temp_module_max']),
-                'radiation_wm2' => weather_nullable_float($row['solar_radiation_max_wm2']),
-            ]);
+        $stmt->execute([$from, $to]);
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            weather_period_merge_day($byDate, (string)$row['date'], weather_extreme_fields_from_row($row));
         }
     } catch (Throwable $e) {
-        // daily_history weather cols missing.
+        // daily_history / new columns missing until rollup ensure + rebuild.
+    }
+
+    // Open day: daily_history may lag the live SensorBox pulse.
+    $today = date('Y-m-d');
+    if ($today >= $from && $today <= $to) {
+        try {
+            $live = $pdo->prepare(
+                "SELECT MAX(wind_speed) AS wind_ms,
+                        MAX(temp_module) AS module_max_c,
+                        MAX(solar_radiation) AS radiation_wm2
+                 FROM readings
+                 WHERE timestamp >= ? AND timestamp <= ?
+                   AND (wind_speed IS NOT NULL OR temp_module IS NOT NULL OR solar_radiation IS NOT NULL)"
+            );
+            $live->execute([$today . ' 00:00:00', $today . ' 23:59:59']);
+            $row = $live->fetch(PDO::FETCH_ASSOC);
+            if (is_array($row)) {
+                weather_period_merge_day($byDate, $today, [
+                    'wind_ms' => weather_nullable_float($row['wind_ms'] ?? null),
+                    'module_max_c' => weather_nullable_float($row['module_max_c'] ?? null),
+                    'radiation_wm2' => weather_nullable_float($row['radiation_wm2'] ?? null),
+                ]);
+            }
+        } catch (Throwable $e) {
+            // readings missing.
+        }
     }
 
     ksort($byDate);
@@ -273,9 +257,7 @@ function weather_period_rows(PDO $pdo, string $from, string $to): array
 }
 
 /**
- * Monthly extremes for a calendar year (one bar per month).
- * Built from the same day grain as week/month cards, then max/min per YYYY-MM.
- * monthly_history only stores max_temp_module / max_wind_gust - not enough for wind/rad.
+ * Monthly extremes for a calendar year (one bar per month) from monthly_history (A23).
  *
  * @return list<array{date:string, wind_ms:?float, gust_ms:?float, ambient_max_c:?float, ambient_min_c:?float, module_max_c:?float, radiation_wm2:?float}>
  */
@@ -284,20 +266,52 @@ function weather_year_rows(PDO $pdo, string $year): array
     if (!preg_match('/^\d{4}$/', $year)) {
         return [];
     }
-    $dayRows = weather_period_rows($pdo, $year . '-01-01', $year . '-12-31');
     /** @var array<string, array<string, ?float>> $byMonth */
     $byMonth = [];
-    foreach ($dayRows as $row) {
-        $ym = substr((string)$row['date'], 0, 7);
-        weather_period_merge_day($byMonth, $ym, [
-            'wind_ms' => $row['wind_ms'] ?? null,
-            'gust_ms' => $row['gust_ms'] ?? null,
-            'ambient_max_c' => $row['ambient_max_c'] ?? null,
-            'ambient_min_c' => $row['ambient_min_c'] ?? null,
-            'module_max_c' => $row['module_max_c'] ?? null,
-            'radiation_wm2' => $row['radiation_wm2'] ?? null,
-        ]);
+    try {
+        $stmt = $pdo->prepare(
+            'SELECT year_month, wind_speed_max_ms, wind_gust_max_ms,
+                    temp_ambient_max, temp_ambient_min,
+                    temp_module_max, solar_radiation_max_wm2
+             FROM monthly_history
+             WHERE year_month >= ? AND year_month <= ?'
+        );
+        $stmt->execute([$year . '-01', $year . '-12']);
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $ym = (string)$row['year_month'];
+            weather_period_merge_day($byMonth, $ym, weather_extreme_fields_from_row($row));
+        }
+    } catch (Throwable $e) {
+        // monthly weather cols missing until rollup ensure + rebuild.
     }
+
+    // Open month: merge today's live extremes into the current YYYY-MM bucket.
+    $today = date('Y-m-d');
+    $openYm = date('Y-m');
+    if (substr($today, 0, 4) === $year) {
+        try {
+            $live = $pdo->prepare(
+                "SELECT MAX(wind_speed) AS wind_ms,
+                        MAX(temp_module) AS module_max_c,
+                        MAX(solar_radiation) AS radiation_wm2
+                 FROM readings
+                 WHERE timestamp >= ? AND timestamp <= ?
+                   AND (wind_speed IS NOT NULL OR temp_module IS NOT NULL OR solar_radiation IS NOT NULL)"
+            );
+            $live->execute([$today . ' 00:00:00', $today . ' 23:59:59']);
+            $row = $live->fetch(PDO::FETCH_ASSOC);
+            if (is_array($row)) {
+                weather_period_merge_day($byMonth, $openYm, [
+                    'wind_ms' => weather_nullable_float($row['wind_ms'] ?? null),
+                    'module_max_c' => weather_nullable_float($row['module_max_c'] ?? null),
+                    'radiation_wm2' => weather_nullable_float($row['radiation_wm2'] ?? null),
+                ]);
+            }
+        } catch (Throwable $e) {
+            // readings missing.
+        }
+    }
+
     $rows = [];
     for ($m = 1; $m <= 12; $m++) {
         $ym = sprintf('%s-%02d', $year, $m);

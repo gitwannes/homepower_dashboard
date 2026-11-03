@@ -19,7 +19,7 @@ import re
 import sqlite3
 import time
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import fluvius_import
 import phase_power
@@ -83,6 +83,53 @@ def sql_pac_plausible(pac_expr: str = "COALESCE(solar_power_w, 0)") -> str:
     )"""
 
 
+def _table_columns(conn: sqlite3.Connection, table: str) -> Set[str]:
+    return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def ensure_weather_extreme_columns(conn: sqlite3.Connection) -> None:
+    """A23: weather extremes on daily/monthly with names aligned to daily_history.
+
+    Adds missing columns on existing DBs. Copies legacy monthly
+    max_temp_module / max_wind_gust into the aligned names once.
+    SQLite cannot DROP the legacy columns cheaply; they stay unused.
+    """
+    daily_cols = _table_columns(conn, "daily_history")
+    if "wind_speed_max_ms" not in daily_cols:
+        conn.execute("ALTER TABLE daily_history ADD COLUMN wind_speed_max_ms REAL")
+
+    monthly_cols = _table_columns(conn, "monthly_history")
+    for col in (
+        "wind_speed_max_ms",
+        "wind_gust_max_ms",
+        "temp_module_max",
+        "solar_radiation_max_wm2",
+        "temp_ambient_min",
+        "temp_ambient_max",
+    ):
+        if col not in monthly_cols:
+            conn.execute(f"ALTER TABLE monthly_history ADD COLUMN {col} REAL")
+
+    # Refresh after ALTERs for the copy step.
+    monthly_cols = _table_columns(conn, "monthly_history")
+    if "max_temp_module" in monthly_cols and "temp_module_max" in monthly_cols:
+        conn.execute(
+            """
+            UPDATE monthly_history
+            SET temp_module_max = max_temp_module
+            WHERE temp_module_max IS NULL AND max_temp_module IS NOT NULL
+            """
+        )
+    if "max_wind_gust" in monthly_cols and "wind_gust_max_ms" in monthly_cols:
+        conn.execute(
+            """
+            UPDATE monthly_history
+            SET wind_gust_max_ms = max_wind_gust
+            WHERE wind_gust_max_ms IS NULL AND max_wind_gust IS NOT NULL
+            """
+        )
+
+
 def init_analytical_db(conn: sqlite3.Connection) -> None:
     """Creates the unified 5-minute table and all downstream aggregation tables."""
     with conn:
@@ -136,6 +183,7 @@ def init_analytical_db(conn: sqlite3.Connection) -> None:
                 temp_ambient_min REAL,
                 temp_ambient_max REAL,
                 temp_module_max REAL,
+                wind_speed_max_ms REAL,
                 wind_gust_max_ms REAL,
                 solar_radiation_max_wm2 REAL,
                 gas_m3 REAL,
@@ -148,6 +196,7 @@ def init_analytical_db(conn: sqlite3.Connection) -> None:
         )
 
         # 3. Monthly Rollups (For PVGIS Target tracking)
+        # Weather extremes use the same names as daily_history (A23).
         conn.execute("""
             CREATE TABLE IF NOT EXISTS monthly_history (
                 year_month TEXT PRIMARY KEY,     -- Format: 'YYYY-MM'
@@ -157,13 +206,18 @@ def init_analytical_db(conn: sqlite3.Connection) -> None:
                 total_import_kwh REAL,
                 total_export_kwh REAL,
                 max_peak_w REAL,
-                max_temp_module REAL,
-                max_wind_gust REAL,
+                temp_ambient_min REAL,
+                temp_ambient_max REAL,
+                temp_module_max REAL,
+                wind_speed_max_ms REAL,
+                wind_gust_max_ms REAL,
+                solar_radiation_max_wm2 REAL,
                 gas_m3 REAL,
                 water_m3 REAL
             )
         """)
         utility_volume.ensure_utility_volume_columns(conn)
+        ensure_weather_extreme_columns(conn)
 
         # 4. Clear Sky Envelopes (The Theoretical Best Curve)
         conn.execute("""
@@ -326,13 +380,14 @@ def build_daily_history(
     else:
         day_lo, day_hi = fluvius_import.local_span(conn, int(days_back))
         fluvius_import.prepare_day_overrides(conn, day_lo, day_hi)
+    ensure_weather_extreme_columns(conn)
     with conn:
         conn.execute(f"""
             INSERT OR REPLACE INTO daily_history (
                 date, solar_yield_kwh, solar_peak_w, sun_hours,
                 grid_import_kwh, grid_export_kwh, self_consumption_kwh,
                 temp_ambient_min, temp_ambient_max, temp_module_max,
-                wind_gust_max_ms, solar_radiation_max_wm2
+                wind_speed_max_ms, wind_gust_max_ms, solar_radiation_max_wm2
             )
             WITH base AS (
                 SELECT
@@ -392,9 +447,9 @@ def build_daily_history(
                     MIN(temp_ambient) AS t_amb_min,
                     MAX(temp_ambient) AS t_amb_max,
                     MAX(temp_module) AS t_mod_max,
-                    -- Gust only. Do not fall back to wind_speed or Gust toggles
-                    -- light up while history_5min.wind_gust stays null.
-                    MAX(wind_gust) AS wind_max,
+                    MAX(wind_speed) AS wind_speed_max,
+                    -- Gust only. Never coalesce with wind_speed.
+                    MAX(wind_gust) AS wind_gust_max,
                     MAX(COALESCE(solar_radiation_max, solar_radiation)) AS rad_max
                 FROM base
                 GROUP BY dt
@@ -412,7 +467,8 @@ def build_daily_history(
                     b.t_amb_min,
                     b.t_amb_max,
                     b.t_mod_max,
-                    b.wind_max,
+                    b.wind_speed_max,
+                    b.wind_gust_max,
                     b.rad_max,
                     f.solar_total_kwh AS et_first,
                     l.solar_total_kwh AS et_last,
@@ -453,7 +509,8 @@ def build_daily_history(
                 t_amb_min,
                 t_amb_max,
                 t_mod_max,
-                wind_max,
+                wind_speed_max,
+                wind_gust_max,
                 rad_max
             FROM et_ends
             LEFT JOIN fluvius_day_override ovr ON ovr.date = et_ends.dt;
@@ -481,13 +538,16 @@ def build_monthly_history(conn: sqlite3.Connection, step: int = 3) -> None:
     """Rolls up daily totals into months and tracks against PVGIS expected baselines."""
     start_time = time.time()
     utility_volume.ensure_utility_volume_columns(conn)
+    ensure_weather_extreme_columns(conn)
 
     with conn:
         conn.execute("""
             INSERT OR REPLACE INTO monthly_history (
                 year_month, total_solar_kwh, expected_kwh, target_pct,
                 total_import_kwh, total_export_kwh,
-                max_peak_w, max_temp_module, max_wind_gust,
+                max_peak_w,
+                temp_ambient_min, temp_ambient_max, temp_module_max,
+                wind_speed_max_ms, wind_gust_max_ms, solar_radiation_max_wm2,
                 gas_m3, water_m3
             )
             SELECT 
@@ -497,7 +557,10 @@ def build_monthly_history(conn: sqlite3.Connection, step: int = 3) -> None:
                 CASE WHEN exp.expected_kwh > 0 THEN ROUND((SUM(d.solar_yield_kwh) / exp.expected_kwh) * 100, 1) ELSE 0 END,
                 ROUND(SUM(d.grid_import_kwh), 1),
                 ROUND(SUM(d.grid_export_kwh), 1),
-                MAX(d.solar_peak_w), MAX(d.temp_module_max), MAX(d.wind_gust_max_ms),
+                MAX(d.solar_peak_w),
+                MIN(d.temp_ambient_min), MAX(d.temp_ambient_max), MAX(d.temp_module_max),
+                MAX(d.wind_speed_max_ms), MAX(d.wind_gust_max_ms),
+                MAX(d.solar_radiation_max_wm2),
                 ROUND(SUM(d.gas_m3), 3),
                 ROUND(SUM(d.water_m3), 3)
             FROM daily_history d
