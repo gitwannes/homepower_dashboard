@@ -4,6 +4,7 @@ date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
 require_once __DIR__ . '/live_chart.php';
 require_once __DIR__ . '/gas_water.php';
+require_once __DIR__ . '/wanos_bridge.php';
 
 $hp = hp_boot();
 hp_require_ready($hp);
@@ -42,6 +43,19 @@ try {
     }
 } catch (Throwable $e) {
     $rawVirtualMeters = [];
+}
+
+// W2: live WanOS values for Raw modal open (JSON).
+if (isset($_GET['action']) && $_GET['action'] === 'wanos_live') {
+    header('Content-Type: application/json; charset=UTF-8');
+    try {
+        hp_wanos_ensure_schema($hp['pdo']);
+        $payload = hp_wanos_resolved_rows($hp['pdo'], $hpSettings, $hpStored);
+        echo json_encode(['ok' => !empty($payload['live']), 'rows' => $payload['rows'] ?? [], 'error' => $payload['error'] ?? '']);
+    } catch (Throwable $e) {
+        echo json_encode(['ok' => false, 'rows' => [], 'error' => $e->getMessage()]);
+    }
+    exit;
 }
 
 // 1. Action Handler: Force Poll
@@ -249,8 +263,34 @@ $alerts = $state['alerts'] ?? [];
 $hasSolar = !empty($state['has_solar']) && $showLiveYield;
 $hasSma = !empty($state['has_sma']) && $smaIntegrationActive;
 $hasWebbox = !empty($state['has_webbox']) && $webboxIntegrationActive;
-$webboxDevices = $webbox['devices'] ?? [];
 $sensorbox = $webbox['sensorbox'] ?? null;
+
+// W2: WanOS display rows (fetch on page load; modal open reuses same request).
+$wanosResolved = ['live' => false, 'rows' => []];
+try {
+    hp_wanos_ensure_schema($hp['pdo']);
+    $wanosResolved = hp_wanos_resolved_rows($hp['pdo'], $hpSettings, $hpStored);
+} catch (Throwable $e) {
+    $wanosResolved = ['live' => false, 'rows' => [], 'error' => $e->getMessage()];
+}
+$wanosRows = $wanosResolved['rows'] ?? [];
+$wanosAmbient = null;
+$wanosUtilityWaters = [];
+$wanosRawWaters = [];
+foreach ($wanosRows as $wr) {
+    if (($wr['kind'] ?? '') === 'ambient' && !empty($wr['on_main'])) {
+        $wanosAmbient = $wr;
+    }
+    if (strpos((string)($wr['kind'] ?? ''), 'water') === 0) {
+        if (!empty($wr['on_main'])) {
+            $wanosUtilityWaters[] = $wr;
+        }
+        if (!empty($wr['on_raw'])) {
+            $wanosRawWaters[] = $wr;
+        }
+    }
+}
+$showSensorReadings = (!empty($sensorbox) && $hasWebbox) || $wanosAmbient !== null;
 
 // P1 inactive: keep the page shell but clear the live pulse (lock 8 / 15).
 if (!$p1IntegrationActive) {
@@ -305,6 +345,17 @@ function formatDsmrTime($ts) {
     $ts_str = (string)$ts;
     if (strlen($ts_str) < 12) return $ts;
     return substr($ts_str, 4, 2) . '/' . substr($ts_str, 2, 2) . '/20' . substr($ts_str, 0, 2) . ' ' . substr($ts_str, 6, 2) . ':' . substr($ts_str, 8, 2) . ':' . substr($ts_str, 10, 2);
+}
+/** Unix epoch -> local dd/mm/YYYY HH:MM:SS (same shape as Gas Utility Meters subtext). */
+function formatUnixLocal($unix) {
+    if ($unix === null || $unix === '' || !is_numeric($unix)) {
+        return 'N/A';
+    }
+    $i = (int)$unix;
+    if ($i <= 0) {
+        return 'N/A';
+    }
+    return date('d/m/Y H:i:s', $i);
 }
 
 // Badge Freshness
@@ -782,8 +833,23 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                         </div>
                     <?php endforeach; ?>
                 <?php endif; ?>
+                <?php foreach ($wanosUtilityWaters as $ww): ?>
+                        <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 flex items-center justify-between">
+                            <div class="flex items-center gap-2.5">
+                                <div class="w-8 h-8 rounded-lg bg-cyan-100 text-cyan-600 flex items-center justify-center"><i data-lucide="droplet" class="w-4 h-4"></i></div>
+                                <div>
+                                    <div class="text-xs font-bold text-slate-800"><?= htmlspecialchars((string)$ww['display_name']) ?></div>
+                                    <div class="text-[9px] text-slate-400"><?= htmlspecialchars(formatUnixLocal($ww['updated_unix'] ?? null)) ?></div>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <span class="font-extrabold text-sm text-slate-900"><?= num($ww['value'], (($ww['unit'] ?? '') === 'L') ? 1 : 3) ?></span>
+                                <span class="text-[10px] text-slate-400 font-medium ml-0.5"><?= htmlspecialchars((string)($ww['unit'] === 'm3' ? 'm³' : $ww['unit'])) ?></span>
+                            </div>
+                        </div>
+                <?php endforeach; ?>
             </div>
-            <div class="pt-3 border-t border-slate-100 text-[11px] text-slate-400 text-center">External MBus telemetry</div>
+            <div class="pt-3 border-t border-slate-100 text-[11px] text-slate-400 text-center"><?= count($wanosUtilityWaters) > 0 ? 'P1 MBus + WanOS' : 'External MBus telemetry' ?></div>
         </div>
     </div>
 
@@ -862,134 +928,73 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
         <div id="historyTimelineChart" class="w-full h-[280px]"></div>
     </div>
 
-    <!-- NEW SECTION: Sunny WebBox Connected Devices & SensorBox -->
-    <?php if ($hasWebbox && (!empty($webboxDevices) || !empty($sensorbox))): ?>
-    <div class="grid grid-cols-1 <?= !empty($sensorbox) ? 'lg:grid-cols-3' : '' ?> gap-6">
-
-        <?php if (!empty($sensorbox)): ?>
-        <!-- SensorBox Environmental Station Card -->
-        <div class="card border-t-4 border-t-cyan-500 justify-between">
-            <div>
-                <div class="flex items-center justify-between mb-3">
-                    <h2 class="card-title !mb-0">
-                        <i data-lucide="cloud-sun" class="w-4 h-4 text-cyan-500"></i>
-                        Sunny SensorBox
-                    </h2>
-                    <span class="text-[10px] font-mono bg-cyan-50 text-cyan-700 border border-cyan-200 px-2 py-0.5 rounded-full font-bold">
-                        <?= htmlspecialchars($sensorbox['key']) ?>
+    <!-- W2: Sensor readings (SensorBox channels + optional WanOS ambient). WebBox devices table lives on Settings. -->
+    <?php if ($showSensorReadings): ?>
+    <?php
+        $srRad = ($hasWebbox && !empty($sensorbox) && array_key_exists('radiation', $sensorbox));
+        $srMod = ($hasWebbox && !empty($sensorbox) && array_key_exists('temp_module', $sensorbox));
+        $srWind = ($hasWebbox && !empty($sensorbox) && array_key_exists('wind_speed', $sensorbox));
+        $srAmb = ($wanosAmbient !== null);
+        $srTileCount = ($srRad ? 1 : 0) + ($srMod ? 1 : 0) + ($srWind ? 1 : 0) + ($srAmb ? 1 : 0);
+        $srCols = max(1, min(4, $srTileCount));
+    ?>
+    <?php if ($srTileCount > 0): ?>
+    <div class="card border-t-4 border-t-cyan-500 justify-between">
+        <div>
+            <h2 class="card-title !mb-0 mb-3">
+                <i data-lucide="cloud-sun" class="w-4 h-4 text-cyan-500"></i>
+                Sensor readings
+            </h2>
+            <div class="grid gap-3 my-3" style="grid-template-columns: repeat(<?= (int)$srCols ?>, minmax(0, 1fr));">
+                <?php if ($srRad): ?>
+                <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col justify-between">
+                    <span class="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
+                        <i data-lucide="sun" class="w-3 h-3 text-amber-500"></i> Radiation
                     </span>
-                </div>
-
-                <div class="grid grid-cols-3 gap-3 my-3">
-                    <!-- Solar Radiation -->
-                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col justify-between">
-                        <span class="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
-                            <i data-lucide="sun" class="w-3 h-3 text-amber-500"></i> Radiation
-                        </span>
-                        <div class="mt-2">
-                            <span class="text-xl md:text-2xl font-black text-slate-900 font-mono"><?= num($sensorbox['radiation'] ?? 0, 0) ?></span>
-                            <span class="text-[10px] text-slate-400 font-normal">W/m²</span>
-                        </div>
-                    </div>
-
-                    <!-- Module Temperature -->
-                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col justify-between">
-                        <span class="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
-                            <i data-lucide="thermometer" class="w-3 h-3 text-rose-500"></i> Module
-                        </span>
-                        <div class="mt-2">
-                            <span class="text-xl md:text-2xl font-black text-slate-900 font-mono"><?= num($sensorbox['temp_module'] ?? 0, 1) ?></span>
-                            <span class="text-[10px] text-slate-400 font-normal">°C</span>
-                        </div>
-                    </div>
-
-                    <!-- Wind Speed -->
-                    <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col justify-between">
-                        <span class="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
-                            <i data-lucide="wind" class="w-3 h-3 text-sky-500"></i> Wind
-                        </span>
-                        <div class="mt-2">
-                            <span class="text-xl md:text-2xl font-black text-slate-900 font-mono"><?= num($sensorbox['wind_speed'] ?? 0, 1) ?></span>
-                            <span class="text-[10px] text-slate-400 font-normal">m/s</span>
-                        </div>
+                    <div class="mt-2">
+                        <span class="text-xl md:text-2xl font-black text-slate-900 font-mono"><?= num($sensorbox['radiation'] ?? 0, 0) ?></span>
+                        <span class="text-[10px] text-slate-400 font-normal">W/m²</span>
                     </div>
                 </div>
-            </div>
-            <div class="pt-2.5 border-t border-slate-100 flex justify-between items-center text-[11px] text-slate-400">
-                <span>PV Module Sensor Telemetry</span>
-                <span class="text-emerald-600 font-semibold flex items-center gap-1">
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Online
-                </span>
+                <?php endif; ?>
+                <?php if ($srMod): ?>
+                <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col justify-between">
+                    <span class="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
+                        <i data-lucide="thermometer" class="w-3 h-3 text-rose-500"></i> Module
+                    </span>
+                    <div class="mt-2">
+                        <span class="text-xl md:text-2xl font-black text-slate-900 font-mono"><?= num($sensorbox['temp_module'] ?? 0, 1) ?></span>
+                        <span class="text-[10px] text-slate-400 font-normal">°C</span>
+                    </div>
+                </div>
+                <?php endif; ?>
+                <?php if ($srWind): ?>
+                <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col justify-between">
+                    <span class="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
+                        <i data-lucide="wind" class="w-3 h-3 text-sky-500"></i> Wind
+                    </span>
+                    <div class="mt-2">
+                        <span class="text-xl md:text-2xl font-black text-slate-900 font-mono"><?= num($sensorbox['wind_speed'] ?? 0, 1) ?></span>
+                        <span class="text-[10px] text-slate-400 font-normal">m/s</span>
+                    </div>
+                </div>
+                <?php endif; ?>
+                <?php if ($srAmb): ?>
+                <div class="bg-slate-50 p-3 rounded-xl border border-slate-100 flex flex-col justify-between">
+                    <span class="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1">
+                        <i data-lucide="thermometer" class="w-3 h-3 text-indigo-500"></i> Ambient
+                    </span>
+                    <div class="mt-2">
+                        <span class="text-xl md:text-2xl font-black text-slate-900 font-mono"><?= num($wanosAmbient['value'], 1) ?></span>
+                        <span class="text-[10px] text-slate-400 font-normal">°C</span>
+                    </div>
+                    <div class="mt-1 text-[9px] text-slate-400"><?= htmlspecialchars(formatUnixLocal($wanosAmbient['updated_unix'] ?? null)) ?></div>
+                </div>
+                <?php endif; ?>
             </div>
         </div>
-        <?php endif; ?>
-
-        <!-- Connected WebBox Devices Table Card -->
-        <div class="card border-t-4 border-t-slate-700 justify-between <?= !empty($sensorbox) ? 'lg:col-span-2' : '' ?>">
-            <div>
-                <div class="flex items-center justify-between mb-3">
-                    <h2 class="card-title !mb-0">
-                        <i data-lucide="cpu" class="w-4 h-4 text-slate-600"></i>
-                        Sunny WebBox Devices
-                    </h2>
-                    <span class="text-xs text-slate-400 font-medium">
-                        <?= count($webboxDevices) ?> device<?= count($webboxDevices) > 1 ? 's' : '' ?> on bus
-                    </span>
-                </div>
-
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse text-xs">
-                        <thead>
-                            <tr class="text-[10px] uppercase tracking-wider text-slate-400 border-b border-slate-100">
-                                <th class="pb-2 font-semibold">Device</th>
-                                <th class="pb-2 font-semibold">Type</th>
-                                <th class="pb-2 text-right font-semibold">Power</th>
-                                <th class="pb-2 text-right font-semibold">Today</th>
-                                <th class="pb-2 text-right font-semibold">Total Yield</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-slate-100 font-mono">
-                            <?php foreach ($webboxDevices as $dev): ?>
-                                <tr class="hover:bg-slate-50/60 transition-colors">
-                                    <td class="py-2.5 font-bold text-slate-800">
-                                        <?= htmlspecialchars($dev['name'] ?? $dev['key']) ?>
-                                        <div class="text-[10px] font-normal text-slate-400"><?= htmlspecialchars($dev['key']) ?></div>
-                                    </td>
-                                    <td class="py-2.5">
-                                        <?php if ($dev['type'] === 'sensor'): ?>
-                                            <span class="bg-cyan-50 text-cyan-700 border border-cyan-200 px-1.5 py-0.5 rounded text-[10px] font-bold">Sensor</span>
-                                        <?php else: ?>
-                                            <span class="bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded text-[10px] font-bold">Inverter</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td class="py-2.5 text-right font-bold <?= ($dev['type'] === 'inverter') ? 'text-amber-500' : 'text-slate-400' ?>">
-                                        <?= ($dev['type'] === 'inverter') ? num($dev['power_w'] ?? 0, 0) . ' W' : '-' ?>
-                                    </td>
-                                    <td class="py-2.5 text-right text-slate-700">
-                                        <?= ($dev['type'] === 'inverter' && isset($dev['today_kwh'])) ? num($dev['today_kwh'], 2) . ' kWh' : '-' ?>
-                                    </td>
-                                    <td class="py-2.5 text-right text-slate-700">
-                                        <?php if ($dev['type'] === 'inverter' && isset($dev['total_kwh'])): ?>
-                                            <?= num($dev['total_kwh'] / 1000, 3) ?> MWh
-                                        <?php elseif (!empty($dev['summary'])): ?>
-                                            <span class="text-[11px] text-slate-500 font-sans"><?= htmlspecialchars($dev['summary']) ?></span>
-                                        <?php else: ?>
-                                            -
-                                        <?php endif; ?>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-            <div class="pt-2.5 border-t border-slate-100 flex justify-between items-center text-[11px] text-slate-400">
-                <span>WebBox RS485 / Bluetooth Bus</span>
-                <span>Gateway IP: <strong class="text-slate-700"><?= htmlspecialchars($webbox['ip'] ?? 'WebBox') ?></strong></span>
-            </div>
-        </div>
-
     </div>
+    <?php endif; ?>
     <?php endif; ?>
 
     <?php if ($showGasPulse || $showWaterPulse): ?>
@@ -1273,6 +1278,20 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
                         </td>
                     </tr>
                     <?php endif; ?>
+                    <?php foreach ($wanosRawWaters as $ww): ?>
+                    <?php
+                        $wwParts = formatRawParts((float)$ww['value'], (($ww['unit'] ?? '') === 'L') ? 1 : 3);
+                        $wwUnit = (($ww['unit'] ?? '') === 'm3') ? 'm³' : (string)($ww['unit'] ?? '');
+                    ?>
+                    <tr data-wanos-entity="<?= htmlspecialchars((string)$ww['entity_id']) ?>" data-wanos-unit="<?= htmlspecialchars((string)($ww['unit'] ?? '')) ?>">
+                        <td class="py-2 pl-2 text-slate-700 font-medium"><?= htmlspecialchars((string)$ww['display_name']) ?></td>
+                        <td class="py-2 text-right font-mono flex items-baseline justify-end">
+                            <span class="js-wanos-int text-xl md:text-2xl font-bold text-slate-900"><?= $wwParts['int'] ?></span>
+                            <span class="js-wanos-dec text-xl md:text-2xl font-bold text-slate-400"><?= $wwParts['dec'] ?></span>
+                            <span class="w-12 text-left pl-2 text-sm text-slate-400"><?= htmlspecialchars($wwUnit) ?></span>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
                 </tbody>
             </table>
         </div>
@@ -1348,6 +1367,27 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
     function openRawModal() {
         const modal = document.getElementById('rawReadingsModal');
         if (modal) modal.classList.remove('hidden');
+        // W2: refresh WanOS rows once on open (no poll while open).
+        fetch('index.php?action=wanos_live', { credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (!data || !data.ok || !data.rows) return;
+                data.rows.forEach(function (row) {
+                    if (!row.on_raw) return;
+                    var tr = document.querySelector('tr[data-wanos-entity="' + row.entity_id + '"]');
+                    if (!tr) return;
+                    var decimals = (row.unit === 'L') ? 1 : 3;
+                    var n = Number(row.value);
+                    if (!isFinite(n)) return;
+                    var fixed = n.toFixed(decimals);
+                    var parts = fixed.split('.');
+                    var intEl = tr.querySelector('.js-wanos-int');
+                    var decEl = tr.querySelector('.js-wanos-dec');
+                    if (intEl) intEl.textContent = parts[0];
+                    if (decEl) decEl.textContent = parts.length > 1 ? ('.' + parts[1]) : '';
+                });
+            })
+            .catch(function () { /* keep page-load values */ });
     }
     function closeRawModal() {
         const modal = document.getElementById('rawReadingsModal');

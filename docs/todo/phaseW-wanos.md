@@ -1,15 +1,15 @@
 # --- file: docs/todo/phaseW-wanos.md ---
 # Phase W — WanOS bridge
 
-**Status:** **W1** / **W2** open (not kicked off)
-**Last updated:** 2026-11-03
-**Product pointers:** [`docs/architecture.md`](../architecture.md) (WanOS stays a separate OS; this letter is the bridge *to/from* WanOS — not moving WanOS HomeWizard energy ingest into this repo)
+**Status:** **W2 Done** 2026-11-06; **W1** open  
+**Last updated:** 2026-11-06 (W2 close-out)  
+**Product pointers:** [`docs/architecture.md`](../architecture.md) · WanOS repo `docs/integration_power_bridge.md`
 
 ---
 
 ## Affinity
 
-WanOS integration for this dashboard: **outbound push** (energy / readings → WanOS MQTT) and **inbound ambient** (outside temperatures → warehouse / `weather.php`). Distinct from portal ingest (**P**) and from analytics UI (**A**). Do not move WanOS HomeWizard energy ingest into this repo.
+WanOS integration: **W1** Power → WanOS; **W2** WanOS → Power display bridge. Do not move WanOS HomeWizard energy ingest into this repo. Water-Link SoT remains WanOS G24.
 
 ---
 
@@ -17,71 +17,62 @@ WanOS integration for this dashboard: **outbound push** (energy / readings → W
 
 | Id | Status | What |
 |---|---|---|
-| **W1** | open | This app pushes to WanOS on `rollup.py -daily`, when raw readings are opened, and historical push |
-| **W2** | open | Ingest WanOS outside (ambient) temperatures: daily + one-off historical → available on `weather.php` |
+| **W1** | open | Power → WanOS: `-daily` / raw opened / historical + display Power readings in WanOS (shared API key design from W2) |
+| **W2** | **Done** 2026-11-06 | WanOS → Power display bridge + Sensor readings / WebBox→Settings |
 
 ---
 
 ## Verbatim inbox
 
-### 2026-10-28 — triage placement
-
-> [open]  WanOS: sensors + MQTT listener; this app pushes on
->           rollup.py -daily
->           and when raw readings are opened
->           (Generate today removed - nightly -daily owns downsample)
-
-Operator placed as **W1** (2026-10-28).
-
-### 2026-11-03 — W1 historical + W2 ambient ingest
-
-> W1: also add historical push
-> W2: (triage new): get outside (ambient) temperatures from wanos: daily + one-off historical, so that this info is available in "weather" page
-
-Operator: expand **W1**; place **W2** (2026-11-03).
+(See git history for full verbatim — 2026-10-28 through 2026-11-06 kickoff locks.)
 
 ---
 
-## W1 — Push to WanOS MQTT / sensors
+## W1 — Power → WanOS (push + display in WanOS)
 
-**Status:** open (triaged 2026-10-28; historical push added 2026-11-03; not kicked off)
-**Size:** **M** (estimate; refine at kickoff)
-
-### Placement
-
-WanOS owns sensors + MQTT listener. This repo **pushes** on:
-
-1. `rollup.py -daily`
-2. When raw readings are opened
-3. **Historical push** (one-off / backfill of past data — kickoff locks scope, command, and payload)
-
-Nightly `-daily` owns downsample (Generate today removed). Topic map, payload shape, auth, “raw readings opened” trigger, and historical-push command/range are kickoff locks. Do not move WanOS HomeWizard ingest into this repo ([`architecture.md`](../architecture.md)).
-
-### Out of scope (until re-triaged)
-
-- WanOS-side listener implementation (lives in WanOS)
-- Pulling energy data *from* WanOS into this warehouse (ambient temps are **W2**, not energy)
+**Status:** open (not kicked off). Shared machine API key design landed with **W2**.
 
 ---
 
-## W2 — Ambient temperatures from WanOS → weather page
+## W2 — WanOS → Power (link + selectable sensors)
 
-**Status:** open (triaged 2026-11-03, not kicked off)
-**Size:** **M** (estimate; refine at kickoff)
-**Depends on:** **A11** weather page (shipped; ambient UI already exists from WebBox / sensorbox series)
+**Status:** **Done** 2026-11-06  
+**Size:** L  
+**Cross-repo:** Power (`homepower_dashboard`) + WanOS (`wanos`)
 
-### Placement
+### Shipped (product SoT)
 
-Affinity **W** (WanOS bridge). Pull **outside (ambient) temperatures** from WanOS into this warehouse so `weather.php` can show them.
+| Area | Pointer |
+|---|---|
+| Behaviour / UI | [`docs/architecture.md`](../architecture.md) (WanOS row, Settings, index Utility / Sensor readings / Raw) |
+| WanOS API | WanOS `docs/integration_power_bridge.md` (`/api/bridge/*`, allowlist, `updated_unix`) |
 
-Triggers / modes (operator):
+### Shipped summary
 
-1. **Daily** ingest
-2. **One-off historical** backfill
+| Area | What |
+|---|---|
+| WanOS | Machine bridge key (64 hex); `/api/bridge/probe` + `/api/bridge/sensors` (allowlist + live value + `updated_unix`); Admin Generate; role `bridge` |
+| Power | `wanos_bridge.php`; Settings address + key (**Save & check connection**); mappings Add / dirty **Save sensor changes** / Remove; probe → `wanos_active`; index Sensor readings + Utility/Raw waters; WebBox devices table on Settings only |
+| Host | Prefer TLS hostname matching cert (e.g. `app.wanos.be`); do not use raw IP for HTTPS |
 
-Storage table vs empty-fill into existing ambient columns, resolution, auth, and how WanOS ambient coexists with WebBox/sensorbox ambient are kickoff locks. Consumer surface is the existing **weather** page (A11) — not a new page.
+### Allowlist entity_ids
 
-### Out of scope (until re-triaged)
+- `sensor.fluid.waterlink.digital_meter` (blocked when P1 active + water_meter)
+- `sensor.fluid.koud_water`
+- `sensor.fluid.warm_water`
+- `sensor.temp_hum.outside_temp_hum` (ambient → Sensor readings)
 
-- WanOS HomeWizard *energy* ingest (stays in WanOS)
-- Rework of A11 weather UI beyond making WanOS ambient available
+### Out of scope (confirmed)
+
+- Warehouse writes / weather.php backfill
+- Water-Link client in Power
+- W1 push/display product code
+
+### DoD
+
+- [x] Code both repos
+- [x] Product docs (architecture + WanOS integration_power_bridge)
+- [x] Operator close-out (**close W2** 2026-11-06)
+- [x] Mark Done in pipeline
+
+**Do not offline-archive this file yet** — **W1** still open.

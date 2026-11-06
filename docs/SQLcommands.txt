@@ -14,16 +14,6 @@ sensorbox_history_5min: 1,796,317 | 2009-08-05 11:15:00 -> 2026-10-22 10:35:37
 inverter_history_5min: 1,467,523 | 2009-08-05 11:15:00 -> 2026-10-22 10:35:37
 readings: 2,714 | 2026-10-20 17:11:01 -> 2026-10-22 14:14:02
 
-# delete table
-python3 -c "
-import sqlite3
-c=sqlite3.connect('meter_history.db')
-cur=c.execute('DELETE FROM history_5min')
-c.commit()
-print('deleted', cur.rowcount)
-print('left', c.execute('SELECT COUNT(*) FROM history_5min').fetchone()[0])
-"
-
 # check largest gaps
 python3 -c "
 import sqlite3
@@ -56,5 +46,5 @@ top_gaps('inverter_history_5min')
 top_gaps('sensorbox_history_5min')
 "
 
-# copy table
+# copy DB
 sqlite3 meter_history.db ".backup 'meter_history.db.bak'"

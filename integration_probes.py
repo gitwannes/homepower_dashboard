@@ -206,6 +206,46 @@ def probe_sunnyportal(
         return _result("fail", f"Sunny Portal probe error: {exc}")
 
 
+def probe_wanos(ip: str, api_key: str) -> ProbeResult:
+    """GET /api/bridge/probe with Bearer machine API key (W2)."""
+    host = (ip or "").strip()
+    key = (api_key or "").strip()
+    if not host and not key:
+        return _result("skipped", "WanOS address and API key are empty.")
+    if not host or not key:
+        return _result("fail", "WanOS address and API key are both required.")
+    if host.startswith("http://") or host.startswith("https://"):
+        base = host.rstrip("/")
+    else:
+        # WanOS nginx 301 HTTP -> HTTPS; default https so Bearer survives.
+        base = "https://" + host.rstrip("/")
+    url = base + "/api/bridge/probe"
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": "Bearer " + key,
+                "Accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if not isinstance(data, dict) or not data.get("ok"):
+            return _result("fail", f"WanOS at {host} returned an unexpected probe payload.")
+        return _result("ok", f"WanOS bridge at {host} is online.")
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return _result("fail", f"WanOS bridge auth failed ({exc.code}). Check the API key.")
+        return _result("fail", f"WanOS bridge HTTP {exc.code}.")
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", exc)
+        return _result("offline", f"Unable to reach WanOS at {host}: {reason}")
+    except json.JSONDecodeError:
+        return _result("fail", f"WanOS at {host} returned invalid JSON.")
+    except Exception as exc:
+        return _result("fail", f"WanOS probe error: {exc}")
+
+
 def probe_selected(settings: Dict[str, str], names: List[str]) -> Dict[str, ProbeResult]:
     """Run named probes against a settings dict (resolved passwords)."""
     out: Dict[str, ProbeResult] = {}
@@ -229,6 +269,11 @@ def probe_selected(settings: Dict[str, str], names: List[str]) -> Dict[str, Prob
                 settings.get("sunnyportal_password", ""),
                 settings.get("sunnyportal_plant_id", ""),
                 settings.get("sunnyportal_timezone", ""),
+            )
+        elif name == "wanos":
+            out["wanos"] = probe_wanos(
+                settings.get("wanos_ip", ""),
+                settings.get("wanos_api_key", ""),
             )
         else:
             out[name] = _result("fail", f"Unknown integration: {name}")

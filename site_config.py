@@ -44,6 +44,9 @@ SETTING_DEFAULTS = {
     'pac_rad_floor': str(DEFAULT_RAD_FLOOR),
     'fluvius_ean_electricity': '',
     'fluvius_ean_gas': '',
+    # W2 WanOS display bridge
+    'wanos_ip': '',
+    'wanos_api_key': '',
     # A15: active flags are written on Save probe. Absent key + filled = grandfather active.
 }
 
@@ -53,6 +56,7 @@ INTEGRATION_ACTIVE_KEYS = {
     'sma': 'sma_active',
     'sunnywebbox': 'sunnywebbox_active',
     'sunnyportal': 'sunnyportal_active',
+    'wanos': 'wanos_active',
 }
 
 

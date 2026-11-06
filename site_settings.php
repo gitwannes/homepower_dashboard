@@ -64,6 +64,9 @@ function hp_setting_defaults(): array
         'raw_show_export_t2' => '1',
         'raw_show_solar_today' => '1',
         'raw_show_solar_lifetime' => '1',
+        // W2 WanOS bridge (display only)
+        'wanos_ip' => '',
+        'wanos_api_key' => '',
     ];
 }
 
@@ -497,6 +500,7 @@ function hp_integration_active_keys(): array
         'sma' => 'sma_active',
         'sunnywebbox' => 'sunnywebbox_active',
         'sunnyportal' => 'sunnyportal_active',
+        'wanos' => 'wanos_active',
     ];
 }
 
@@ -510,6 +514,7 @@ function hp_integration_labels(): array
         'sma' => 'SMA',
         'sunnywebbox' => 'Sunny WebBox',
         'sunnyportal' => 'Sunny Portal',
+        'wanos' => 'WanOS',
     ];
 }
 
@@ -531,6 +536,10 @@ function hp_integration_filled(array $settings, string $name): bool
         return trim((string)($settings['sunnyportal_user'] ?? '')) !== ''
             || trim((string)($settings['sunnyportal_password'] ?? '')) !== ''
             || trim((string)($settings['sunnyportal_plant_id'] ?? '')) !== '';
+    }
+    if ($name === 'wanos') {
+        return trim((string)($settings['wanos_ip'] ?? '')) !== ''
+            && trim((string)($settings['wanos_api_key'] ?? '')) !== '';
     }
     return false;
 }
@@ -636,6 +645,19 @@ function hp_integration_save_plan(array $settings): array
         }
     } else {
         $inactive[] = 'sunnyportal';
+    }
+
+    $wanosIp = trim((string)($settings['wanos_ip'] ?? ''));
+    $wanosKey = (string)($settings['wanos_api_key'] ?? '');
+    $wanosAny = $wanosIp !== '' || $wanosKey !== '';
+    if ($wanosAny) {
+        if ($wanosIp === '' || $wanosKey === '') {
+            $errors[] = 'WanOS is partial: address and API key are both required (or clear both).';
+        } else {
+            $probe[] = 'wanos';
+        }
+    } else {
+        $inactive[] = 'wanos';
     }
 
     return ['errors' => $errors, 'probe' => $probe, 'inactive' => $inactive];

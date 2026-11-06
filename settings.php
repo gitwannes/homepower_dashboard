@@ -11,6 +11,7 @@
 date_default_timezone_set('Europe/Brussels');
 require_once __DIR__ . '/site_settings.php';
 require_once __DIR__ . '/db_backup.php';
+require_once __DIR__ . '/wanos_bridge.php';
 
 /** How long Settings stays unlocked after a correct admin password (seconds). */
 const HP_SETTINGS_UNLOCK_SECONDS = 300;
@@ -18,6 +19,7 @@ const HP_SETTINGS_UNLOCK_SECONDS = 300;
 $boot = hp_boot();
 $pdo = $boot['pdo'];
 hp_vm_ensure_schema($pdo);
+hp_wanos_ensure_schema($pdo);
 $error = '';
 $notice = '';
 $posted = null;
@@ -42,6 +44,138 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $password = isset($_POST['admin_password']) ? (string)$_POST['admin_password'] : '';
         echo json_encode(['ok' => hp_admin_ok($pdo, $password)]);
         exit;
+    }
+
+    // W2: WanOS bridge save/probe + sensor mapping mutations (Unlock window; admin password).
+    if (in_array($action, ['wanos_save_probe', 'wanos_list', 'wanos_add', 'wanos_update', 'wanos_delete', 'wanos_catalog'], true)) {
+        $adminPassword = isset($_POST['admin_password']) ? (string)$_POST['admin_password'] : '';
+        if ($boot['mode'] === 'need_admin') {
+            hp_vm_json_exit(['ok' => false, 'error' => 'Set an admin password first.']);
+        }
+        if ($action !== 'wanos_list' && $action !== 'wanos_catalog' && !hp_admin_ok($pdo, $adminPassword)) {
+            hp_vm_json_exit(['ok' => false, 'error' => 'Admin password is wrong.']);
+        }
+        $storedNow = hp_load_stored($pdo);
+        if ($action === 'wanos_save_probe') {
+            $wanosIp = isset($_POST['wanos_ip']) ? trim((string)$_POST['wanos_ip']) : '';
+            $keyExisting = isset($storedNow['wanos_api_key']) ? (string)$storedNow['wanos_api_key'] : '';
+            $wanosKey = hp_resolve_password(
+                $keyExisting,
+                isset($_POST['wanos_api_key']) ? (string)$_POST['wanos_api_key'] : '',
+                isset($_POST['wanos_api_key_touched']) && (string)$_POST['wanos_api_key_touched'] === '1',
+                $keyExisting !== '',
+                isset($_POST['wanos_api_key_clear']) && (string)$_POST['wanos_api_key_clear'] === '1'
+            );
+            if ($wanosIp === '' && $wanosKey === '') {
+                hp_write_settings($pdo, [
+                    'wanos_ip' => '',
+                    'wanos_api_key' => '',
+                    'wanos_active' => '0',
+                ]);
+                hp_vm_json_exit([
+                    'ok' => true,
+                    'live' => false,
+                    'chip' => 'empty',
+                    'message' => 'WanOS bridge cleared.',
+                    'mappings' => hp_wanos_list_mappings($pdo),
+                    'p1_blocks_official_water' => false,
+                ]);
+            }
+            if ($wanosIp === '' || $wanosKey === '') {
+                hp_vm_json_exit(['ok' => false, 'error' => 'WanOS address and API key are both required (or clear both).']);
+            }
+            $trial = [
+                'wanos_ip' => $wanosIp,
+                'wanos_api_key' => $wanosKey,
+            ];
+            $probe = hp_wanos_probe($trial);
+            $active = !empty($probe['ok']) ? '1' : '0';
+            hp_write_settings($pdo, [
+                'wanos_ip' => $wanosIp,
+                'wanos_api_key' => $wanosKey,
+                'wanos_active' => $active,
+            ]);
+            $storedAfter = hp_load_stored($pdo);
+            $mergedAfter = hp_merge_settings($storedAfter);
+            $live = $active === '1';
+            hp_vm_json_exit([
+                'ok' => true,
+                'live' => $live,
+                'chip' => $live ? 'active' : 'inactive',
+                'message' => $live
+                    ? 'WanOS bridge is online.'
+                    : ('Saved, but bridge is offline: ' . (string)($probe['error'] ?? 'probe failed')),
+                'error' => $live ? '' : (string)($probe['error'] ?? 'probe failed'),
+                'mappings' => hp_wanos_list_mappings($pdo),
+                'p1_blocks_official_water' => hp_wanos_p1_blocks_official_water($pdo, $mergedAfter, $storedAfter),
+                'key_set' => $wanosKey !== '',
+            ]);
+        }
+        $mergedSettings = hp_merge_settings(hp_load_stored($pdo));
+        $storedNow = hp_load_stored($pdo);
+        if ($action === 'wanos_list') {
+            hp_vm_json_exit([
+                'ok' => true,
+                'mappings' => hp_wanos_list_mappings($pdo),
+                'live' => hp_wanos_active($mergedSettings, $storedNow),
+                'p1_blocks_official_water' => hp_wanos_p1_blocks_official_water($pdo, $mergedSettings, $storedNow),
+            ]);
+        }
+        if ($action === 'wanos_catalog') {
+            if (!hp_wanos_active($mergedSettings, $storedNow)) {
+                hp_vm_json_exit(['ok' => false, 'error' => 'WanOS bridge is not active. Save a working address + API key first.']);
+            }
+            $fetch = hp_wanos_fetch_sensors($mergedSettings);
+            if (!$fetch['ok']) {
+                hp_vm_json_exit(['ok' => false, 'error' => $fetch['error'] ?? 'Could not list WanOS sensors.']);
+            }
+            $mapped = [];
+            foreach (hp_wanos_list_mappings($pdo) as $row) {
+                $mapped[(string)$row['entity_id']] = true;
+            }
+            $blockOfficial = hp_wanos_p1_blocks_official_water($pdo, $mergedSettings, $storedNow);
+            $available = [];
+            foreach ($fetch['sensors'] ?? [] as $s) {
+                if (!is_array($s)) {
+                    continue;
+                }
+                $eid = (string)($s['entity_id'] ?? '');
+                if ($eid === '' || isset($mapped[$eid])) {
+                    continue;
+                }
+                $kind = (string)($s['kind'] ?? '');
+                if ($kind === 'water_official' && $blockOfficial) {
+                    continue;
+                }
+                $available[] = $s;
+            }
+            hp_vm_json_exit(['ok' => true, 'sensors' => $available]);
+        }
+        if ($action === 'wanos_add') {
+            $result = hp_wanos_mapping_create($pdo, $_POST, $mergedSettings, $storedNow);
+            hp_vm_json_exit([
+                'ok' => $result['ok'],
+                'error' => $result['error'] ?? '',
+                'mappings' => hp_wanos_list_mappings($pdo),
+            ]);
+        }
+        if ($action === 'wanos_update') {
+            $id = isset($_POST['id']) ? (int)$_POST['id'] : 0;
+            $result = hp_wanos_mapping_update($pdo, $id, $_POST);
+            hp_vm_json_exit([
+                'ok' => $result['ok'],
+                'error' => $result['error'] ?? '',
+                'mappings' => hp_wanos_list_mappings($pdo),
+            ]);
+        }
+        // wanos_delete
+        $id = isset($_POST['id']) ? (int)$_POST['id'] : 0;
+        $result = hp_wanos_mapping_delete($pdo, $id);
+        hp_vm_json_exit([
+            'ok' => $result['ok'],
+            'error' => $result['error'] ?? '',
+            'mappings' => hp_wanos_list_mappings($pdo),
+        ]);
     }
 
     // A14: virtual kWh meter mutations (Unlock window client-side; admin password required).
@@ -419,6 +553,7 @@ if ($posted !== null && isset($posted['monthly']) && is_array($posted['monthly']
 $smaSet = isset($stored['sma_password']) && $stored['sma_password'] !== '';
 $webboxSet = isset($stored['sunnywebbox_password']) && $stored['sunnywebbox_password'] !== '';
 $portalSet = isset($stored['sunnyportal_password']) && $stored['sunnyportal_password'] !== '';
+$wanosKeySet = isset($stored['wanos_api_key']) && $stored['wanos_api_key'] !== '';
 $nameplate = hp_positive_float(isset($settings['max_inverter_ac_w']) ? (string)$settings['max_inverter_ac_w'] : '', 12000.0);
 $capW = $nameplate * 1.05;
 $monthNames = [
@@ -517,6 +652,14 @@ function hp_settings_from_post(array $stored): array
         $portalExisting !== '',
         isset($_POST['sunnyportal_password_clear']) && $_POST['sunnyportal_password_clear'] === '1'
     );
+    $wanosKeyExisting = isset($stored['wanos_api_key']) ? $stored['wanos_api_key'] : '';
+    $wanosApiKey = hp_resolve_password(
+        $wanosKeyExisting,
+        $raw('wanos_api_key'),
+        isset($_POST['wanos_api_key_touched']) && $_POST['wanos_api_key_touched'] === '1',
+        $wanosKeyExisting !== '',
+        isset($_POST['wanos_api_key_clear']) && $_POST['wanos_api_key_clear'] === '1'
+    );
 
     $settings = [
         'p1_ip' => $p1,
@@ -529,6 +672,8 @@ function hp_settings_from_post(array $stored): array
         'sma_password' => $smaPassword,
         'sunnywebbox_ip' => $text('sunnywebbox_ip'),
         'sunnywebbox_password' => $wbPassword,
+        'wanos_ip' => $text('wanos_ip'),
+        'wanos_api_key' => $wanosApiKey,
         'sunnyportal_user' => $text('sunnyportal_user'),
         'sunnyportal_password' => $portalPassword,
         'sunnyportal_plant_id' => $text('sunnyportal_plant_id'),
@@ -591,7 +736,33 @@ $chipP1 = hp_integration_chip_state($settings, $stored, 'p1');
 $chipSma = hp_integration_chip_state($settings, $stored, 'sma');
 $chipWb = hp_integration_chip_state($settings, $stored, 'sunnywebbox');
 $chipPortal = hp_integration_chip_state($settings, $stored, 'sunnyportal');
+$chipWanos = hp_integration_chip_state($settings, $stored, 'wanos');
 $integrationLabels = hp_integration_labels();
+$wanosBridgeLive = hp_wanos_active($settings, $stored);
+$wanosMappings = hp_wanos_list_mappings($pdo);
+$wanosP1BlocksOfficial = hp_wanos_p1_blocks_official_water($pdo, $settings, $stored);
+// WebBox devices table (moved off homepage): from latest_state when WebBox active.
+$settingsWebboxDevices = [];
+$settingsSensorboxKey = '';
+$settingsWebboxIp = '';
+if (hp_integration_active($settings, 'sunnywebbox', $stored)) {
+    try {
+        $ls = $pdo->query('SELECT data_json FROM latest_state WHERE id = 1 LIMIT 1')->fetch(PDO::FETCH_ASSOC);
+        if ($ls && isset($ls['data_json'])) {
+            $st = json_decode((string)$ls['data_json'], true);
+            if (is_array($st) && !empty($st['has_webbox']) && isset($st['webbox_data']) && is_array($st['webbox_data'])) {
+                $wb = $st['webbox_data'];
+                $settingsWebboxDevices = isset($wb['devices']) && is_array($wb['devices']) ? $wb['devices'] : [];
+                $settingsWebboxIp = (string)($wb['ip'] ?? '');
+                if (isset($wb['sensorbox']) && is_array($wb['sensorbox']) && isset($wb['sensorbox']['key'])) {
+                    $settingsSensorboxKey = (string)$wb['sensorbox']['key'];
+                }
+            }
+        }
+    } catch (Throwable $e) {
+        $settingsWebboxDevices = [];
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -702,6 +873,147 @@ $integrationLabels = hp_integration_labels();
                         <button type="button" disabled class="js-edit-pw js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed" data-target="sunnywebbox_password">Edit</button>
                         <button type="button" disabled class="js-clear-pw js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed" data-target="sunnywebbox_password">Clear</button>
                     <?php endif; ?>
+                </div>
+            </div>
+            <?php if (hp_integration_active($settings, 'sunnywebbox', $stored) && (count($settingsWebboxDevices) > 0 || $settingsSensorboxKey !== '')): ?>
+            <div class="pt-3 border-t border-slate-100 space-y-2">
+                <div class="flex items-center justify-between gap-2">
+                    <h3 class="text-sm font-semibold text-slate-800">Sunny WebBox Devices</h3>
+                    <span class="text-xs text-slate-400"><?= count($settingsWebboxDevices) ?> device<?= count($settingsWebboxDevices) === 1 ? '' : 's' ?> on bus</span>
+                </div>
+                <?php if ($settingsSensorboxKey !== ''): ?>
+                <p class="text-xs text-slate-500">SensorBox id: <code class="bg-slate-100 px-1 rounded font-mono"><?= hp_h($settingsSensorboxKey) ?></code></p>
+                <?php endif; ?>
+                <?php if (count($settingsWebboxDevices) > 0): ?>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs border-collapse">
+                        <thead>
+                            <tr class="text-[10px] uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                                <th class="pb-2 font-semibold">Device</th>
+                                <th class="pb-2 font-semibold">Type</th>
+                                <th class="pb-2 text-right font-semibold">Power</th>
+                                <th class="pb-2 text-right font-semibold">Today</th>
+                                <th class="pb-2 text-right font-semibold">Total Yield</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100 font-mono">
+                            <?php foreach ($settingsWebboxDevices as $dev): ?>
+                            <?php if (!is_array($dev)) { continue; } ?>
+                            <tr>
+                                <td class="py-2 font-bold text-slate-800">
+                                    <?= hp_h((string)($dev['name'] ?? $dev['key'] ?? '')) ?>
+                                    <div class="text-[10px] font-normal text-slate-400"><?= hp_h((string)($dev['key'] ?? '')) ?></div>
+                                </td>
+                                <td class="py-2">
+                                    <?php if (($dev['type'] ?? '') === 'sensor'): ?>
+                                    <span class="bg-cyan-50 text-cyan-700 border border-cyan-200 px-1.5 py-0.5 rounded text-[10px] font-bold">Sensor</span>
+                                    <?php else: ?>
+                                    <span class="bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded text-[10px] font-bold">Inverter</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="py-2 text-right"><?= (($dev['type'] ?? '') === 'inverter') ? hp_h((string)round((float)($dev['power_w'] ?? 0))) . ' W' : '-' ?></td>
+                                <td class="py-2 text-right"><?= (($dev['type'] ?? '') === 'inverter' && isset($dev['today_kwh'])) ? hp_h(number_format((float)$dev['today_kwh'], 2, ',', '')) . ' kWh' : '-' ?></td>
+                                <td class="py-2 text-right text-slate-600">
+                                    <?php if (($dev['type'] ?? '') === 'inverter' && isset($dev['total_kwh'])): ?>
+                                        <?= hp_h(number_format((float)$dev['total_kwh'] / 1000, 3, ',', '')) ?> MWh
+                                    <?php elseif (!empty($dev['summary'])): ?>
+                                        <span class="font-sans text-[11px]"><?= hp_h((string)$dev['summary']) ?></span>
+                                    <?php else: ?>
+                                        -
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <?php endif; ?>
+                <?php if ($settingsWebboxIp !== ''): ?>
+                <p class="text-[11px] text-slate-400">Gateway IP: <?= hp_h($settingsWebboxIp) ?></p>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
+        </section>
+
+        <section class="bg-white border border-slate-200 rounded-2xl p-6 space-y-4 shadow-sm" id="wanosBridgeSection">
+            <div class="flex items-center justify-between gap-2">
+                <h2 class="text-sm font-bold uppercase tracking-wider text-slate-500">WanOS bridge</h2>
+                <span id="wanosChipHost"><?= hp_integration_chip_html($chipWanos) ?></span>
+            </div>
+            <p class="text-xs text-slate-500">Display-only link to WanOS (machine API key from WanOS Admin). Use <strong>Save &amp; check connection</strong> here (stays unlocked) — do not rely on the page-bottom Save for this. Hostname must match the TLS cert (e.g. <code class="bg-slate-100 px-1 rounded">app.wanos.be</code>).</p>
+            <label class="block text-sm font-semibold">WanOS address
+                <input name="wanos_ip" id="wanos_ip" disabled value="<?= hp_h(hp_field($settings, 'wanos_ip')) ?>" placeholder="app.wanos.be or https://app.wanos.be" class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 font-normal">
+            </label>
+            <div class="block text-sm font-semibold">WanOS API key
+                <div class="mt-1 flex gap-2 flex-wrap">
+                    <input type="password" name="wanos_api_key" id="wanos_api_key" autocomplete="new-password" disabled data-secret-set="<?= $wanosKeySet ? '1' : '0' ?>" placeholder="<?= $wanosKeySet ? '********' : '' ?>" class="js-lock-field flex-1 min-w-[10rem] border border-slate-200 rounded-xl px-3 py-2 font-normal">
+                    <input type="hidden" name="wanos_api_key_touched" id="wanos_api_key_touched" value="0">
+                    <input type="hidden" name="wanos_api_key_clear" id="wanos_api_key_clear" value="0">
+                    <?php if ($wanosKeySet): ?>
+                        <button type="button" disabled class="js-edit-pw js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed" data-target="wanos_api_key">Edit</button>
+                        <button type="button" disabled class="js-clear-pw js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed" data-target="wanos_api_key">Clear</button>
+                    <?php endif; ?>
+                </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+                <button type="button" id="wanosSaveProbeBtn" disabled class="js-lock-ctrl px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed">Save &amp; check connection</button>
+                <span id="wanosSaveProbeMsg" class="text-xs text-slate-500"></span>
+            </div>
+            <div class="pt-3 border-t border-slate-100 space-y-3 <?= $wanosBridgeLive ? '' : 'hidden' ?>" id="wanosSensorsPane">
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                    <h3 class="text-sm font-semibold text-slate-800">WanOS sensors on dashboard</h3>
+                    <button type="button" id="wanosAddBtn" disabled class="js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed">Add sensor from WanOS</button>
+                </div>
+                <p id="wanosP1BlockNote" class="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 <?= $wanosP1BlocksOfficial ? '' : 'hidden' ?>">P1 water is active: official Tap Water from WanOS (Water-Link) is not offered.</p>
+                <div id="wanosMappingsList" class="space-y-2 text-sm">
+                    <?php if (count($wanosMappings) === 0): ?>
+                    <p class="text-xs text-slate-400" id="wanosMappingsEmpty">No sensors added yet.</p>
+                    <?php else: ?>
+                    <?php foreach ($wanosMappings as $wm): ?>
+                    <?php
+                        $wmPlace = (string)$wm['placement'];
+                        $wmName = (string)$wm['display_name'];
+                    ?>
+                    <div class="border border-slate-100 rounded-xl px-3 py-2 bg-slate-50/80 space-y-2" data-wanos-id="<?= (int)$wm['id'] ?>" data-orig-name="<?= hp_h($wmName) ?>" data-orig-place="<?= hp_h($wmPlace) ?>">
+                        <code class="text-[10px] text-slate-400 block"><?= hp_h((string)$wm['entity_id']) ?></code>
+                        <div class="flex flex-wrap items-end gap-2">
+                            <label class="flex-1 min-w-[8rem] text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Name
+                                <input type="text" disabled class="js-lock-field js-wanos-name mt-1 w-full border border-slate-200 rounded-xl px-3 py-1.5 text-sm font-semibold text-slate-800" value="<?= hp_h($wmName) ?>">
+                            </label>
+                            <label class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Placement
+                                <select disabled class="js-lock-field js-wanos-place mt-1 border border-slate-200 rounded-xl px-2 py-1.5 text-xs">
+                                    <option value="both"<?= $wmPlace === 'both' ? ' selected' : '' ?>>Raw + main</option>
+                                    <option value="raw"<?= $wmPlace === 'raw' ? ' selected' : '' ?>>Raw only</option>
+                                    <option value="main"<?= $wmPlace === 'main' ? ' selected' : '' ?>>Main only</option>
+                                </select>
+                            </label>
+                            <button type="button" disabled class="js-lock-ctrl js-wanos-del text-xs text-red-600 font-semibold disabled:opacity-50" data-id="<?= (int)$wm['id'] ?>">Remove</button>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                    <?php endif; ?>
+                </div>
+                <div id="wanosMappingsSaveWrap" class="hidden">
+                    <button type="button" id="wanosMappingsSaveBtn" disabled class="js-lock-ctrl px-3 py-2 rounded-xl bg-slate-800 text-white text-xs font-semibold disabled:opacity-50">Save sensor changes</button>
+                </div>
+                <div id="wanosAddForm" class="hidden border border-slate-200 rounded-xl p-3 space-y-2 bg-white">
+                    <label class="block text-xs font-semibold text-slate-600">Sensor
+                        <select id="wanosAddEntity" disabled class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"></select>
+                    </label>
+                    <label class="block text-xs font-semibold text-slate-600">Display name (Power only)
+                        <input type="text" id="wanosAddName" disabled class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 text-sm">
+                    </label>
+                    <label class="block text-xs font-semibold text-slate-600">Placement
+                        <select id="wanosAddPlacement" disabled class="js-lock-field mt-1 w-full border border-slate-200 rounded-xl px-3 py-2 text-sm">
+                            <option value="both">Raw readings + main page</option>
+                            <option value="raw">Raw readings only</option>
+                            <option value="main">Main page only</option>
+                        </select>
+                    </label>
+                    <div class="flex gap-2">
+                        <button type="button" id="wanosAddConfirm" disabled class="js-lock-ctrl px-3 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold disabled:opacity-50">Add</button>
+                        <button type="button" id="wanosAddCancel" disabled class="js-lock-ctrl px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold disabled:opacity-50">Cancel</button>
+                    </div>
                 </div>
             </div>
         </section>
@@ -1813,6 +2125,370 @@ $integrationLabels = hp_integration_labels();
         });
 
         vmRender();
+
+        // W2: WanOS Save & check connection + sensor mappings (stays unlocked).
+        (function () {
+            var saveProbeBtn = document.getElementById('wanosSaveProbeBtn');
+            var saveProbeMsg = document.getElementById('wanosSaveProbeMsg');
+            var chipHost = document.getElementById('wanosChipHost');
+            var sensorsPane = document.getElementById('wanosSensorsPane');
+            var addBtn = document.getElementById('wanosAddBtn');
+            var addForm = document.getElementById('wanosAddForm');
+            var listEl = document.getElementById('wanosMappingsList');
+            var mapSaveWrap = document.getElementById('wanosMappingsSaveWrap');
+            var mapSaveBtn = document.getElementById('wanosMappingsSaveBtn');
+            var p1Note = document.getElementById('wanosP1BlockNote');
+            var ipInp = document.getElementById('wanos_ip');
+            var keyInp = document.getElementById('wanos_api_key');
+            if (!saveProbeBtn || !addBtn || !addForm || !listEl || !sensorsPane || !ipInp || !keyInp || !mapSaveWrap || !mapSaveBtn) {
+                return;
+            }
+            var entitySel = document.getElementById('wanosAddEntity');
+            var nameInp = document.getElementById('wanosAddName');
+            var placeSel = document.getElementById('wanosAddPlacement');
+            var confirmBtn = document.getElementById('wanosAddConfirm');
+            var cancelBtn = document.getElementById('wanosAddCancel');
+
+            function chipHtml(state) {
+                if (state === 'active') {
+                    return '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 border border-emerald-200">Active</span>';
+                }
+                if (state === 'inactive') {
+                    return '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-rose-50 text-rose-700 border border-rose-200">Inactive</span>';
+                }
+                return '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-slate-50 text-slate-500 border border-slate-200">Not configured</span>';
+            }
+
+            function wanosPost(action, fields) {
+                var body = new URLSearchParams();
+                body.set('action', action);
+                body.set('admin_password', unlockPassword || '');
+                Object.keys(fields || {}).forEach(function (k) {
+                    body.set(k, fields[k]);
+                });
+                return fetch('settings.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: body.toString(),
+                    credentials: 'same-origin'
+                }).then(function (r) { return r.json(); });
+            }
+
+            function placeOpts(selected) {
+                var opts = [
+                    { v: 'both', t: 'Raw + main' },
+                    { v: 'raw', t: 'Raw only' },
+                    { v: 'main', t: 'Main only' }
+                ];
+                return opts.map(function (o) {
+                    return '<option value="' + o.v + '"' + (selected === o.v ? ' selected' : '') + '>' + o.t + '</option>';
+                }).join('');
+            }
+
+            function dirtyRows() {
+                var out = [];
+                listEl.querySelectorAll('[data-wanos-id]').forEach(function (row) {
+                    var nameEl = row.querySelector('.js-wanos-name');
+                    var placeEl = row.querySelector('.js-wanos-place');
+                    if (!nameEl || !placeEl) {
+                        return;
+                    }
+                    var curName = (nameEl.value || '').trim();
+                    var curPlace = placeEl.value || '';
+                    var origName = (row.getAttribute('data-orig-name') || '').trim();
+                    var origPlace = row.getAttribute('data-orig-place') || '';
+                    if (curName !== origName || curPlace !== origPlace) {
+                        out.push({
+                            id: String(row.getAttribute('data-wanos-id') || ''),
+                            display_name: nameEl.value || '',
+                            placement: curPlace
+                        });
+                    }
+                });
+                return out;
+            }
+
+            function refreshMappingsDirty() {
+                var dirty = dirtyRows().length > 0;
+                if (dirty) {
+                    mapSaveWrap.classList.remove('hidden');
+                } else {
+                    mapSaveWrap.classList.add('hidden');
+                }
+                mapSaveBtn.disabled = !unlocked || !dirty;
+            }
+
+            function renderMappings(rows) {
+                if (!rows || !rows.length) {
+                    listEl.innerHTML = '<p class="text-xs text-slate-400" id="wanosMappingsEmpty">No sensors added yet.</p>';
+                    refreshMappingsDirty();
+                    return;
+                }
+                var dis = unlocked ? '' : ' disabled';
+                var html = '';
+                rows.forEach(function (wm) {
+                    var place = wm.placement || 'both';
+                    var dname = String(wm.display_name || '');
+                    html += '<div class="border border-slate-100 rounded-xl px-3 py-2 bg-slate-50/80 space-y-2" data-wanos-id="' + wm.id + '"'
+                        + ' data-orig-name="' + dname.replace(/"/g, '&quot;') + '" data-orig-place="' + place + '">'
+                        + '<code class="text-[10px] text-slate-400 block">' + (wm.entity_id || '') + '</code>'
+                        + '<div class="flex flex-wrap items-end gap-2">'
+                        + '<label class="flex-1 min-w-[8rem] text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Name'
+                        + '<input type="text" class="js-lock-field js-wanos-name mt-1 w-full border border-slate-200 rounded-xl px-3 py-1.5 text-sm font-semibold text-slate-800" value="'
+                        + dname.replace(/"/g, '&quot;') + '"' + dis + '></label>'
+                        + '<label class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Placement'
+                        + '<select class="js-lock-field js-wanos-place mt-1 border border-slate-200 rounded-xl px-2 py-1.5 text-xs"' + dis + '>'
+                        + placeOpts(place) + '</select></label>'
+                        + '<button type="button" class="js-lock-ctrl js-wanos-del text-xs text-red-600 font-semibold" data-id="' + wm.id + '"' + dis + '>Remove</button>'
+                        + '</div></div>';
+                });
+                listEl.innerHTML = html;
+                refreshMappingsDirty();
+            }
+
+            function applyBridgeUi(data) {
+                if (chipHost) {
+                    chipHost.innerHTML = chipHtml(data.chip || 'empty');
+                }
+                if (saveProbeMsg) {
+                    saveProbeMsg.textContent = data.message || '';
+                    saveProbeMsg.className = data.live
+                        ? 'text-xs text-emerald-700'
+                        : 'text-xs text-rose-700';
+                }
+                if (p1Note) {
+                    if (data.p1_blocks_official_water) {
+                        p1Note.classList.remove('hidden');
+                    } else {
+                        p1Note.classList.add('hidden');
+                    }
+                }
+                if (data.live) {
+                    sensorsPane.classList.remove('hidden');
+                    renderMappings(data.mappings || []);
+                    if (unlocked) {
+                        setControlsEnabled(true);
+                    }
+                } else {
+                    sensorsPane.classList.add('hidden');
+                    addForm.classList.add('hidden');
+                }
+                if (data.key_set) {
+                    keyInp.setAttribute('data-secret-set', '1');
+                    keyInp.placeholder = '********';
+                    keyInp.value = '';
+                    document.getElementById('wanos_api_key_touched').value = '0';
+                    document.getElementById('wanos_api_key_clear').value = '0';
+                    if (unlocked) {
+                        keyInp.disabled = true;
+                    }
+                }
+                baseline = snapshotForm();
+                captureSecretBaseline();
+                refreshPrimaryButton();
+            }
+
+            saveProbeBtn.addEventListener('click', function () {
+                if (!unlocked) {
+                    return;
+                }
+                vmWithPassword(function () {
+                    saveProbeBtn.disabled = true;
+                    if (saveProbeMsg) {
+                        saveProbeMsg.textContent = 'Checking…';
+                        saveProbeMsg.className = 'text-xs text-slate-500';
+                    }
+                    wanosPost('wanos_save_probe', {
+                        wanos_ip: ipInp.value || '',
+                        wanos_api_key: keyInp.value || '',
+                        wanos_api_key_touched: document.getElementById('wanos_api_key_touched').value || '0',
+                        wanos_api_key_clear: document.getElementById('wanos_api_key_clear').value || '0'
+                    }).then(function (data) {
+                        saveProbeBtn.disabled = !unlocked;
+                        if (!data || data.ok === false) {
+                            if (saveProbeMsg) {
+                                saveProbeMsg.textContent = (data && data.error) ? data.error : 'Save failed.';
+                                saveProbeMsg.className = 'text-xs text-rose-700';
+                            }
+                            if (unlocked) {
+                                setControlsEnabled(true);
+                            }
+                            return;
+                        }
+                        applyBridgeUi(data);
+                    }).catch(function () {
+                        saveProbeBtn.disabled = !unlocked;
+                        if (saveProbeMsg) {
+                            saveProbeMsg.textContent = 'Save failed (network).';
+                            saveProbeMsg.className = 'text-xs text-rose-700';
+                        }
+                        if (unlocked) {
+                            setControlsEnabled(true);
+                        }
+                    });
+                });
+            });
+
+            addBtn.addEventListener('click', function () {
+                if (!unlocked) {
+                    return;
+                }
+                vmWithPassword(function () {
+                    wanosPost('wanos_catalog', {}).then(function (data) {
+                        if (!data || !data.ok) {
+                            alert((data && data.error) ? data.error : 'Could not load WanOS sensors.');
+                            return;
+                        }
+                        var sensors = data.sensors || [];
+                        entitySel.innerHTML = '';
+                        if (!sensors.length) {
+                            alert('No more allowlisted WanOS sensors available to add.');
+                            return;
+                        }
+                        sensors.forEach(function (s) {
+                            var opt = document.createElement('option');
+                            opt.value = s.entity_id;
+                            opt.textContent = (s.name || s.entity_id) + ' (' + (s.unit || '') + ')';
+                            opt.setAttribute('data-name', s.name || '');
+                            entitySel.appendChild(opt);
+                        });
+                        nameInp.value = sensors[0].name || '';
+                        addForm.classList.remove('hidden');
+                        if (unlocked) {
+                            setControlsEnabled(true);
+                        }
+                    }).catch(function () {
+                        alert('Could not load WanOS sensors (network).');
+                    });
+                });
+            });
+
+            entitySel.addEventListener('change', function () {
+                var opt = entitySel.options[entitySel.selectedIndex];
+                if (opt) {
+                    nameInp.value = opt.getAttribute('data-name') || '';
+                }
+            });
+
+            cancelBtn.addEventListener('click', function () {
+                addForm.classList.add('hidden');
+            });
+
+            confirmBtn.addEventListener('click', function () {
+                if (!unlocked) {
+                    return;
+                }
+                vmWithPassword(function () {
+                    wanosPost('wanos_add', {
+                        entity_id: entitySel.value,
+                        display_name: nameInp.value,
+                        placement: placeSel.value
+                    }).then(function (data) {
+                        if (!data || !data.ok) {
+                            alert((data && data.error) ? data.error : 'Add failed.');
+                            return;
+                        }
+                        addForm.classList.add('hidden');
+                        renderMappings(data.mappings || []);
+                        if (unlocked) {
+                            setControlsEnabled(true);
+                        }
+                    }).catch(function () {
+                        alert('Add failed (network).');
+                    });
+                });
+            });
+
+            listEl.addEventListener('input', function (ev) {
+                var t = ev.target;
+                if (t && t.classList && t.classList.contains('js-wanos-name')) {
+                    refreshMappingsDirty();
+                }
+            });
+            listEl.addEventListener('change', function (ev) {
+                var t = ev.target;
+                if (t && t.classList && t.classList.contains('js-wanos-place')) {
+                    refreshMappingsDirty();
+                }
+            });
+
+            mapSaveBtn.addEventListener('click', function () {
+                if (!unlocked) {
+                    return;
+                }
+                var pending = dirtyRows();
+                if (!pending.length) {
+                    refreshMappingsDirty();
+                    return;
+                }
+                vmWithPassword(function () {
+                    mapSaveBtn.disabled = true;
+                    var chain = Promise.resolve({ ok: true, mappings: null });
+                    pending.forEach(function (row) {
+                        chain = chain.then(function (prev) {
+                            if (!prev || !prev.ok) {
+                                return prev;
+                            }
+                            return wanosPost('wanos_update', {
+                                id: row.id,
+                                display_name: row.display_name,
+                                placement: row.placement
+                            });
+                        });
+                    });
+                    chain.then(function (data) {
+                        if (!data || !data.ok) {
+                            alert((data && data.error) ? data.error : 'Save failed.');
+                            refreshMappingsDirty();
+                            if (unlocked) {
+                                setControlsEnabled(true);
+                            }
+                            return;
+                        }
+                        renderMappings(data.mappings || []);
+                        if (unlocked) {
+                            setControlsEnabled(true);
+                        }
+                    }).catch(function () {
+                        alert('Save failed (network).');
+                        refreshMappingsDirty();
+                        if (unlocked) {
+                            setControlsEnabled(true);
+                        }
+                    });
+                });
+            });
+
+            listEl.addEventListener('click', function (ev) {
+                var t = ev.target;
+                if (!t || !t.classList || !t.classList.contains('js-wanos-del')) {
+                    return;
+                }
+                if (!unlocked) {
+                    return;
+                }
+                var id = t.getAttribute('data-id');
+                if (!id || !confirm('Remove this WanOS sensor mapping?')) {
+                    return;
+                }
+                vmWithPassword(function () {
+                    wanosPost('wanos_delete', { id: String(id) }).then(function (data) {
+                        if (!data || !data.ok) {
+                            alert((data && data.error) ? data.error : 'Remove failed.');
+                            return;
+                        }
+                        renderMappings(data.mappings || []);
+                        if (unlocked) {
+                            setControlsEnabled(true);
+                        }
+                    }).catch(function () {
+                        alert('Remove failed (network).');
+                    });
+                });
+            });
+
+            refreshMappingsDirty();
+        }());
 
         // Page load: locked. Successful save redirects here already locked.
         refreshPrimaryButton();
