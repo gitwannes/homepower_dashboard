@@ -2,8 +2,8 @@
 # Phase W — WanOS bridge
 
 **Status:** **W2 Done** 2026-11-06; **W1** open  
-**Last updated:** 2026-11-06 (W2 close-out)  
-**Product pointers:** [`docs/architecture.md`](../architecture.md) · WanOS repo `docs/integration_power_bridge.md`
+**Last updated:** 2026-11-08 (**Ops8** host DNS close-out; W2 unchanged)  
+**Product pointers:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · WanOS repo `docs/integration_power_bridge.md`
 
 ---
 
@@ -54,6 +54,14 @@ WanOS integration: **W1** Power → WanOS; **W2** WanOS → Power display bridge
 | WanOS | Machine bridge key (64 hex); `/api/bridge/probe` + `/api/bridge/sensors` (allowlist + live value + `updated_unix`); Admin Generate; role `bridge` |
 | Power | `wanos_bridge.php`; Settings address + key (**Save & check connection**); mappings Add / dirty **Save sensor changes** / Remove; probe → `wanos_active`; index Sensor readings + Utility/Raw waters; WebBox devices table on Settings only |
 | Host | Prefer TLS hostname matching cert (e.g. `app.wanos.be`); do not use raw IP for HTTPS |
+
+### Ops follow-up (not product code)
+
+| Id | Status | What |
+|---|---|---|
+| **Ops8** | **Done** 2026-11-08 | DS723: mapped WanOS sensors missing + slow index. Cause: `/etc/resolv.conf` IPv6-only ISP DNS; `app.wanos.be` resolve timed out (5s curl). Fix: DSM **Network → General → Advanced → First use IPv4 address to resolve domain names**. Diagnose: `index.php?action=wanos_live`. Product notes: [`deploy.md`](../deploy.md) · [`architecture.md`](../architecture.md). |
+
+**Verbatim (2026-11-08):** check why water doesn't show up on BE90 dashboard any more - it is available through wanos · wanos HAS mapping, BE90 does NOT have water via P1 and it worked initially · `{"ok":false,"rows":[],"error":"WanOS unreachable: Resolving timed out after 5000 milliseconds"}` · close bugfix
 
 ### Allowlist entity_ids
 

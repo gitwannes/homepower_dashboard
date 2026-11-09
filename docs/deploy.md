@@ -2,7 +2,7 @@
 # Deploy notes
 
 **Status:** as-is for Synology-first host.  
-**Last updated:** 2026-10-29 (run_python.sh for Task Scheduler)
+**Last updated:** 2026-11-08 (Ops8 WanOS DNS on DS723)
 
 ## Runtime `.env`
 
@@ -57,6 +57,7 @@ Example config shape (placeholders only — put real values only in the local JS
 
 ## Synology
 
+- **DNS / WanOS bridge (Ops8, 2026-11-08):** PHP resolves the WanOS Settings hostname on every index load (`wanos_bridge.php`, ~5s curl timeout). If DSM IPv6 **Auto** puts only the ISP IPv6 resolver in `/etc/resolv.conf`, names that Cloudflare answers (e.g. `app.wanos.be` → LAN IP) can fail while Windows still pings fine. Symptom: all mapped WanOS sensors missing, slow homepage, `index.php?action=wanos_live` → `Resolving timed out after 5000 milliseconds`, Settings chip still Active. Fix on DS723: **Control Panel → Network → General → Advanced Settings → First use IPv4 address to resolve domain names** (with manual IPv4 DNS `1.1.1.1`). Keep IPv6 on for traffic. Prefer hostname over raw IP for HTTPS (cert must match). Optional: static hosts entry `10.32.251.30 app.wanos.be`.
 - Web Station: PHP with `curl`, `pdo_sqlite`, and `sqlite3`. `exec()` must be allowed. The dashboard poll button already uses it. The PHP `zip` extension is not used for the Settings backup.
 - Settings backup and restore run `db_backup.py` via `hp_python_bin()` (same picker as the poll button, powertests, and import dashboard): Package Center 3.14 first, then versioned `/usr/local/bin/python3.14` .. `python3.9`, then bare `python3`. DS723 resolves to 3.14; Sofie to 3.9 when that binary exists. That script uses the Python standard library plus OpenSSL `libcrypto`, which DSM already has. No extra pip package. The key is read from `.env` inside Python. It is not a command argument.
 - Download and restore call `set_time_limit(0)`. On Linux the wait for Python is outside PHP `max_execution_time`. The web server or PHP-FPM can still close the request. In Web Station, Core `default_socket_timeout` and `hard_timeout` are not that limit. `hard_timeout` is only the extra seconds after `max_execution_time`. The values that can still cut the request are Core `max_execution_time` (if `set_time_limit` is disabled), FPM `request_terminate_timeout`, and the web server read timeout.

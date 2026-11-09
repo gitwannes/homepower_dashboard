@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-11-06 (**W2** Done; **W1** still open)
+**Last updated:** 2026-11-08 (**Ops8** Done — DS723 DNS; **W1** still open)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -65,6 +65,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **A26** | bugfix: purge WebBox +4h :00 staging clones; Virtual best-day yield + integer Y — **2026-11-03** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **A27** | weather period avgs + Records (wind speed, module hi/lo, radiation max) — **2026-11-03** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **W2** | WanOS → Power display bridge (Settings link + mappings; Sensor readings / Utility / Raw; WebBox devices → Settings) — **2026-11-06** — [`phaseW-wanos.md`](phaseW-wanos.md) · [`architecture.md`](../architecture.md) · WanOS `docs/integration_power_bridge.md` |
+| **Ops8** | bugfix: WanOS sensors vanished on DS723 — IPv6 auto-DNS overrode `1.1.1.1`; enable **First use IPv4 address to resolve domain names** — **2026-11-08** — [`deploy.md`](../deploy.md) · [`architecture.md`](../architecture.md) · [`phaseW-wanos.md`](phaseW-wanos.md) |
 
 ---
 
