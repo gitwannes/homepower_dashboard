@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-11-08 (**Ops8** Done — DS723 DNS; **W1** still open)
+**Last updated:** 2026-11-10 (**Ops5** scope: fixed `/volume1/data/wlw_db_backup` + D/W/M like be90 Ops8; **W1** still open)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -74,7 +74,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
 | 1 | open | L | **W1** | Power → WanOS: `-daily` / raw opened / historical push + display Power readings in WanOS | [`phaseW-wanos.md`](phaseW-wanos.md) |
-| 2 | open | M | **Ops5** | Daily DB dump to Settings Synology path; `powerbackup-YYMMDD-HHMMSS.sql.zip`; keep last 14 (replaces Hyper Backup) | [`roadmap.md`](../roadmap.md) |
+| 2 | open | M | **Ops5** | Scheduled DB zip → `/volume1/data/wlw_db_backup` (`power-db-D\|W\|M-…`); D14/W90/M365; C2 via existing Hyper Backup (same folder as be90 Ops8) | [`roadmap.md`](../roadmap.md) |
 | 3 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
 
 ---
@@ -85,7 +85,7 @@ Open Ops rows are also in **Sequence** (same ids). Done Ops stay in **Done** onl
 
 | Id | Status | What |
 |---|---|---|
-| **Ops5** | open | Daily dump → Settings Synology path; `powerbackup-YYMMDD-HHMMSS.sql.zip`; rotate keep 14 (not Hyper Backup) |
+| **Ops5** | open | DB zip → `/volume1/data/wlw_db_backup`; `power-db-D\|W\|M-…`; prune D14/W90/M365; C2 already backs that folder |
 | **Ops7** | open | `notifier.py` (roadmap Phase 3) |
 
 ---

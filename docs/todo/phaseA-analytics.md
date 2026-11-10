@@ -366,6 +366,8 @@ Placed: **A14** virtual kWh meters; **A15** Settings save probe. **Ops5** Hyper 
 
 Operator: fold into **Ops5** (replaces Hyper Backup scope). Detail: [`roadmap.md`](../roadmap.md) Phase 4. Encryption vs plain zip left for kickoff.
 
+**Revised 2026-11-10:** Settings path + `powerbackup-?` + keep-14 superseded. Ops5 now = fixed `/volume1/data/wlw_db_backup`, `power-db-D|W|M-?`, D14/W90/M365 (be90 Ops8 shape). Canonical: [`roadmap.md`](../roadmap.md) Phase 4 · [`pipeline.md`](pipeline.md).
+
 ### 2026-10-23 - triage (three items)
 
 > also triage:

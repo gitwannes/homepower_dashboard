@@ -111,11 +111,23 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 - [x] Implement live hardware diagnostic utility (`powertests.py` & `powertests.php`). It reads site settings from `meter_history.db` and probes P1, SMA, and WebBox. It does not write telemetry.
 - [ ] Implement `readings` hot-buffer retention strategy:
       - Once 1-minute data is downsampled and aggregated, prune `readings` to 30–90 rolling days to keep hot queries lightweight while preserving permanent history in `history_5min`.
-- [ ] **Ops5** — Daily DB backup to a Synology path from Settings (not Hyper Backup):
-      - Filename `powerbackup-YYMMDD-HHMMSS.sql.zip` (Europe/Brussels stamp).
-      - Keep only the last 14 files in that path (rotate).
-      - Task Scheduler daily job (time TBD at kickoff).
+- [ ] **Ops5** — Scheduled DB zip to fixed Synology drop (same C2 folder as be90 Ops8; not Hyper Backup of live `meter_history.db`):
+      - Drop path (fixed): `/volume1/data/wlw_db_backup` (UNC `\\…\data\wlw_db_backup`). Hyper Backup → C2 already mirrors this folder.
+      - Filenames (Europe/Brussels stamp): `power-db-D-YYYYMMDD-HHMMSS.zip` · `power-db-W-…` · `power-db-M-…` (align with be90 `wlw-db-D|W|M-…` pattern).
+      - Retention on that path (prune matching `power-db-*` only): Daily keep **14 days** · Weekly keep **3 months** · Monthly keep **1 year**.
+      - Cadence: daily write **D**; also **W** on Sunday; also **M** on 1st (same shape as be90 Ops8). Task Scheduler time TBD at kickoff.
+      - Host is the NAS → local write into the drop dir (no Pi-style scp). Pattern reference: be90 `helpers/backup/wlw_db_backup.sh` / `docs/ops-checklist.md` § Ops8.
       - Encryption vs plain zip: open until kickoff.
+      - **A9** Settings encrypted download/restore stays separate (on-demand; not this job).
+      - Triage 2026-11-10 (merged into Ops5): see verbatim below.
+
+### Ops5 — triage 2026-11-10 (verbatim)
+
+> backup: is there anything in piple for regular backup of the DB?
+> path \volume1\data\wlw_db_backup is becked up by C2 synology
+> check be90webserver repo for how backup is arranged there - triage this
+
+Operator locks (same turn): (1) fixed drop path; (2) same be90 D/W/M retention in that path; (3) filename prefix `power-db-D-…`.
 - [ ] Configure Synology DSM Task Scheduler:
       - [x] Every 1 minute: `run_python.sh logger.py -poll` (Live P1 + Inverter ingestion).
       - [x] Daily at 00:05: `run_python.sh rollup.py -daily` (Locks in yesterday's daily aggregates).
