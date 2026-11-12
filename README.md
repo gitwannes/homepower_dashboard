@@ -27,7 +27,7 @@ See [`docs/architecture.md`](docs/architecture.md).
 |---|---|---|
 | `.env` | `DB_BACKUP_ENCRYPTION_KEY` only. Device and portal settings are on the Settings page. | **no** (encrypted storage → host by hand) |
 | `.env.example` | Key names only | yes |
-| `helpers/` | Local sync tool + `p1-sync.config.json` | **no** (entire dir gitignored; MIR copies it to NAS) |
+| `helpers/` | Local sync tool; `p1-sync.config.json` is site-local | scripts **yes**; `p1-sync.config.json` **no** |
 
 Never put real LAN IPs or site nicknames in committed files.
 
@@ -46,6 +46,7 @@ Never put real LAN IPs or site nicknames in committed files.
 | `fluvius_import.py` | Fluvius CSV in `import_queue/fluvius/` → `fluvius_interval` (Settings EANs only) |
 | `sunnyportal_pull.py` | ennexOS PV → `sunnyportal_pv_5min` (`-pullall` / `-lastdays` / `-probe`) |
 | `rollup.py` | Warehouse: `-consolidate`, nightly `-daily`, rare `-buildall` (Sunny Portal solar empty-fill + Fluvius electricity) |
+| `backup/power_db_backup.sh` | Ops5: daily 04:00 plain zip of `meter_history.db` → `/volume1/data/wlw_db_backup` (`power-db-D\|W\|M-…`; prune in-script) |
 | `integration_probes.py` | Structured P1/SMA/WebBox/Portal probes (Settings Save + powertests) |
 | `powertests.py` / `powertests.php` | Live hardware probes (ignores active flags) |
 

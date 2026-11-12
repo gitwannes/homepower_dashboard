@@ -2,7 +2,7 @@
 # Deploy notes
 
 **Status:** as-is for Synology-first host.  
-**Last updated:** 2026-11-08 (Ops8 WanOS DNS on DS723)
+**Last updated:** 2026-11-12 (Ops5 closed DS723; Ops9 Sofie backup setup)
 
 ## Runtime `.env`
 
@@ -16,21 +16,21 @@ The first browser open asks for an admin password (enter it twice) when none is 
 
 Use [`.env.example`](../.env.example) as the key list.
 
-## Local sync (`helpers/` — not in git)
+## Local sync (`helpers/`)
 
-On the operator PC, keep under `helpers/` (gitignored):
+`helpers/` scripts may be committed. Site-specific `helpers/p1-sync.config.json` stays **gitignored** (LAN paths / IPs).
 
-| File | Role |
-|---|---|
-| `p1-sync.ps1` / `p1-sync.bat` | Robocopy MIR PC → NAS |
-| `p1-sync.config.json` | Source path + named SMB targets (UNC / probe IP) |
-| `README.md` | Local notes |
+| File | Role | Git |
+|---|---|---|
+| `p1-sync.ps1` / `p1-sync.bat` | Robocopy MIR PC → NAS | yes (when present) |
+| `p1-sync.config.json` | Source path + named SMB targets (UNC / probe IP) | **no** |
+| `README.md` | Local / operator notes | optional |
 
 Per-target rules (local `p1-sync.config.json`):
 
 | Target type | Behaviour |
 |---|---|
-| Synology | Mirror **app** files; **`helpers/` not copied** (`exclude_dirs`) |
+| Synology | Mirror **app** files; typically **`helpers/` not copied** (`exclude_dirs`) — Ops5 script lives under tracked `backup/` so MIR reaches `/volume1/web/backup/` |
 | OneDrive (optional) | Mirror **`helpers/` only** (`source_subdir`) — backup of sync tool, not the app |
 
 Shared excludes: `.env*`, SQLite DBs, import working dirs, `.gitignore`, `LICENSE`, `*.md`, `docs/`.
@@ -61,11 +61,36 @@ Example config shape (placeholders only — put real values only in the local JS
 - Web Station: PHP with `curl`, `pdo_sqlite`, and `sqlite3`. `exec()` must be allowed. The dashboard poll button already uses it. The PHP `zip` extension is not used for the Settings backup.
 - Settings backup and restore run `db_backup.py` via `hp_python_bin()` (same picker as the poll button, powertests, and import dashboard): Package Center 3.14 first, then versioned `/usr/local/bin/python3.14` .. `python3.9`, then bare `python3`. DS723 resolves to 3.14; Sofie to 3.9 when that binary exists. That script uses the Python standard library plus OpenSSL `libcrypto`, which DSM already has. No extra pip package. The key is read from `.env` inside Python. It is not a command argument.
 - Download and restore call `set_time_limit(0)`. On Linux the wait for Python is outside PHP `max_execution_time`. The web server or PHP-FPM can still close the request. In Web Station, Core `default_socket_timeout` and `hard_timeout` are not that limit. `hard_timeout` is only the extra seconds after `max_execution_time`. The values that can still cut the request are Core `max_execution_time` (if `set_time_limit` is disabled), FPM `request_terminate_timeout`, and the web server read timeout.
-- Task Scheduler: every 1 minute `logger.py -poll`; daily at 00:05 `rollup.py -daily`; weekly Sunday `PRAGMA optimize`. Run Python jobs through `run_python.sh` (same candidate order as `hp_python_bin()`), so DS723 and Sofie share one task command without hardcoding 3.14 vs 3.9:
+- Task Scheduler: every 1 minute `logger.py -poll`; daily at 00:05 `rollup.py -daily`; daily at **04:00** Ops5 DB zip (separate job — not folded into rollup); weekly Sunday `PRAGMA optimize`. Run Python jobs through `run_python.sh` (same candidate order as `hp_python_bin()`), so DS723 and Sofie share one task command without hardcoding 3.14 vs 3.9:
   - `/volume1/web/run_python.sh /volume1/web/logger.py -poll`
   - `/volume1/web/run_python.sh /volume1/web/rollup.py -daily`
-  After sync, `chmod +x /volume1/web/run_python.sh`. Bare `python3` on Sofie is often 3.8 and cannot import `zoneinfo`. `rollup.py -buildall` is a rare full rebuild, not a weekly job. `fluvius_import.py` is manual: drop CSVs in `import_queue/fluvius/` and run it when a file arrives. `sunnyportal_pull.py -pullall` / `-lastdays` is on-demand (Settings credentials → `sunnyportal_pv_5min`); nightly `-daily` empty-fills solar and stitches Fluvius quarters.
+  - `/volume1/web/backup/power_db_backup.sh` (Ops5; user-defined script; needs `sqlite3` + `zip` on PATH)
+  After sync, `chmod +x /volume1/web/run_python.sh /volume1/web/backup/power_db_backup.sh`. Bare `python3` on Sofie is often 3.8 and cannot import `zoneinfo`. `rollup.py -buildall` is a rare full rebuild, not a weekly job. `fluvius_import.py` is manual: drop CSVs in `import_queue/fluvius/` and run it when a file arrives. `sunnyportal_pull.py -pullall` / `-lastdays` is on-demand (Settings credentials → `sunnyportal_pv_5min`); nightly `-daily` empty-fills solar and stitches Fluvius quarters.
 - DB file lives beside the app on Synology (`meter_history.db`).
+
+### Ops5 — scheduled DB zip (plain; C2 via existing Hyper Backup)
+
+**Script (in git / MIR to NAS):** [`backup/power_db_backup.sh`](../backup/power_db_backup.sh). Staging runs under the drop dir on `/volume1` (never `/tmp` — Synology tmpfs is too small for a full DB snapshot).
+
+| | |
+|---|---|
+| Drop dir | `/volume1/data/wlw_db_backup` (same folder Hyper Backup already mirrors to C2; shared with WLW `wlw-db-*`) |
+| Names | `power-db-D-YYYYMMDD-HHMMSS.zip` · `power-db-W-…` · `power-db-M-…` (Europe/Brussels) |
+| Contents | SQLite online `.backup` of `meter_history.db` only (plain zip; no encrypt; no `.env`) |
+| Cadence | Always **D**; also **W** on Sunday; also **M** on day 1 — one 04:00 fire |
+| Prune | In-script after write: `power-db-D-*` >14d / `W` >90d / `M` >365d; never deletes `wlw-db-*` |
+| Schedule | **Separate** DSM task daily **04:00** (leave `-daily` at 00:05) |
+| Logs | Human-readable sizes (KiB/MiB/GiB) + zip size with **% reduction vs snapshot** |
+| Restore | **Manual** only — unzip, stop writers if needed, replace `meter_history.db` (A9 Settings restore stays for encrypted on-demand files) |
+| Overrides | `HP_DB_FILE`, `HP_DB_BACKUP_DIR` (optional test) |
+| Hosts | **DS723** Done (Ops5). **Sofie** setup → **Ops9** |
+
+**Operator (once after sync) — DS723 Done; repeat on Sofie under Ops9:**
+
+1. `chmod +x /volume1/web/backup/power_db_backup.sh`
+2. DSM Task Scheduler → new user-defined script, daily 04:00, command above; run as a user that can read the DB and write the drop dir
+3. Smoke: run the task once → `ls /volume1/data/wlw_db_backup/power-db-D-*.zip`
+4. Confirm Hyper Backup → C2 still includes that folder (already set for WLW on DS723; confirm Sofie path/offsite in Ops9)
 
 ## Pi / log2ram (optional)
 

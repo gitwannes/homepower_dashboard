@@ -2,7 +2,7 @@
 # Architecture
 
 **Status:** Migrated into this repo (2026-10-22). Phase A warehouse + UI Done. Phase P portals Done. **W2** WanOS→Power display bridge Done.  
-**Last updated:** 2026-11-08 (Ops8 DS723 WanOS DNS)  
+**Last updated:** 2026-11-12 (Ops5 closed; Ops9 Sofie backup setup)  
 **Operator cheat sheet:** [`power-notes.md`](power-notes.md) (commands / tables / rebuild).  
 **Delivery archives:** [`docs/todo/_archive/phaseM-migration.md`](todo/_archive/phaseM-migration.md) · [`docs/todo/_archive/phaseA-aggregation.md`](todo/_archive/phaseA-aggregation.md) (A0–A3) · [`docs/todo/phaseA-analytics.md`](todo/phaseA-analytics.md) (A4–A27 Done — move offline when convenient) · [`docs/todo/phaseP-portals.md`](todo/phaseP-portals.md) (P1–P3 Done — move offline when convenient) · [`docs/todo/phaseW-wanos.md`](todo/phaseW-wanos.md) (**W2** Done; keep until **W1** closes)
 
@@ -31,7 +31,11 @@ A **standalone** home energy hub: poll P1 + optional SMA / Sunny WebBox, store t
     -> history_5min + daily/monthly/envelopes/top_records/top_periods
     -> index.php / analytics.php / summary.php / topn.php / settings.php
 
-helpers/  (gitignored entire directory; PC-only sync tool)
+backup/power_db_backup.sh  (Ops5; MIR to NAS)
+    -> 04:00 Task Scheduler -> plain power-db-D|W|M-*.zip in /volume1/data/wlw_db_backup
+    -> Hyper Backup/C2 already mirrors that folder (shared with WLW)
+
+helpers/  (scripts may be in git; p1-sync.config.json gitignored)
     p1-sync.config.json  -> per-target path / excludes / optional source_subdir
     p1-sync.ps1|.bat     -> Synology: app only (no helpers/); OneDrive: helpers/ only
                          -> never copies .env*
@@ -115,6 +119,8 @@ Formula: `V = (S0 + C) + p * (S - S0)` with `p = factor_percent / 100` (factor e
 
 Restore accepts only that encrypted file. `PRAGMA integrity_check` must be `ok`, then the live database is replaced and `-wal` / `-shm` are deleted. A failed check keeps the live database. One in-flight poll may fail. Runtime requirements are in [`deploy.md`](deploy.md).
 
+**Ops5 (scheduled, separate from A9; DS723 Done 2026-11-12):** DSM Task Scheduler daily **04:00** Europe/Brussels runs [`backup/power_db_backup.sh`](../backup/power_db_backup.sh). It SQLite-`.backup`s `meter_history.db` into a **plain** zip at `/volume1/data/wlw_db_backup` as `power-db-D|W|M-YYYYMMDD-HHMMSS.zip` (always D; W on Sunday; M on day 1), then prunes older `power-db-*` (D14 / W90 / M365). Staging is under the drop dir on `/volume1` (never Synology `/tmp` tmpfs). Logs use human-readable sizes and zip **% reduction vs snapshot**. Same drop folder as WLW Ops8 (`wlw-db-*`); Hyper Backup → C2 already mirrors it on DS723. No encrypt, no `.env` in the zip, no product restore UI — manual unzip/replace only. Leave `rollup.py -daily` at 00:05. **Sofie** unit setup → **Ops9**. Details: [`deploy.md`](deploy.md).
+
 The live chart on `index.php` is a **2-hour pulse** of 1-minute `readings` (auto-refresh). Segmented switch: **Exchange** (default), **Balance** (`?view=balance`), **Classic** (`?view=classic`), or **Phases** (`?view=phases`) when the pulse has `power_l*_w` samples. Exchange is bipolar signed net (Grid above 0 / Surplus below 0). Balance paints Self-sufficient, Grid, and Surplus; Production and Consumption are tooltip/legend composites. Phases draws three signed L1/L2/L3 lines plus a light filled **Sum** mountain (L1+L2+L3); null phase samples are omitted (gaps, no zero-fill). Longer windows, pan, and mixed history live on `analytics.php`. A step longer than 3 minutes is a gap on the live pulse.
 
 ## UI map
@@ -161,8 +167,8 @@ On a passing electricity day the daily kWh stays the P1 counter delta. A finishe
 | Backup encryption key | `.env` (`DB_BACKUP_ENCRYPTION_KEY` only) | name in `.env.example` | **never** |
 | Device IPs, device passwords, titles, plant limits, Sunny Portal user / password / plant id / timezone, Fluvius electricity EAN and gas EAN, WanOS host + API key, `p1_active` / `sma_active` / `sunnywebbox_active` / `sunnyportal_active` / `wanos_active` | `meter_history.db` `app_settings` (Settings page only; not read from `.env`). WanOS sensor placements live in `wanos_sensor_mappings`. | no | DB is not in git; sync excludes `.env*` and `*.db` |
 | Admin password | `meter_history.db` `app_admin` (one-way hash) | no | same as the DB |
-| Sync source + SMB targets | `helpers/p1-sync.config.json` | no | Synology: **no** / OneDrive helpers-backup: **yes** |
-| Sync scripts + local helpers README | `helpers/` | no (whole dir gitignored) | Synology: **no** / OneDrive helpers-backup: **yes** |
+| Sync source + SMB targets | `helpers/p1-sync.config.json` | no (gitignored) | Synology: **no** / OneDrive helpers-backup: **yes** |
+| Sync scripts + helpers README | `helpers/` (except config json) | yes when committed | Synology MIR usually excludes `helpers/`; OneDrive helpers-backup: **yes** |
 
 Committed files (code + docs): **no** real LAN IPs, **no** household/site nicknames.
 

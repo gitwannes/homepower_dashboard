@@ -3,7 +3,23 @@
 
 Dense warehouse map. Product detail: [`architecture.md`](architecture.md). Delivery backlog: [`todo/pipeline.md`](todo/pipeline.md).
 
-**Last checked:** 2026-10-27 (P1 pull + rollup empty-fill shipped; non-PV map after probe)
+**Last checked:** 2026-11-12 (Ops5 closed DS723; Ops9 Sofie)
+
+---
+
+## Scheduled DB backup (Ops5 / Ops9)
+
+```
+/volume1/web/backup/power_db_backup.sh
+	DSM Task Scheduler daily 04:00 (separate from rollup -daily at 00:05)
+	sqlite .backup meter_history.db -> plain zip
+	writes /volume1/data/wlw_db_backup/power-db-D|W|M-YYYYMMDD-HHMMSS.zip
+	prunes power-db-* only (D14 / W90 / M365); leaves wlw-db-* alone
+	logs: human sizes + zip % reduction vs snapshot
+	C2 via existing Hyper Backup of that folder (DS723)
+	restore: manual only (not A9 Settings encrypted download)
+	DS723: Ops5 Done · Sofie: Ops9 (setup same job)
+```
 
 ---
 

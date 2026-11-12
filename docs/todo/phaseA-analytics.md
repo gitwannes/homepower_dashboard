@@ -366,7 +366,9 @@ Placed: **A14** virtual kWh meters; **A15** Settings save probe. **Ops5** Hyper 
 
 Operator: fold into **Ops5** (replaces Hyper Backup scope). Detail: [`roadmap.md`](../roadmap.md) Phase 4. Encryption vs plain zip left for kickoff.
 
-**Revised 2026-11-10:** Settings path + `powerbackup-?` + keep-14 superseded. Ops5 now = fixed `/volume1/data/wlw_db_backup`, `power-db-D|W|M-?`, D14/W90/M365 (be90 Ops8 shape). Canonical: [`roadmap.md`](../roadmap.md) Phase 4 · [`pipeline.md`](pipeline.md).
+**Revised 2026-11-10:** Settings path + `powerbackup-â€¦` + keep-14 superseded. Ops5 now = fixed `/volume1/data/wlw_db_backup`, `power-db-D|W|M-â€¦`, D14/W90/M365 (be90 Ops8 shape). Canonical: [`roadmap.md`](../roadmap.md) Phase 4 Â· [`pipeline.md`](pipeline.md).
+
+**Kickoff 2026-11-12 / shipped:** plain zip of `meter_history.db` only; separate 04:00 DSM task + [`backup/power_db_backup.sh`](../../backup/power_db_backup.sh); in-script prune `power-db-*`; stage on volume (not `/tmp`); C2 already covers drop folder; manual restore. **Ops5 Done** (DS723 smoke + human size / zip % logs 2026-11-12). Sofie â†’ **Ops9**. `helpers/` not gitignored (only `p1-sync.config.json`). See [`roadmap.md`](../roadmap.md) Â· [`deploy.md`](../deploy.md).
 
 ### 2026-10-23 - triage (three items)
 
@@ -766,7 +768,7 @@ Settings downloads and restores an encrypted copy of the whole database. `db_bac
 
 **Status:** **Done** 2026-11-03 (Last DoD / operator close)  
 **Size:** **L**  
-**Product:** [`docs/architecture.md`](../architecture.md) (gas/water + `weather.php`) · `gas_water.php` · `utility_volume.py` · `weather.php` · `summary.php` · `topn.php` · `index.php` · `rollup.py`
+**Product:** [`docs/architecture.md`](../architecture.md) (gas/water + `weather.php`) ï¿½ `gas_water.php` ï¿½ `utility_volume.py` ï¿½ `weather.php` ï¿½ `summary.php` ï¿½ `topn.php` ï¿½ `index.php` ï¿½ `rollup.py`
 
 ### Done summary
 
@@ -1280,7 +1282,7 @@ Affinity **A**. Page starts locked; Unlock asks admin password; timed edit windo
 
 **Status:** Done 2026-11-03.  
 **Size:** M  
-**Product:** [`docs/architecture.md`](../architecture.md) · `analytics.php` · `topn.php` · `summary.php` · `pac_quality.php`
+**Product:** [`docs/architecture.md`](../architecture.md) ï¿½ `analytics.php` ï¿½ `topn.php` ï¿½ `summary.php` ï¿½ `pac_quality.php`
 
 ### Shipped summary
 
@@ -1307,7 +1309,7 @@ See Verbatim inbox **2026-11-03 - triage/kickoff/implement A22** and **close A22
 
 **Status:** **Done** 2026-11-03 (Last DoD / operator close)  
 **Size:** **M**  
-**Product:** [`docs/architecture.md`](../architecture.md) · `rollup.py` · `weather.php`
+**Product:** [`docs/architecture.md`](../architecture.md) ï¿½ `rollup.py` ï¿½ `weather.php`
 
 ### Done summary
 
@@ -1338,7 +1340,7 @@ See Verbatim inbox **2026-11-03 - A23 triage + kickoff**, **A23 kickoff answers 
 
 **Status:** **Done** 2026-11-03 (amended rad gate; operator close).  
 **Size:** S  
-**Product:** [`docs/architecture.md`](../architecture.md) · `rollup.py` `build_clear_sky_envelopes`
+**Product:** [`docs/architecture.md`](../architecture.md) ï¿½ `rollup.py` `build_clear_sky_envelopes`
 
 ### Shipped summary
 
@@ -1371,7 +1373,7 @@ See Verbatim inbox **A24 triage/kickoff**, first implement, **rad gate amend**, 
 
 **Status:** **Done** 2026-11-03 (Last DoD / operator close)  
 **Size:** S  
-**Product:** [`docs/architecture.md`](../architecture.md) · `weather.php`
+**Product:** [`docs/architecture.md`](../architecture.md) ï¿½ `weather.php`
 
 ### Done summary
 
@@ -1401,7 +1403,7 @@ See Verbatim inbox **2026-11-03 - triage A25**, **A25 kickoff answers**, **imple
 
 **Status:** **Done** 2026-11-03.  
 **Size:** S  
-**Product:** [`docs/architecture.md`](../architecture.md) · `rollup.py -purge_webbox_plus4h` · `topn.php` Virtual 'best-day'  
+**Product:** [`docs/architecture.md`](../architecture.md) ï¿½ `rollup.py -purge_webbox_plus4h` ï¿½ `topn.php` Virtual 'best-day'  
 **Depends on:** **A24** Done (rad floor stays).
 
 ### Root cause (Mean XML + staging audit 2026-11-03)
@@ -1445,7 +1447,7 @@ See Verbatim inbox **triage A26**, Mean XML, **A26 implement**, **close A26 (UI 
 
 **Status:** **Done** 2026-11-03 (Last DoD / operator close).  
 **Size:** M  
-**Product:** [`docs/architecture.md`](../architecture.md) · `weather.php` · `rollup.py`
+**Product:** [`docs/architecture.md`](../architecture.md) ï¿½ `weather.php` ï¿½ `rollup.py`
 
 ### Shipped summary
 

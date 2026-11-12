@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-11-10 (**Ops5** scope: fixed `/volume1/data/wlw_db_backup` + D/W/M like be90 Ops8; **W1** still open)
+**Last updated:** 2026-11-12 (**Ops5** closed DS723 smoke + log polish; **Ops9** Sofie backup setup triaged; **W1** next)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -66,6 +66,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **A27** | weather period avgs + Records (wind speed, module hi/lo, radiation max) — **2026-11-03** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 | **W2** | WanOS → Power display bridge (Settings link + mappings; Sensor readings / Utility / Raw; WebBox devices → Settings) — **2026-11-06** — [`phaseW-wanos.md`](phaseW-wanos.md) · [`architecture.md`](../architecture.md) · WanOS `docs/integration_power_bridge.md` |
 | **Ops8** | bugfix: WanOS sensors vanished on DS723 — IPv6 auto-DNS overrode `1.1.1.1`; enable **First use IPv4 address to resolve domain names** — **2026-11-08** — [`deploy.md`](../deploy.md) · [`architecture.md`](../architecture.md) · [`phaseW-wanos.md`](phaseW-wanos.md) |
+| **Ops5** | Scheduled plain `meter_history.db` zip → `/volume1/data/wlw_db_backup` (`power-db-D\|W\|M-…`; in-script prune; 04:00 DSM) — **Done 2026-11-12** (DS723 smoke + human size / zip % logs) — [`backup/power_db_backup.sh`](../../backup/power_db_backup.sh) · [`roadmap.md`](../roadmap.md) · [`deploy.md`](../deploy.md) |
 
 ---
 
@@ -74,7 +75,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
 | 1 | open | L | **W1** | Power → WanOS: `-daily` / raw opened / historical push + display Power readings in WanOS | [`phaseW-wanos.md`](phaseW-wanos.md) |
-| 2 | open | M | **Ops5** | Scheduled DB zip → `/volume1/data/wlw_db_backup` (`power-db-D\|W\|M-…`); D14/W90/M365; C2 via existing Hyper Backup (same folder as be90 Ops8) | [`roadmap.md`](../roadmap.md) |
+| 2 | open | M | **Ops9** | Setup Ops5 `power_db_backup` on Synology **Sofie** | [`roadmap.md`](../roadmap.md) § Ops9 · [`deploy.md`](../deploy.md) |
 | 3 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
 
 ---
@@ -85,7 +86,7 @@ Open Ops rows are also in **Sequence** (same ids). Done Ops stay in **Done** onl
 
 | Id | Status | What |
 |---|---|---|
-| **Ops5** | open | DB zip → `/volume1/data/wlw_db_backup`; `power-db-D\|W\|M-…`; prune D14/W90/M365; C2 already backs that folder |
+| **Ops9** | open | Setup Ops5 DB zip backup on Synology unit **Sofie** (script + DSM 04:00 + drop dir / C2) |
 | **Ops7** | open | `notifier.py` (roadmap Phase 3) |
 
 ---

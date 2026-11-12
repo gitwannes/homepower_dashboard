@@ -111,15 +111,29 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 - [x] Implement live hardware diagnostic utility (`powertests.py` & `powertests.php`). It reads site settings from `meter_history.db` and probes P1, SMA, and WebBox. It does not write telemetry.
 - [ ] Implement `readings` hot-buffer retention strategy:
       - Once 1-minute data is downsampled and aggregated, prune `readings` to 30–90 rolling days to keep hot queries lightweight while preserving permanent history in `history_5min`.
-- [ ] **Ops5** — Scheduled DB zip to fixed Synology drop (same C2 folder as be90 Ops8; not Hyper Backup of live `meter_history.db`):
-      - Drop path (fixed): `/volume1/data/wlw_db_backup` (UNC `\\…\data\wlw_db_backup`). Hyper Backup → C2 already mirrors this folder.
-      - Filenames (Europe/Brussels stamp): `power-db-D-YYYYMMDD-HHMMSS.zip` · `power-db-W-…` · `power-db-M-…` (align with be90 `wlw-db-D|W|M-…` pattern).
-      - Retention on that path (prune matching `power-db-*` only): Daily keep **14 days** · Weekly keep **3 months** · Monthly keep **1 year**.
-      - Cadence: daily write **D**; also **W** on Sunday; also **M** on 1st (same shape as be90 Ops8). Task Scheduler time TBD at kickoff.
-      - Host is the NAS → local write into the drop dir (no Pi-style scp). Pattern reference: be90 `helpers/backup/wlw_db_backup.sh` / `docs/ops-checklist.md` § Ops8.
-      - Encryption vs plain zip: open until kickoff.
-      - **A9** Settings encrypted download/restore stays separate (on-demand; not this job).
-      - Triage 2026-11-10 (merged into Ops5): see verbatim below.
+- [x] **Ops5** — Scheduled plain zip of `meter_history.db` into `/volume1/data/wlw_db_backup` (`power-db-D|W|M-…`; prune in-script; 04:00 DSM task) — **Done 2026-11-12** (DS723 smoked; console logs human size + zip % reduction). Script: [`backup/power_db_backup.sh`](../backup/power_db_backup.sh). Deploy: [`deploy.md`](deploy.md). Sofie unit → **Ops9**.
+- [ ] **Ops9** — Setup the same Ops5 backup on Synology **Sofie** (MIR script, `chmod +x`, DSM 04:00 task, drop dir + Hyper Backup/C2). Detail below.
+
+### Ops5 — kickoff locks (2026-11-12)
+
+| Topic | Lock |
+|---|---|
+| Drop path | Fixed `/volume1/data/wlw_db_backup` (UNC `\\…\data\wlw_db_backup`) |
+| Offsite | Existing Hyper Backup → C2 of that folder — **already runs**; no new Hyper Backup task |
+| Schedule | Same as WLW Ops8: **04:00** Europe/Brussels daily; one job fire writes **D**, also **W** on Sunday, also **M** on day-of-month **1** |
+| Filenames | `power-db-D-YYYYMMDD-HHMMSS.zip` · `power-db-W-…` · `power-db-M-…` (Brussels stamp) |
+| Retention / prune | **Inside the same shell script** after writing new zips (match WLW Ops8): `find` drop dir `-maxdepth 1`, delete older **`power-db-D-*.zip`** (`-mtime +14`), **`power-db-W-*.zip`** (`+90`), **`power-db-M-*.zip`** (`+365`). Do **not** touch `wlw-db-*` or other files |
+| Format | **Plain zip** (no encrypt). Snapshot via SQLite online `.backup` (be90 shape), not SQL dump, not A9 `.backup` encrypt |
+| Zip contents | **`meter_history.db` only** (see config inventory below). **No** `.env` |
+| Transport | Local write on the NAS into the drop dir (no scp) |
+| Restore | **Out of scope** for product UI — manual unzip / replace only; document briefly in deploy |
+| A9 | Settings encrypted download/restore stays separate (on-demand) |
+| Sequence | **Ops5 first; W1 after** |
+| Vehicle | Shell [`backup/power_db_backup.sh`](../backup/power_db_backup.sh) + **separate** DSM Task Scheduler job at **04:00** (leave `rollup.py -daily` at 00:05). Not folded into rollup. Stage under drop dir on `/volume1` (not `/tmp`) |
+| Pattern ref | be90 `helpers/backup/wlw_db_backup.sh` / `docs/ops-checklist.md` § Ops8 |
+| Shipped | **2026-11-12** — script + docs; DS723 DSM smoke + human-readable size / zip reduction logs |
+
+**User-side config inventory (kickoff Q3):** almost all site config lives **inside** `meter_history.db` (`app_settings`, `app_admin`, `expected_monthly`, virtual meters, `wanos_sensor_mappings`, timeseries). Outside the DB on the host: **`.env`** = `DB_BACKUP_ENCRYPTION_KEY` only (excluded by lock). PC-only: `helpers/p1-sync.config.json` (sync targets; not on NAS product runtime; not in this zip).
 
 ### Ops5 — triage 2026-11-10 (verbatim)
 
@@ -128,8 +142,50 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
 > check be90webserver repo for how backup is arranged there - triage this
 
 Operator locks (same turn): (1) fixed drop path; (2) same be90 D/W/M retention in that path; (3) filename prefix `power-db-D-…`.
-- [ ] Configure Synology DSM Task Scheduler:
+
+### Ops5 — kickoff answers 2026-11-12 (verbatim)
+
+> 1: schedules the same as wlw
+> 2: no encrypt: just zip
+> 3: no .env - which other user-side config/info  is there?
+> 4: DSM backup already runs - path = /volume1/data/wlw_db_backup
+> 5: no restore: manual
+> 6: first, W1 after
+
+### Ops5 — kickoff follow-up 2026-11-12 (verbatim)
+
+> yes, DSM task scheduler
+> for the daily task: can we re-use the rollup (so time will change) or is it best to add another task ?
+
+> inside the shell script: check for older backups, then purge: match wlw setup
+
+Operator: separate 04:00 DSM task (not reuse rollup); prune older `power-db-*` inside the backup shell script (WLW mtime find/delete shape).
+
+- [x] Configure Synology DSM Task Scheduler (**DS723** / Ops5 host):
       - [x] Every 1 minute: `run_python.sh logger.py -poll` (Live P1 + Inverter ingestion).
       - [x] Daily at 00:05: `run_python.sh rollup.py -daily` (Locks in yesterday's daily aggregates).
+      - [x] Daily at 04:00: `backup/power_db_backup.sh` (Ops5 — DS723 smoked 2026-11-12).
       - [x] Weekly on Sunday: `sqlite3 meter_history.db "PRAGMA optimize;"`.
-      - Use absolute paths under `/volume1/web/`; `run_python.sh` picks newest Python (same order as `hp_python_bin()`).
+      - Use absolute paths under `/volume1/web/`; `run_python.sh` picks newest Python (same order as `hp_python_bin()`). Sofie mirror of this backup job → **Ops9**.
+
+### Ops9 — Sofie: Ops5 power DB backup setup (triage 2026-11-12)
+
+**Status:** open · Sequence #2 · **Size:** M  
+**Depends on:** **Ops5** Done (script + locks)  
+**Host:** Synology unit **Sofie** (not DS723)
+
+#### Scope (placement)
+
+- Deploy / MIR [`backup/power_db_backup.sh`](../backup/power_db_backup.sh) onto Sofie web tree.
+- `chmod +x`; DSM Task Scheduler daily **04:00** Europe/Brussels (same as Ops5).
+- Confirm drop dir writable; prune stays in-script (`power-db-*` only).
+- Confirm offsite (Hyper Backup → C2 or Sofie equivalent) covers the drop folder.
+
+#### Open (placement — confirm before kickoff)
+
+1. Sofie drop path — same `/volume1/data/wlw_db_backup`, or different?
+2. Sofie web root — still `/volume1/web/` with `meter_history.db` beside the app?
+
+#### Verbatim (triage 2026-11-12)
+
+> close phase, add to triage: setup this backup for Synology unit "Sofie"

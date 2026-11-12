@@ -5,8 +5,8 @@
 !.env.example
 .envrc
 
-# Entire helpers/ is local-only (sync tool, config, local readme) — mirrored to NAS by sync, never committed
-helpers/
+# Local sync site config (LAN paths / IPs) — helpers/ scripts may be committed
+helpers/p1-sync.config.json
 
 # Python
 __pycache__/
