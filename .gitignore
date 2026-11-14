@@ -1,53 +1,84 @@
 # --- file: .gitignore ---
-# Secrets / local config
+# Compiled from .gitignore.common (sections 1-2) + section 3 below.
+# Edit .gitignore.common for shared patterns; keep repo-only noise in section 3.
+
+# === 1. General ===
+# Secrets / env
 .env
 .env.*
 !.env.example
-.envrc
-
-# Local sync site config (LAN paths / IPs) — helpers/ scripts may be committed
-helpers/p1-sync.config.json
 
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.egg-info/
 .venv/
 venv/
+env/
 ENV/
 
-# SQLite + runtime data (never publish meter history)
-*.db
-*.db-wal
-*.db-shm
-*.sqlite
-*.sqlite3
-meter_history.db*
+# Node
+node_modules/
 
-# Import / archive working dirs (app runtime only; keep docs/todo/_archive in git)
-import_queue/
-/_archive/
-*.zip
-*.7z
-*.rar
-*.xml
-
-# Logs
+# Logs / caches
 *.log
-*.log.old
-docs/logs/
+.cache/
 
 # OS / editor
 .DS_Store
 Thumbs.db
 Desktop.ini
-.idea/
-.vscode/
 *.swp
+*.swo
 *~
+.idea/
 
-# Sync / deploy noise
+# Windows / Cursor / sync junk
+*.lnk
+_tmp*
+*.bak
+
+
+# === 2. Operator common (all Wannes repos) ===
+
+# Local sync site configs (never commit LAN paths/creds)
+helpers/*-sync.config
+helpers/*-sync.config.json
+
+# Ops log staging (PC pull into git tree)
+/docs/logs
+docs/logs/
+
+# Runtime DBs (tighten in section 3 if a repo tracks a seed DB)
+*.sqlite*
+*.db
+*.db-wal
+*.db-shm
+
+# === 3. homepower_dashboard ===
+
+# Extra env / packaging
+.envrc
+*.egg-info/
+
+# Meter history naming (also covered by *.db)
+meter_history.db*
+
+# Import / working dirs (runtime only)
+import_queue/
+*.zip
+*.7z
+*.rar
+*.xml
+*.log.old
+
+# Sync / deploy editor junk
 *.bat~
 *.ps1~
 *.me
+.vscode/
+
+# Keep docs/todo/_archive/ in git; ignore other _archive dirs
+_archive/
+!docs/todo/_archive/
+!docs/todo/_archive/**

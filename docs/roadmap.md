@@ -178,14 +178,26 @@ Operator: separate 04:00 DSM task (not reuse rollup); prune older `power-db-*` i
 
 - Deploy / MIR [`backup/power_db_backup.sh`](../backup/power_db_backup.sh) onto Sofie web tree.
 - `chmod +x`; DSM Task Scheduler daily **04:00** Europe/Brussels (same as Ops5).
-- Confirm drop dir writable; prune stays in-script (`power-db-*` only).
-- Confirm offsite (Hyper Backup → C2 or Sofie equivalent) covers the drop folder.
+- Drop dir: **`/volume1/data/wlw_db_backup`** (same as DS723 / Ops5) — writable; prune stays in-script (`power-db-*` only).
+- Confirm offsite (Hyper Backup → C2 or Sofie equivalent) covers that folder.
 
-#### Open (placement — confirm before kickoff)
+#### Placement locks (triage 2026-11-12)
 
-1. Sofie drop path — same `/volume1/data/wlw_db_backup`, or different?
-2. Sofie web root — still `/volume1/web/` with `meter_history.db` beside the app?
+| Topic | Lock |
+|---|---|
+| Drop path | **`/volume1/data/wlw_db_backup`** (same as DS723) |
+| Web root / DB | **`/volume1/web/`** with **`meter_history.db`** beside the app (same as DS723) |
+| Script | `/volume1/web/backup/power_db_backup.sh` (MIR from git) |
+| Schedule | DSM daily **04:00** Europe/Brussels (Ops5 shape) |
+
+#### Open
+
+*(none for placement — kickoff when ready)*
 
 #### Verbatim (triage 2026-11-12)
 
 > close phase, add to triage: setup this backup for Synology unit "Sofie"
+
+> also /volume1/data/wlw_db_backup
+
+> yes
