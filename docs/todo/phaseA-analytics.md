@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) â Analytics UI + plant config
 
-**Status:** **A4**-**A27** + **A11** + **A23** Done. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-11-03 (**A27** Done / Last DoD - file ready to move offline)  
+**Status:** **A4**-**A28** Done. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-11-19 (**A28** Done / Last DoD - file ready to move offline)  
 **Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py` - `weather.php`
 
 ---
@@ -11,6 +11,7 @@
 
 | Id | Status | What |
 |---|---|---|
+| **A28** | Done | Raw Meter Registers: header timestamp badge. Product: [`docs/architecture.md`](../architecture.md) |
 | **A4** | Done | Top-N tables (days / months / years) + graphs |
 | **A5** | Done | Balance/Classic multi-series power (both pages). Product: [`docs/architecture.md`](../architecture.md) |
 | **A5b** | Done | Explorer + index pulse + Exchange default. Product: [`docs/architecture.md`](../architecture.md) |
@@ -37,13 +38,30 @@
 | **A26** | Done | bugfix: purge WebBox +4h :00 clones; Virtual best-day yield + integer Y |
 | **A27** | Done | weather period avgs + Records (wind/module/rad) |
 
-**Parallel:** **A14**-**A27** + **A11** + **A23** all Done.
+**Parallel:** **A14**-**A28** + **A11** + **A23** all Done.
 
 **Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
 
 ---
 
 ## Verbatim inbox
+
+### 2026-11-19 - close A28
+
+> close A28
+
+A28 closed. Last DoD docs audit complete across `docs/architecture.md`, `docs/todo/pipeline.md`, and `docs/todo/phaseA-analytics.md`. Track A (A4–A28) is fully completed and ready for manual offline archive.
+
+### 2026-11-19 - implement A28
+
+> implement
+
+Shipped Raw Meter Registers header timestamp badge (`Last poll: d/m/Y H:i:s`). Product docs and Last DoD updated.
+
+### 2026-11-18 - triage + kickoff A28 (Raw Meter Registers timestamp)
+
+> Raw Meter Registers: add timestamp on top of page
+> triage & kickoff
 
 ### 2026-11-03 - close A27
 
@@ -1472,6 +1490,35 @@ Period Week/Month/Year/All years use daily/monthly `*_avg*` (true means); open d
 ### Verbatim
 
 See Verbatim inbox **triage + kickoff A27**, **kickoff answers**, **amend Records**, **Records locks**, **implement A27**, **close A27**.
+
+---
+
+## A28 — Raw Meter Registers: timestamp on top of page
+
+**Status:** Done (2026-11-19)  
+**Depends on:** A21 (Done)  
+**Product:** [`docs/architecture.md`](../architecture.md) — Raw Meter Registers modal (`index.php`)
+
+### Shipped summary
+
+Added timestamp badge on top right of the Raw Meter Registers modal (`#rawReadingsModal`) in `index.php`. The badge displays `Last poll: d/m/Y H:i:s` with a Lucide clock icon opposite the modal title (`flex flex-col sm:flex-row sm:items-center justify-between`).
+
+### Locked decisions (2026-11-18)
+
+- **L1 (Source):** Page render time (`date('d/m/Y H:i:s')`).
+- **L2 (Placement):** Right side of modal header bar opposite the title (`flex items-center justify-between`).
+- **L3 (Format & Label):** Badge showing `Last poll: d/m/Y H:i:s`.
+
+### DoD
+
+- [x] Header badge with `Last poll: d/m/Y H:i:s` displayed on top right of Raw Meter Registers modal in `index.php`
+- [x] Product docs (`docs/architecture.md`) updated on ship
+- [x] Operator smoke test
+- [x] Last DoD docs audit
+
+### Verbatim
+
+See Verbatim inbox **2026-11-18 - triage + kickoff A28**, **2026-11-19 - implement A28**, and **2026-11-19 - close A28**.
 
 ---
 

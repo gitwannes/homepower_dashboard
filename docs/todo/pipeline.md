@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-11-12 (**Ops5** closed DS723 smoke + log polish; **Ops9** Sofie backup setup triaged; **W1** next)
+**Last updated:** 2026-11-19 (**A28** Done; **W1** next)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -67,6 +67,7 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 | **W2** | WanOS → Power display bridge (Settings link + mappings; Sensor readings / Utility / Raw; WebBox devices → Settings) — **2026-11-06** — [`phaseW-wanos.md`](phaseW-wanos.md) · [`architecture.md`](../architecture.md) · WanOS `docs/integration_power_bridge.md` |
 | **Ops8** | bugfix: WanOS sensors vanished on DS723 — IPv6 auto-DNS overrode `1.1.1.1`; enable **First use IPv4 address to resolve domain names** — **2026-11-08** — [`deploy.md`](../deploy.md) · [`architecture.md`](../architecture.md) · [`phaseW-wanos.md`](phaseW-wanos.md) |
 | **Ops5** | Scheduled plain `meter_history.db` zip → `/volume1/data/wlw_db_backup` (`power-db-D\|W\|M-…`; in-script prune; 04:00 DSM) — **Done 2026-11-12** (DS723 smoke + human size / zip % logs) — [`backup/power_db_backup.sh`](../../backup/power_db_backup.sh) · [`roadmap.md`](../roadmap.md) · [`deploy.md`](../deploy.md) |
+| **A28** | Raw Meter Registers: header timestamp badge — **2026-11-19** — [`phaseA-analytics.md`](phaseA-analytics.md) · [`architecture.md`](../architecture.md) |
 
 ---
 
@@ -96,6 +97,6 @@ Open Ops rows are also in **Sequence** (same ids). Done Ops stay in **Done** onl
 | Letter | Affinity | File |
 |---|---|---|
 | **M** | Migration + public-repo hygiene + local sync | [`_archive/phaseM-migration.md`](_archive/phaseM-migration.md) (**archived**) |
-| **A** | Aggregation warehouse + analytics UI | [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md) (A0–A3 Done) · [`phaseA-analytics.md`](phaseA-analytics.md) (A4–A27 Done — move offline when convenient) |
+| **A** | Aggregation warehouse + analytics UI | [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md) (A0–A3 Done) · [`phaseA-analytics.md`](phaseA-analytics.md) (A4–A28 Done — move file offline when convenient) |
 | **P** | Cloud / utility portal ingest (P1–P3 Done — move file offline when convenient) | [`phaseP-portals.md`](phaseP-portals.md) |
 | **W** | WanOS bridge (**W2** Done; **W1** open) | [`phaseW-wanos.md`](phaseW-wanos.md) |

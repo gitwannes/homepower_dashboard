@@ -66,7 +66,7 @@ $DefaultExcludeDirs = @(
 )
 $DefaultExcludeFiles = @(
     "meter_history.db*", "*.sqlite", ".env", ".env.*", "*.me",
-    ".gitignore", "LICENSE", "LICENSE.*", "*.md"
+    ".gitignore*", "LICENSE", "LICENSE.*", "*.md"
 )
 
 function Get-JsonProp {

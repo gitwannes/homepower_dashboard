@@ -28,7 +28,7 @@ $smaIntegrationActive = hp_integration_active($hpSettings, 'sma', $hpStored);
 $webboxIntegrationActive = hp_integration_active($hpSettings, 'sunnywebbox', $hpStored);
 $showLiveYield = $smaIntegrationActive || $webboxIntegrationActive;
 
-// Raw Meter Registers: optional built-in rows + flagged virtual meters (A21).
+// Raw Meter Registers: optional built-in rows + flagged virtual meters (A21) + header timestamp (A28).
 $rawShowImportT1 = hp_raw_show_optional($hpSettings, 'raw_show_import_t1');
 $rawShowImportT2 = hp_raw_show_optional($hpSettings, 'raw_show_import_t2');
 $rawShowExportT1 = hp_raw_show_optional($hpSettings, 'raw_show_export_t1');
@@ -1077,15 +1077,19 @@ $pageTitle = trim($hpSettings['site_page_title']) !== '' ? $hpSettings['site_pag
 <?php if ($p1): ?>
 <div id="rawReadingsModal" class="<?= $openRawModal ? '' : 'hidden' ?> fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
     <div class="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-xl w-full p-6 md:p-8 animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[92vh]">
-        <div class="flex items-center justify-between pb-4 border-b border-slate-100 mb-4 flex-shrink-0">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100 mb-4 flex-shrink-0">
             <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
+                <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
                     <i data-lucide="table-properties" class="w-5 h-5"></i>
                 </div>
                 <div>
                     <h3 class="text-xl font-bold text-slate-900">Raw Meter Registers</h3>
                     <p class="text-xs text-slate-400">Direct lifetime totals from digital meter & inverters</p>
                 </div>
+            </div>
+            <div class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-50 text-slate-600 border border-slate-200 self-start sm:self-auto flex-shrink-0">
+                <i data-lucide="clock" class="w-3.5 h-3.5 text-slate-400"></i>
+                <span>Last poll: <?= date('d/m/Y H:i:s') ?></span>
             </div>
         </div>
 
