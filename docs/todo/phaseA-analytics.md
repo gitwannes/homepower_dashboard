@@ -1,9 +1,9 @@
 # --- file: docs/todo/phaseA-analytics.md ---
 # Phase A (continued) â Analytics UI + plant config
 
-**Status:** **A4**-**A28** Done. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
-**Last updated:** 2026-11-19 (**A28** Done / Last DoD - file ready to move offline)  
-**Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py` - `weather.php`
+**Status:** **A4**-**A29** Done. (A0-A3 Done - [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md))  
+**Last updated:** 2026-11-24 (**A29** Done / Last DoD — file ready to move offline)  
+**Product pointers:** [`docs/architecture.md`](../architecture.md) - `topn.php` - `rollup.py` - `settings.php` - `explorer_chart.php` - `balance_chart.php` - `logger.py` - `weather.php` - `analytics.php`
 
 ---
 
@@ -11,6 +11,7 @@
 
 | Id | Status | What |
 |---|---|---|
+| **A29** | Done | bugfix: analytics.php graph load (P0/1/2/3/6). Product: [`docs/architecture.md`](../architecture.md) |
 | **A28** | Done | Raw Meter Registers: header timestamp badge. Product: [`docs/architecture.md`](../architecture.md) |
 | **A4** | Done | Top-N tables (days / months / years) + graphs |
 | **A5** | Done | Balance/Classic multi-series power (both pages). Product: [`docs/architecture.md`](../architecture.md) |
@@ -38,13 +39,50 @@
 | **A26** | Done | bugfix: purge WebBox +4h :00 clones; Virtual best-day yield + integer Y |
 | **A27** | Done | weather period avgs + Records (wind/module/rad) |
 
-**Parallel:** **A14**-**A28** + **A11** + **A23** all Done.
+**Parallel:** **A14**-**A29** + **A11** + **A23** all Done.
 
-**Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`.
+**Related:** A3 removed Hall of Fame UI. A4 is yield Top-N. A7 shipped all-time `top_records` on `topn.php`. **A22** hardened blank charts; **A29** residual load-time performance (Done).
 
 ---
 
 ## Verbatim inbox
+
+### 2026-11-24 - close A29
+
+> close A29
+
+A29 closed. Last DoD docs audit: `architecture.md`, `README.md`, `roadmap.md`, `pipeline.md`, this file. Track A (A4–A29) fully Done — **manually move** `phaseA-analytics.md` to offline archive when ready (agent will not move it).
+
+### 2026-11-24 - A29 ship P0/1/2/3/6
+
+> ship P0/1/2/3/6
+
+Locks L7–L9. Implemented: cheap `ajax=range` (LIMIT 1 + `explorer_day_min` cache); explorer not blocked on range; compare deferred via idle/timeout; view-slimmed explorer JSON; >24 h / 7d = 5-min spine (+ utility skips 1-min). Skip P4/P5. Operator: sync → smoke Sofie → `close A29`.
+
+### 2026-11-24 - A29 HAR re-assess (Sofie)
+
+> C:\data\downloads\192.168.0.250.har check this -then re-assess
+> C:\data\downloads\192.168.0.250.har
+
+Sofie HTTPS HAR: `ajax=range` wait **3893 ms** blocks explorer; CDNs fine (~330 ms). Assess results Pass 2 + P0 added. Temp analyzer `helpers/_har_a29_assess.py` removed after use.
+
+### 2026-11-24 - A29 kickoff answers (locks)
+
+> 1 DS723
+> 2 way better
+> 3 page loads instantly, graphs do not - after a few seconds up to a minute: the grid exchange graph loads, immediately after that: the gas/water graph and then later the 2-day comparison
+> 4 yes
+> 5 assess, then implemnt (but wait for my command)
+> 6 yes
+
+Locks L1–L6 written into **A29**. Symptom timeline matches serial waterfall (explorer paint → utility from same payload → compare last).
+
+### 2026-11-24 - triage + kickoff A29 (analytics perf)
+
+> graphs on analytics.php load very slow - why?
+> yes, triage as performance bugfix - kickoff with troubleshooting/assess/analysis
+
+Placed: **A29** (affinity **A**, Sequence #1 ahead of W1). Kickoff = assess/measure only; no product code until locks + `implement`. Related to Done **A22** (blank-chart / serial load) — not a reopen; residual slowness.
 
 ### 2026-11-19 - close A28
 
@@ -1522,9 +1560,39 @@ See Verbatim inbox **2026-11-18 - triage + kickoff A28**, **2026-11-19 - impleme
 
 ---
 
+## A29 — bugfix: analytics.php graph load performance
+
+**Status:** Done 2026-11-24.  
+**Size:** M  
+**Product:** [`docs/architecture.md`](../architecture.md) — `analytics.php` · `explorer_chart.php` · `gas_water.php`
+
+### Shipped summary
+
+Sofie HAR showed `ajax=range` ~3.9 s TTFB blocking explorer. Shipped **P0/1/2/3/6** (not P4/P5): cheap range (`ORDER BY … LIMIT 1` + `explorer_day_min` cache); explorer not awaited on range; compare deferred (idle/timeout, serial Apex kept); view-slimmed explorer JSON; windows **>24 h** (incl. 7d) use 5-min spine only.
+
+### Locked (record)
+
+| # | Lock |
+|---|---|
+| L1–L9 | As locked 2026-11-24 (Sofie smoke; P0+P1+P2+P3+P6; >24h = 5-min; new A29). |
+
+### DoD
+
+- [x] P0/1/2/3/6 in tree
+- [x] Product docs (`architecture.md` / `README.md` / `roadmap.md`)
+- [x] Operator smoke accepted (`close A29`)
+- [x] Last DoD docs audit 2026-11-24
+
+### Verbatim
+
+See Verbatim inbox **2026-11-24 triage/kickoff/HAR/ship/close A29**.
+
+---
+
 ## Out of scope (until re-triaged)
 
 - Portal ingest (**P1-P3**)
 - Restoring the old slow Top 10 AJAX query as-is
 - Finding which historic importer wrote the `:00` clones (purge is enough if Means re-import clean)
 - Extra envelope despike after staging purge (re-triage if bumps remain)
+- A29 **P4** (self-host CDN scripts) / **P5** (straight curves / display downsample) — re-triage if still heavy after P0–P3/P6

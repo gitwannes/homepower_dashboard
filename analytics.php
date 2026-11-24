@@ -54,36 +54,9 @@ if (isset($_GET['ajax'])) {
         $action = $_GET['ajax'];
 
         if ($action === 'range') {
-            // Earliest/latest local day across history_5min and readings (A19).
-            $min = null;
-            $max = null;
-            $candidates = [];
-            foreach (['history_5min', 'readings'] as $table) {
-                try {
-                    $row = $pdo->query(
-                        "SELECT substr(MIN(timestamp), 1, 10) AS dmin, substr(MAX(timestamp), 1, 10) AS dmax
-                         FROM {$table}"
-                    )->fetch(PDO::FETCH_ASSOC);
-                    if ($row) {
-                        if (!empty($row['dmin'])) {
-                            $candidates['min'][] = (string)$row['dmin'];
-                        }
-                        if (!empty($row['dmax'])) {
-                            $candidates['max'][] = (string)$row['dmax'];
-                        }
-                    }
-                } catch (Exception $e) {
-                }
-            }
-            if (!empty($candidates['min'])) {
-                sort($candidates['min']);
-                $min = $candidates['min'][0];
-            }
-            if (!empty($candidates['max'])) {
-                rsort($candidates['max']);
-                $max = $candidates['max'][0];
-            }
-            echo json_encode(['min' => $min, 'max' => $max]);
+            // A29 P0: index-friendly LIMIT 1 + cached min (not MIN/MAX aggregates).
+            $bounds = hp_explorer_day_range($pdo);
+            echo json_encode(['min' => $bounds['min'], 'max' => $bounds['max']]);
             exit;
         }
 
@@ -104,36 +77,86 @@ if (isset($_GET['ajax'])) {
                     $win['preset'] = '';
                 }
             }
+            // A29 P3: only ship series for the active view (default exchange).
+            $viewRaw = isset($_GET['view']) ? strtolower(trim((string)$_GET['view'])) : 'exchange';
+            $view = 'exchange';
+            if ($viewRaw === 'classic' || $viewRaw === 'balance' || $viewRaw === 'phases') {
+                $view = $viewRaw;
+            }
             $payload = hp_explorer_mixed_series(
                 $pdo,
                 $win['start'],
                 $win['end'],
                 'sanitize_pac_w'
             );
+            $fiveMinOnly = !empty($payload['five_min_only'])
+                || hp_explorer_five_min_only((int)$win['start'], (int)$win['end']);
             // A11: gas/water strip shares this exact window (no separate range chips).
             $waterOk = gw_water_available($pdo);
             $utility = [
                 'water_available' => $waterOk,
-                'gas' => gw_utility_window_curve($pdo, 'gas', (int)$win['start'], (int)$win['end']),
+                'gas' => gw_utility_window_curve(
+                    $pdo,
+                    'gas',
+                    (int)$win['start'],
+                    (int)$win['end'],
+                    $fiveMinOnly
+                ),
                 'water' => $waterOk
-                    ? gw_utility_window_curve($pdo, 'water', (int)$win['start'], (int)$win['end'])
+                    ? gw_utility_window_curve(
+                        $pdo,
+                        'water',
+                        (int)$win['start'],
+                        (int)$win['end'],
+                        $fiveMinOnly
+                    )
                     : ['source' => 'none', 'points' => [], 'unit' => 'm3/h'],
             ];
-            echo json_encode([
+            $phases = $payload['phases'] ?? ['l1' => [], 'l2' => [], 'l3' => []];
+            $hasPhases = hp_phases_series_has_data($phases);
+            $emptyBal = [
+                'self_sufficient' => [],
+                'grid' => [],
+                'surplus' => [],
+                'production' => [],
+                'consumption' => [],
+            ];
+            $emptyClassic = ['solar' => [], 'home' => [], 'grid' => []];
+            $emptyPhases = ['l1' => [], 'l2' => [], 'l3' => []];
+            $out = [
                 'ok' => true,
                 'start' => $win['start'],
                 'end' => $win['end'],
                 'preset' => $win['preset'],
                 'custom' => $win['custom'],
                 'day_mode' => !empty($win['day_mode']),
-                'balance' => $payload['balance'],
-                'tip_bands' => $payload['tip_bands'],
-                'classic' => $payload['classic'],
-                'phases' => $payload['phases'] ?? ['l1' => [], 'l2' => [], 'l3' => []],
-                'has_phases' => hp_phases_series_has_data($payload['phases'] ?? []),
-                'sources' => $payload['sources'],
+                'view' => $view,
+                'five_min_only' => $fiveMinOnly,
+                'has_phases' => $hasPhases,
                 'utility' => $utility,
-            ]);
+                'balance' => $emptyBal,
+                'tip_bands' => $emptyBal,
+                'classic' => $emptyClassic,
+                'phases' => $emptyPhases,
+                'sources' => [],
+            ];
+            if ($view === 'balance') {
+                $out['balance'] = $payload['balance'];
+                $out['tip_bands'] = $payload['tip_bands'];
+                $out['sources'] = $payload['sources'];
+            } elseif ($view === 'classic') {
+                $out['classic'] = $payload['classic'];
+            } elseif ($view === 'phases') {
+                $out['phases'] = $phases;
+            } else {
+                // Exchange: signed net from classic.grid (Balance fallback kept empty).
+                $out['classic'] = [
+                    'solar' => [],
+                    'home' => [],
+                    'grid' => $payload['classic']['grid'] ?? [],
+                ];
+            }
+            echo json_encode($out);
             exit;
         }
 
@@ -856,7 +879,8 @@ $defaultCompare2 = $twoDaysAgo;
         dayChartView = next;
         updateDayViewChrome();
         syncExplorerUrl();
-        renderExplorerChart();
+        // A29 P3: payload is view-slimmed - refetch series for the new mode.
+        loadExplorer();
     }
 
     /**
@@ -1355,9 +1379,10 @@ $defaultCompare2 = $twoDaysAgo;
         params.set('ajax', 'explorer');
         params.set('from', chartQueryTime(explorerStart));
         params.set('to', chartQueryTime(explorerEnd));
-        if (dayChartView === 'classic' || dayChartView === 'balance' || dayChartView === 'phases') {
-            params.set('view', dayChartView);
-        }
+        // A29 P3: always send view so the server returns only that series set.
+        params.set('view', dayChartView === 'classic' || dayChartView === 'balance' || dayChartView === 'phases'
+            ? dayChartView
+            : 'exchange');
         try {
             const res = await fetch('analytics.php?' + params.toString());
             const data = await res.json();
@@ -1622,7 +1647,11 @@ $defaultCompare2 = $twoDaysAgo;
         });
     }
 
-    document.addEventListener('DOMContentLoaded', async () => {
+    /**
+     * A29 P0/P2: pan bounds only - never block explorer on this fetch.
+     * @returns {Promise<void>}
+     */
+    async function refreshDayRange() {
         try {
             const rr = await fetch('analytics.php?ajax=range');
             dayRange = await rr.json();
@@ -1634,6 +1663,27 @@ $defaultCompare2 = $twoDaysAgo;
             dayRange = { min: null, max: null };
             explorerDayBounds = { min: null, max: null };
         }
+        updateExplorerPanButtons();
+    }
+
+    /**
+     * A29 P1: load two-day overlay after first explorer paint (idle / timeout).
+     * Keeps A22 serial Apex mounts (compare still after explorer).
+     */
+    function scheduleDeferredCompare() {
+        const run = function () {
+            loadComparison();
+        };
+        if (typeof window.requestIdleCallback === 'function') {
+            window.requestIdleCallback(run, { timeout: 2500 });
+        } else {
+            setTimeout(run, 250);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+        // P2: fire range in parallel; do not await before explorer.
+        refreshDayRange();
 
         bindDateField('compareText1', 'comparePicker1', () => scheduleCompareLoad());
         bindDateField('compareText2', 'comparePicker2', () => scheduleCompareLoad());
@@ -1641,10 +1691,10 @@ $defaultCompare2 = $twoDaysAgo;
         updateDayViewChrome();
         updateExplorerPanButtons();
         lucide.createIcons();
-        // A22: one Apex mount at a time. Envelope moved to Top-N; yield between explorer and compare.
+        // A22: one Apex mount at a time. A29 P1: defer compare off the critical path.
         await loadExplorer();
         await yieldForChartPaint();
-        await loadComparison();
+        scheduleDeferredCompare();
     });
 </script>
 

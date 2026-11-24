@@ -259,6 +259,124 @@ function hp_explorer_pan(array $window, int $direction, ?int $now = null): array
 }
 
 /**
+ * True when the explorer window is longer than 24 h (A29 P6: 5-min spine only).
+ */
+function hp_explorer_five_min_only(int $start, int $end): bool
+{
+    return ($end - $start) > (24 * 3600);
+}
+
+/**
+ * Ensure readings.timestamp can be sought with ORDER BY ... LIMIT 1 (A29 P0).
+ */
+function hp_explorer_ensure_readings_ts_index(PDO $pdo): void
+{
+    try {
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp)');
+    } catch (Throwable $e) {
+        // Table may be absent on empty installs.
+    }
+}
+
+/**
+ * First or last local calendar day present in a table (index-friendly LIMIT 1).
+ *
+ * @param 'ASC'|'DESC' $direction
+ */
+function hp_explorer_table_day_bound(PDO $pdo, string $table, string $direction): ?string
+{
+    if ($table !== 'history_5min' && $table !== 'readings') {
+        return null;
+    }
+    if ($direction !== 'ASC' && $direction !== 'DESC') {
+        return null;
+    }
+    try {
+        $row = $pdo->query(
+            "SELECT substr(timestamp, 1, 10) AS d FROM {$table} ORDER BY timestamp {$direction} LIMIT 1"
+        )->fetch(PDO::FETCH_ASSOC);
+        if ($row && !empty($row['d']) && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$row['d']) === 1) {
+            return (string)$row['d'];
+        }
+    } catch (Throwable $e) {
+    }
+    return null;
+}
+
+/**
+ * Persist explorer_day_min in app_settings (earliest day rarely moves).
+ */
+function hp_explorer_store_day_min(PDO $pdo, string $ymd): void
+{
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $ymd) !== 1) {
+        return;
+    }
+    try {
+        if (function_exists('hp_ensure_schema')) {
+            hp_ensure_schema($pdo);
+        }
+        $stmt = $pdo->prepare(
+            'INSERT INTO app_settings (key, value) VALUES (\'explorer_day_min\', ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+        );
+        $stmt->execute([$ymd]);
+    } catch (Throwable $e) {
+    }
+}
+
+/**
+ * Earliest/latest local day for pan bounds (A29 P0).
+ * Uses ORDER BY LIMIT 1 (not MIN/MAX aggregates) + cached min.
+ *
+ * @return array{min: ?string, max: ?string}
+ */
+function hp_explorer_day_range(PDO $pdo): array
+{
+    hp_explorer_ensure_readings_ts_index($pdo);
+
+    $min = null;
+    try {
+        $row = $pdo->query(
+            "SELECT value FROM app_settings WHERE key = 'explorer_day_min' LIMIT 1"
+        )->fetch(PDO::FETCH_ASSOC);
+        if ($row && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$row['value']) === 1) {
+            $min = (string)$row['value'];
+        }
+    } catch (Throwable $e) {
+    }
+
+    if ($min === null) {
+        $mins = [];
+        foreach (['history_5min', 'readings'] as $table) {
+            $d = hp_explorer_table_day_bound($pdo, $table, 'ASC');
+            if ($d !== null) {
+                $mins[] = $d;
+            }
+        }
+        if ($mins !== []) {
+            sort($mins);
+            $min = $mins[0];
+            hp_explorer_store_day_min($pdo, $min);
+        }
+    }
+
+    $maxs = [];
+    foreach (['history_5min', 'readings'] as $table) {
+        $d = hp_explorer_table_day_bound($pdo, $table, 'DESC');
+        if ($d !== null) {
+            $maxs[] = $d;
+        }
+    }
+    $max = null;
+    if ($maxs !== []) {
+        rsort($maxs);
+        $max = $maxs[0];
+    }
+
+    return ['min' => $min, 'max' => $max];
+}
+
+/**
  * @param callable|null $sanitizePac function(mixed $w, ?int $hh, mixed $rad): ?float
  * @return array{
  *   start: int,
@@ -266,34 +384,39 @@ function hp_explorer_pan(array $window, int $direction, ?int $now = null): array
  *   balance: array{self_sufficient: list<array{x:int,y:int|null}>, grid: list<array{x:int,y:int|null}>, surplus: list<array{x:int,y:int|null}>, production: list<array{x:int,y:int|null}>, consumption: list<array{x:int,y:int|null}>},
  *   classic: array{solar: list<array{x:int,y:int|null}>, home: list<array{x:int,y:int|null}>, grid: list<array{x:int,y:int|null}>},
  *   phases: array{l1: list<array{x:int,y:int|null}>, l2: list<array{x:int,y:int|null}>, l3: list<array{x:int,y:int|null}>},
- *   sources: list<array{x:int, source: string}>
+ *   sources: list<array{x:int, source: string}>,
+ *   five_min_only: bool
  * }
  */
 function hp_explorer_mixed_series(PDO $pdo, int $start, int $end, $sanitizePac = null): array
 {
     $startSql = hp_sql_datetime($start);
     $endSql = hp_sql_datetime($end);
+    // A29 P6: windows longer than 24 h use history_5min only (skip 1-min readings).
+    $fiveMinOnly = hp_explorer_five_min_only($start, $end);
 
     $readings = [];
-    try {
-        $stmt = $pdo->prepare(
-            'SELECT timestamp, active_power, solar_power, power_l1_w, power_l2_w, power_l3_w
-             FROM readings
-             WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC'
-        );
-        $stmt->execute([$startSql, $endSql]);
-        $readings = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    } catch (Throwable $e) {
-        // Pre-A16 DBs lack phase columns - fall back without them.
+    if (!$fiveMinOnly) {
         try {
             $stmt = $pdo->prepare(
-                'SELECT timestamp, active_power, solar_power FROM readings
+                'SELECT timestamp, active_power, solar_power, power_l1_w, power_l2_w, power_l3_w
+                 FROM readings
                  WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC'
             );
             $stmt->execute([$startSql, $endSql]);
             $readings = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        } catch (Throwable $e2) {
-            $readings = [];
+        } catch (Throwable $e) {
+            // Pre-A16 DBs lack phase columns - fall back without them.
+            try {
+                $stmt = $pdo->prepare(
+                    'SELECT timestamp, active_power, solar_power FROM readings
+                     WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC'
+                );
+                $stmt->execute([$startSql, $endSql]);
+                $readings = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            } catch (Throwable $e2) {
+                $readings = [];
+            }
         }
     }
 
@@ -559,6 +682,7 @@ function hp_explorer_mixed_series(PDO $pdo, int $start, int $end, $sanitizePac =
     return [
         'start' => $start,
         'end' => $end,
+        'five_min_only' => $fiveMinOnly,
         // Painted series: band thicknesses for stacked areas.
         'balance' => [
             'self_sufficient' => $balanceSelf,

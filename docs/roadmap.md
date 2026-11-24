@@ -76,9 +76,9 @@ Compare new `daily_history` yields against the old MariaDB `wpv_periodicvalues` 
       - Live (`index.php`): 2-hour pulse of 1-minute readings; Exchange / Balance / Classic (Exchange default). Exploration (`analytics.php`), period summaries (`summary.php`).
       - Weather (`weather.php`): explorer + Week / Month / Year / **All years** from daily/monthly **averages** (A27); Records = wind speed max, module hi/lo, radiation max.
       - Cross-navigation between hubs.
-- [x] Day Explorer on `analytics.php` (**A5b** + **A19**):
-      - Exchange / Balance / Classic explorer: rolling presets plus calendar-day **Today** (default; chip after 24 h); day pan with arrow caps; mixed 1-min / 5-min (rule V). Serial Apex mounts (explorer then compare).
-- [x] Two-Day Overlay on `analytics.php`.
+- [x] Day Explorer on `analytics.php` (**A5b** + **A19** + **A29**):
+      - Exchange / Balance / Classic / Phases explorer: rolling presets plus calendar-day **Today** (default; chip after 24 h); day pan with arrow caps; mixed 1-min / 5-min (rule V) for ≤24 h; **>24 h / 7d = 5-min only**. View-slimmed `ajax=explorer`; cheap `ajax=range` (does not block explorer). Serial Apex mounts; compare deferred after explorer.
+- [x] Two-Day Overlay on `analytics.php` (loads after explorer; A29).
 - [x] Summary period views (`summary.php`):
       - Week, month, year, then **All years** last (lifetime bars vs live `expected_monthly` PVGIS; week/month use daily-share line; omit PVGIS when expected is 0).
       - **A13 Done:** Solar yield / Grid switch. Grid mode is grouped bars (import, export, net). A second switch shows all three, import/export only, or net only.

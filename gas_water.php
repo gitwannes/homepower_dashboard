@@ -504,7 +504,10 @@ function gw_live_rate_series(PDO $pdo, string $column, int $startTs, int $endTs)
  *   unit: string
  * }
  */
-function gw_utility_window_curve(PDO $pdo, string $kind, int $startTs, int $endTs): array
+/**
+ * @param bool $preferFiveMin A29: skip 1-min readings for windows longer than 24 h
+ */
+function gw_utility_window_curve(PDO $pdo, string $kind, int $startTs, int $endTs, bool $preferFiveMin = false): array
 {
     if ($kind !== 'gas' && $kind !== 'water') {
         return ['source' => 'none', 'points' => [], 'unit' => 'm3/h'];
@@ -516,22 +519,24 @@ function gw_utility_window_curve(PDO $pdo, string $kind, int $startTs, int $endT
     $startSql = date('Y-m-d H:i:s', $startTs);
     $endSql = date('Y-m-d H:i:s', $endTs);
 
-    try {
-        $stmt = $pdo->prepare(
-            "SELECT timestamp, {$column} AS counter FROM readings
-             WHERE timestamp >= ? AND timestamp <= ? AND {$column} IS NOT NULL
-             ORDER BY timestamp ASC"
-        );
-        $stmt->execute([$startSql, $endSql]);
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        if (count($rows) >= 3) {
-            return [
-                'source' => 'p1_1min',
-                'points' => gw_counter_to_interval_points($rows, true),
-                'unit' => 'm3/h',
-            ];
+    if (!$preferFiveMin) {
+        try {
+            $stmt = $pdo->prepare(
+                "SELECT timestamp, {$column} AS counter FROM readings
+                 WHERE timestamp >= ? AND timestamp <= ? AND {$column} IS NOT NULL
+                 ORDER BY timestamp ASC"
+            );
+            $stmt->execute([$startSql, $endSql]);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            if (count($rows) >= 3) {
+                return [
+                    'source' => 'p1_1min',
+                    'points' => gw_counter_to_interval_points($rows, true),
+                    'unit' => 'm3/h',
+                ];
+            }
+        } catch (Exception $e) {
         }
-    } catch (Exception $e) {
     }
 
     try {

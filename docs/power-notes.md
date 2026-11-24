@@ -184,6 +184,8 @@ expected_monthly
 
 **Day-graph rule (5-min axis):** up to 2 missing slots between known points = draw (Fluvius 1-in-3), via linear bridge of grid W on the explorer/day chart only (`history_5min` stays sparse). More than 2 consecutive missing = gap, not zero.
 
+**Analytics explorer (A29):** windows ≤24 h keep mixed 1-min/5-min (rule V); windows longer than 24 h (incl. 7d) chart from `history_5min` only. `ajax=range` is pan-bounds only and must not block the explorer fetch.
+
 ---
 
 ## Full (re)build

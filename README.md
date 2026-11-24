@@ -38,7 +38,7 @@ Never put real LAN IPs or site nicknames in committed files.
 | `logger.py` | 1-minute poll / hot DB writer |
 | `index.php` | Live dashboard. 2-hour pulse; Exchange / Balance / Classic / Phases; optional gas/water rate charts |
 | `settings.php` | Admin password; Unlock + countdown; Save probes + `*_active` (AJAX; fail keeps unlock); Clear secrets; DB backup/restore; 1-min CSV (no password) |
-| `analytics.php` | Explorer (Today default + rolling presets, day pan, mixed 1/5-min, Exchange default), two-day compare |
+| `analytics.php` | Explorer (Today default + rolling presets, day pan, mixed 1/5-min ≤24h / 5-min only >24h, Exchange default), deferred two-day compare |
 | `summary.php` | Week / month / year / All years (last). Solar / grid / Capacity peak / gas / water; solar week/month PVGIS daily-share line |
 | `weather.php` | Weather explorer; Week / Month / Year / All years averages; Records (wind speed, module hi/lo, radiation) |
 | `topn.php` | Best/worst solar, grid net, Capacity peak months, gas highest, water high/low; Virtual 'best-day' on solar; weather records on weather.php |
