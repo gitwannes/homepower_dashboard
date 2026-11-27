@@ -1,0 +1,31 @@
+---
+description: Repo delta — dashboard product; universal gate is User Rule Collaboration
+alwaysApply: true
+---
+
+<!-- --- file: .cursor/rules/implement-gate.mdc --- -->
+
+# Implement gate (repo delta)
+
+Universal authorize / Plan-UI / undo / git gates: User Rule **Collaboration standards** (and **Git — operator only**). Those win.
+
+Authorize product edits only with operator chat verbs **`implement`** or **`patch`**. Plan cards / attached plans do not count.
+
+## Product in this repo
+
+Do not edit until authorized above:
+
+- Dashboard PHP, JS, CSS, HTML, and Python that ships
+- Synology / deploy-related product artifacts covered by this repo’s other rules (e.g. [synology-python.mdc](synology-python.mdc)) — still need `implement` / `patch`
+
+Leave domain rules such as `history-5min-derived.mdc` as-is; they do not authorize edits by themselves.
+
+## Pipeline docs (this repo)
+
+- **triage** / **kickoff**: may edit `docs/todo/*` only — no product code.
+- **implement** / **patch**: product code allowed; pipeline close-out when ship/DoD says so (`ship` is docs/close-out language, not a code authorize verb).
+- Phase close-out: follow this repo’s phase-archive convention when present.
+
+## When unsure
+
+Stop and ask: **triage**, **kickoff**, **implement**, or **patch**? Do not start coding.
