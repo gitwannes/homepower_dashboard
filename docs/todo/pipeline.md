@@ -3,7 +3,7 @@
 
 Ordered backlog + closed history. Specs / DoD / locks live in lettered phase files.
 
-**Last updated:** 2026-11-24 (**A29** Done; **W1** next)
+**Last updated:** 2026-11-28 (**B1** kickoff complete; Sequence **B1** → **W1** → **B2+**)
 
 **Product reference:** [`docs/architecture.md`](../architecture.md) · [`docs/deploy.md`](../deploy.md) · [`docs/roadmap.md`](../roadmap.md)
 
@@ -76,9 +76,13 @@ Ordered backlog + closed history. Specs / DoD / locks live in lettered phase fil
 
 | # | Status | Size | Id | What | Detail |
 |---|---|---|---|---|---|
-| 1 | open | L | **W1** | Power → WanOS: `-daily` / raw opened / historical push + display Power readings in WanOS | [`phaseW-wanos.md`](phaseW-wanos.md) |
-| 2 | open | M | **Ops9** | Setup Ops5 `power_db_backup` on Synology **Sofie** | [`roadmap.md`](../roadmap.md) § Ops9 · [`deploy.md`](../deploy.md) |
-| 3 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
+| 1 | open | L | **B1** | Marstek S6 observe: 1 s battery DB + G1–G9 graphs + `/marstek` status; Auto; no policy — kickoff complete | [`phaseB-battery.md`](phaseB-battery.md) |
+| 2 | open | L | **W1** | Power → WanOS: `-daily` / raw opened / historical push + display Power readings in WanOS | [`phaseW-wanos.md`](phaseW-wanos.md) |
+| 3 | open | L | **B2** | Battery policy engine (own UI) + Modbus control + homepower contract | [`phaseB-battery.md`](phaseB-battery.md) |
+| 4 | open | M | **Ops9** | Setup Ops5 `power_db_backup` on Synology **Sofie** | [`roadmap.md`](../roadmap.md) § Ops9 · [`deploy.md`](../deploy.md) |
+| 5 | open | M | **Ops7** | `notifier.py` (roadmap Phase 3) | [`roadmap.md`](../roadmap.md) |
+
+**Queued in letter B (after B2):** **B3+** arbitrage / sauna / euro — [`phaseB-battery.md`](phaseB-battery.md).
 
 ---
 
@@ -99,5 +103,6 @@ Open Ops rows are also in **Sequence** (same ids). Done Ops stay in **Done** onl
 |---|---|---|
 | **M** | Migration + public-repo hygiene + local sync | [`_archive/phaseM-migration.md`](_archive/phaseM-migration.md) (**archived**) |
 | **A** | Aggregation warehouse + analytics UI | [`_archive/phaseA-aggregation.md`](_archive/phaseA-aggregation.md) (A0–A3 Done) · [`phaseA-analytics.md`](phaseA-analytics.md) (A4–**A29** Done — move file offline when convenient) |
+| **B** | Marstek battery: S6 observe + policy engine (same repo, different path) | [`phaseB-battery.md`](phaseB-battery.md) (**B1** kickoff) |
 | **P** | Cloud / utility portal ingest (P1–P3 Done — move file offline when convenient) | [`phaseP-portals.md`](phaseP-portals.md) |
 | **W** | WanOS bridge (**W2** Done; **W1** open) | [`phaseW-wanos.md`](phaseW-wanos.md) |
