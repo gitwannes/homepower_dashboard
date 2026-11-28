@@ -1,8 +1,8 @@
 # --- file: docs/todo/phaseB-battery.md ---
 # Phase B — Battery (Marstek Venus) + policy engine
 
-**Status:** **B1** kickoff **complete** (ready for `implement` / `patch` when commanded). **B2+** queued after W1.  
-**Last updated:** 2026-11-28 (L10 revised: same `meter_history.db`, not a second file)  
+**Status:** **B1** kickoff **complete** (ready for `implement` / `patch` when commanded). **B2** design options & policy proposals documented (queued after W1).  
+**Last updated:** 2026-11-28 (B2+ options, B1 soak baselines, and priority state machine added)  
 **Product pointers:** (none shipped yet) · **Operator checklist (NL):** [`docs/operator-b1-marstek.md`](../operator-b1-marstek.md) · site note `C:\data\OneDrive\_immo\Borsbeekhuis\04-werken\thuisbatterij\thuisbatterij.md` (install context)
 
 ---
@@ -18,8 +18,8 @@ Marstek Venus (HomeWizard P1 zero-sum + Modbus). **Same repo** as homepower; eng
 | Id | Status | What |
 |---|---|---|
 | **B1** | kickoff | S6 observe: Marstek Modbus telemetry → `meter_history.db` (1 s tables) → G1–G9 + `/marstek` status; no policy control |
-| **B2** | queued | Policy engine (own UI) + Modbus control + contract with homepower (after B1 soak + after **W1**) |
-| **B3+** | queued | Arbitrage / sauna / euro scoring — TBD after B2 |
+| **B2** | queued | Policy engine (own UI at `/marstek`) + Modbus control + contract with homepower (after B1 soak + after **W1**) |
+| **B3+** | queued | Euro / ROI scoring, dry-run backtesting, advanced multi-day forecast optimization — TBD after B2 |
 
 **Pipeline order (global):** **B1** → **W1** → **B2** → **B3+** → Ops9 → Ops7.
 
@@ -95,6 +95,16 @@ Marstek Venus (HomeWizard P1 zero-sum + Modbus). **Same repo** as homepower; eng
 > does it make sense to have another DB/file for marstek? it is fully integrated with homepower, so leave in same DB - agree?
 > same repo as homepower
 
+### 2026-11-28 — B2+ scenarios & policy options
+
+> in B1 we're just going to measure data
+> after B1, we will code B2, this chat is not about help with that code - let's talk options
+> so, when we measured 2 weeks in "zero-summing" mode (this B1), there are several scenarios:
+> - i want to use the battery to keep standby power consumption to a minimum - using the solar power charged during day
+> - i have a 9kW sauna, I want to use it to do peak shaving
+> - when no or almost no solar power can be stored during the day: we need to draw power from the net when the tarriff are low and give it back to our house when the tariffs are high(er)
+> - give options, insight and proposals
+
 ---
 
 ## Cross-cutting locks (B letter)
@@ -155,6 +165,15 @@ Sign everywhere: **charge = positive**, discharge = negative (L6). Raw SoT = 1 s
 
 **`/marstek` in B1:** **L20** (option B status). Charts stay on power pages (G1–G9).
 
+### B1 Soak Baselines to Extract (Input for B2 Policy Tuning)
+
+During the ~2-week S6 soak, derive fourempirical baselines from the 1 s `meter_history.db` data (`power_w`, `soc_pct`, `grid_net`, 15-min averages):
+
+1. **Empirical Round-Trip Efficiency (`RTE %`):** `sum(discharge_kwh) / sum(charge_kwh)` between equal-SOC anchor points, segmented into low-load standby discharge (200–350 W) vs. high-load bursts (2,000–2,500 W) to set accurate arbitrage spread gates.
+2. **Native Zero-Sum Reaction Lag:** Latency (seconds) between P1 `grid_net` step-changes and Marstek `power_w` response, plus double-polling stability on the HomeWizard P1 Local API (keep Synology P1 poll $\ge 2\text{ s}$).
+3. **Nightly Standby Consumption (`22:00–07:00`):** Distribution of overnight kWh draw per site (DS723 vs. Sofie) to set data-driven SOC reserve targets.
+4. **Monthly *Kwartierpiek* Baseline:** Running 15-minute block averages (`00, :15, :30, :45`) and sauna/heavy-appliance peak signatures.
+
 ### Open items (B1)
 
 | # | Topic | Status | Notes |
@@ -189,13 +208,41 @@ Sign everywhere: **charge = positive**, discharge = negative (L6). Raw SoT = 1 s
 
 ## B2 — Policy engine (queued)
 
-**Status:** queued (after B1 + **W1**)  
-**Size:** L (TBD at kickoff)
+**Status:** queued (after B1 + **W1**; design options & proposals captured below for B2 kickoff)  
+**Size:** L (TBD at kickoff)  
+**Scope:** Own Synology UI at `/marstek`; Modbus policy owner; talks to homepower via shared `meter_history.db` / Settings. Boundary **hold** until operator releases Q7.
 
-Own Synology UI; Modbus policy owner; talks to homepower. Boundary **hold** until operator releases Q7. Folder/path inside this repo TBD.
+### B2 Control Architecture Options (To Lock at B2 Kickoff)
+
+| Option | Mechanism | Pros | Cons / Watch-outs |
+|---|---|---|---|
+| **Opt A — Hybrid Override** *(Recommended)* | Leave Marstek in native **Auto (P1 zero-sum)** as baseline; push Modbus overrides only during active policy windows (force-charge, SOC hold, peak-shave). | Safe fallback: if NAS reboots or engine stalls, battery automatically reverts to P1 zero-sum. | Both Marstek and Synology read HomeWizard P1 Local API (keep Synology P1 poll $\ge 2\text{ s}$). |
+| **Opt B — Full Synology Control Loop** | Synology reads P1 from `meter_history.db` and writes target W every 2–5 s over Modbus TCP. | Single P1 reader; scales cleanly to multi-battery sites (2+ units). | Requires hardware watchdog fallback register if NAS goes offline. |
+| **Opt C — Schedule-Slot Writer** | Translate daily plan into Marstek's internal time-of-use schedule registers hourly. | Minimal Modbus write traffic. | Too rigid for live *kwartierpiek* spikes or ad-hoc sauna sessions. |
+
+### Scenario Design Options & Proposals
+
+Because all three user scenarios compete for the same **~4.5 kWh usable capacity** and **2,500 W inverter limit**, B2 should implement a **configurable priority state machine** per site (DS723 + Sofie) rather than isolated scripts:
+
+#### 1. Priority State Machine (Highest → Lowest)
+
+| Priority | State | Trigger & Action | Configurable Site Parameters (`/marstek`) |
+|---|---|---|---|
+| **P1** | **Peak Guard (*Kwartierpiek*)** | Always active. Monitors running 15-min grid average (`00, :15, :30, :45`). If projected 15-min average approaches `peak_target_w` (monthly record or 2,500 W floor), immediately overrides any hold and discharges up to `max_discharge_w` (2,500 W) until the quarter-hour resets. | `peak_guard_enabled`, `peak_target_w` (auto from monthly max or manual), `peak_reserve_soc_pct` (e.g., 15%) |
+| **P2** | **Heavy Load / Sauna Prep** | Triggered via **manual one-tap UI button** ("Sauna tonight at HH:MM") or **recurring weekly schedule**. Pre-charges to `sauna_target_soc_pct` (95–100%) ~2 h before start (throttled so charging itself never exceeds `peak_target_w`), holds SOC (`discharge = 0 W`) until window start, then releases into P1/P4 for the 45-min heat-up (shaving 2.5 kW off a ~9 kW sauna). | `sauna_schedule` (day/time), `sauna_manual_trigger`, `sauna_target_soc_pct`, `sauna_prep_lead_min` |
+| **P3** | **Low-Solar Tariff Arbitrage** | Active when tomorrow's expected solar surplus is below `solar_threshold_kwh` (e.g., `< 3.5 kWh` in Nov–Feb) **AND** dynamic tariff spread `(peak_eur - charge_eur)` exceeds `min_spread_eur` (e.g., `€0.10–€0.12/kWh` after RTE loss).<br>• **Charge window:** Force-charge at up to 2,500 W during the cheapest 1.5–2 h block (typically 02:00–04:00).<br>• **Hold window:** Lock discharge (`0 W`) during cheap night hours so cheap grid energy is not wasted on ~220 W standby loads.<br>• **Release window:** Allow discharge during high-tariff morning/evening blocks (e.g., 07:00–10:00 and 17:00–21:00). | `arbitrage_enabled`, `solar_threshold_kwh`, `min_spread_eur`, `arb_target_soc_pct`, `hold_cheap_hours` |
+| **P4** | **Solar & Standby Default** | Default state when P1–P3 are idle. Runs P1 zero-summing to absorb daytime solar and cover overnight standby. Optional evening discharge cap (`evening_max_discharge_w`, e.g., 600–800 W after 19:00) prevents early evening appliances from emptying the battery before night standby, while P1 Peak Guard still overrides if a 15-min peak threatens. | `evening_soft_cap_w` (optional), `min_discharge_load_w` (optional low-load efficiency cutoff) |
+
+#### 2. W1 Data Dependency (Dynamic Tariffs & Solar Forecast)
+* **Day-Ahead Prices in `meter_history.db`:** Pull quarter-hourly/hourly EPEX Belgium day-ahead prices (ENTSO-E / Energy-Charts / supplier feed) into `meter_history.db` during **W1** (or as B2 prerequisite) so B2 can compute exact charge/hold/release windows and dry-run against B1 traces before enabling live Modbus writes.
+* **Solar Forecast Input:** Support lightweight solar yield estimation (Forecast.Solar / Solcast API per site latitude/kWp, or rolling yesterday-surplus fallback) to gate P3 Arbitrage automatically without manual winter/summer toggling.
 
 ---
 
 ## B3+ — Money / scenarios (queued)
 
-Tariff arbitrage, sauna peak shave, euro reports — after B2. Scenario ids from plan (S1–S5) remain reference only until kickoff.
+**Status:** queued (after B2)  
+**Candidates (to scope at B3 kickoff):**
+* **Euro & ROI Reporting:** Actual € saved per stream (solar self-consumption vs. tariff arbitrage vs. *capaciteitstarief* peak reduction) inside homepower `summary.php` / `/marstek`.
+* **Dry-Run / Shadow Simulator:** Replay candidate B2 policy parameters against historical 1 s `meter_history.db` traces (B1 soak data) to compare simulated € savings before applying live changes.
+* **Multi-Battery Orchestration:** Coordinated Modbus dispatch across 2+ Venus units per site if a tenant expands capacity.
